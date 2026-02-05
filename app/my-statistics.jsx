@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Dimensions, ActivityIndicator, Modal } from 'react-native';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useRouter, useFocusEffect } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { ChevronLeft, Smartphone, PieChart as PieIcon, Calendar, X, Lightbulb, ToggleLeft, Activity, Eye, Thermometer, Play, Lock, Video, Box, Speaker } from 'lucide-react-native';
+import { ChevronLeft, Smartphone, PieChart as PieIcon, Calendar, X, Lightbulb, ToggleLeft, Activity, Eye, Thermometer, Play, Lock, Video, Box, Speaker, Plus, Minus } from 'lucide-react-native';
 import { PieChart, LineChart } from 'react-native-chart-kit';
+import AnalogClockPresence from '../components/AnalogClockPresence';
 
 const screenWidth = Dimensions.get('window').width;
 
@@ -18,6 +19,14 @@ export default function StatisticsPage() {
     const [activeTab, setActiveTab] = useState('my'); // 'my' | 'home'
     const [homeStats, setHomeStats] = useState(null);
     const [homeStatsLoading, setHomeStatsLoading] = useState(false);
+    const [expandedRooms, setExpandedRooms] = useState({}); // { roomKey: boolean }
+
+    const toggleRoom = (key) => {
+        setExpandedRooms(prev => ({
+            ...prev,
+            [key]: !prev[key]
+        }));
+    };
 
     const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL;
 
@@ -28,7 +37,13 @@ export default function StatisticsPage() {
     const [showCalendar, setShowCalendar] = useState(false);
 
     // Helpers
-    const formatDate = (date) => date.toISOString().split('T')[0];
+    // Helpers
+    // Use Local Time YYYY-MM-DD to match backend's en-CA format
+    const formatDate = (date) => {
+        const offset = date.getTimezoneOffset();
+        const localDate = new Date(date.getTime() - (offset * 60 * 1000));
+        return localDate.toISOString().split('T')[0];
+    };
 
     const formatDuration = (hours) => {
         if (!hours && hours !== 0) return '0s';
@@ -75,34 +90,50 @@ export default function StatisticsPage() {
 
     const range = getRange(); // Current Range
 
+    // Fetch Data on Mount/Focus and when Range Changes
     useEffect(() => {
-        const fetchData = async () => {
-            try {
-                // 1. Users
+        if (!adminUrl) return;
+        fetchData();
+    }, [adminUrl, viewMode, selectedDate]);
+
+    useFocusEffect(
+        useCallback(() => {
+            fetchData();
+        }, [adminUrl, viewMode, selectedDate])
+    );
+
+    const fetchData = async () => {
+        setLoading(true);
+        try {
+            // 1. Users (Only if not loaded)
+            let currentUser = user;
+            if (!currentUser) {
                 const usersRes = await fetch(`${adminUrl}/api/users`);
                 const users = await usersRes.json();
                 if (users.length === 0) throw new Error("No users configured");
-                const currentUser = users[0];
+                currentUser = users[0];
                 setUser(currentUser);
-
-                // 2. User Stats
-                const url = `${adminUrl}/api/stats/user?user_id=${currentUser.user_id}&entity_id=${currentUser.entity_id}&days=90`;
-                const statsRes = await fetch(url);
-                if (!statsRes.ok) throw new Error("Failed to fetch user stats");
-                const statsData = await statsRes.json();
-                if (statsData.error) throw new Error(statsData.error);
-                setStats(statsData);
-
-            } catch (e) {
-                console.error(e);
-                setError(e.message);
-            } finally {
-                setLoading(false);
             }
-        };
 
-        if (adminUrl) fetchData();
-    }, []);
+            // 2. User Stats (My Stats)
+            // Use explicit start/end from range
+            const { start, end } = getRange(); // Get fresh range
+            const url = `${adminUrl}/api/stats/user?user_id=${currentUser.user_id}&entity_id=${currentUser.entity_id}&start_date=${start.toISOString()}&end_date=${end.toISOString()}`;
+
+            console.log('Fetching User Stats:', url);
+            const statsRes = await fetch(url);
+            if (!statsRes.ok) throw new Error("Failed to fetch user stats");
+            const statsData = await statsRes.json();
+            if (statsData.error) throw new Error(statsData.error);
+            setStats(statsData);
+
+        } catch (e) {
+            console.error(e);
+            setError(e.message);
+        } finally {
+            setLoading(false);
+        }
+    };
 
     // Fetch Home Stats when tab active or range changes
     useEffect(() => {
@@ -356,28 +387,29 @@ export default function StatisticsPage() {
 
         const { data } = getAggregatedStats();
         // data keys are e.g. "living_room", values are hours
-        const visitedRooms = Object.keys(data).filter(k => data[k] > 0);
+        // Filter out rooms with 0 hours
+        const visitedRooms = Object.keys(data).filter(k => data[k] > 0).sort((a, b) => data[b] - data[a]);
 
         // Normalize helper
         const normalize = (s) => s.toLowerCase().replace(/ /g, '_').trim();
 
-        const relevantAreas = Object.keys(homeStats).filter(areaName => {
-            const normArea = normalize(areaName);
-            return visitedRooms.some(vr => {
-                const normVisited = normalize(vr);
-                // Check exact match, or substring match (e.g. guest_room matching guest_bedroom?)
-                // Or area_id matching.
-                return normVisited === normArea || normArea.includes(normVisited) || normVisited.includes(normArea);
-            });
-        });
-
-        if (relevantAreas.length === 0) return null;
+        if (visitedRooms.length === 0) return null;
 
         return (
             <View style={{ padding: 15, paddingTop: 0 }}>
                 <Text style={{ color: '#fff', fontSize: 18, fontWeight: 'bold', marginBottom: 15, marginTop: 10 }}>Room Details (Visited)</Text>
-                {relevantAreas.map(areaName => {
-                    const entities = homeStats[areaName];
+                {visitedRooms.map(roomKey => {
+                    const durationStr = formatDuration(data[roomKey]);
+                    const normRoom = normalize(roomKey);
+
+                    // Find matching area in homeStats
+                    // homeStats keys are Area Names e.g. "Living Room"
+                    const matchingAreaName = Object.keys(homeStats).find(areaName => {
+                        const normArea = normalize(areaName);
+                        return normArea === normRoom || normArea.includes(normRoom) || normRoom.includes(normArea);
+                    });
+
+                    const entities = matchingAreaName ? homeStats[matchingAreaName] : [];
 
                     // Filter: Hide stats < 1 second. Hide entity if no stats left.
                     const filteredEntities = entities.map(entity => {
@@ -385,18 +417,49 @@ export default function StatisticsPage() {
                         return { ...entity, stats: validStats };
                     }).filter(e => e.stats.length > 0);
 
-                    if (filteredEntities.length === 0) return null;
+                    const isExpanded = !!expandedRooms[roomKey];
 
                     return (
-                        <View key={areaName} style={{ marginBottom: 25 }}>
-                            <Text style={{ color: '#8947ca', fontSize: 18, fontWeight: 'bold', marginBottom: 10, textTransform: 'capitalize' }}>
-                                {areaName}
-                            </Text>
-                            <View style={{ marginBottom: 10 }}>
-                                {renderEntityGroup(filteredEntities)}
+                        <View key={roomKey} style={{ marginBottom: 25 }}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                    <TouchableOpacity onPress={() => toggleRoom(roomKey)} style={{ padding: 4 }}>
+                                        {isExpanded ? <Minus size={20} color="#8947ca" /> : <Plus size={20} color="#ccc" />}
+                                    </TouchableOpacity>
+
+                                    <TouchableOpacity
+                                        onPress={() => handleRoomClick(roomKey)}
+                                        disabled={processingRoom}
+                                        style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                        <Text style={{ color: '#8947ca', fontSize: 18, fontWeight: 'bold', textTransform: 'capitalize' }}>
+                                            {matchingAreaName || roomKey.replace(/_/g, ' ')}
+                                        </Text>
+                                        {processingRoom && selectedRoom?.name === roomKey ? (
+                                            <ActivityIndicator size="small" color="#8947ca" />
+                                        ) : (
+                                            <Eye size={16} color="#8947ca" />
+                                        )}
+                                    </TouchableOpacity>
+                                </View>
+                                <Text style={{ color: '#4CAF50', fontSize: 16, fontWeight: '600' }}>{durationStr}</Text>
                             </View>
+
+                            {isExpanded && (
+                                <View style={{ paddingLeft: 34 }}>
+                                    {filteredEntities.length > 0 ? (
+                                        <View style={{ marginBottom: 10 }}>
+                                            {renderEntityGroup(filteredEntities)}
+                                        </View>
+                                    ) : (
+                                        <Text style={{ color: 'rgba(255,255,255,0.3)', fontStyle: 'italic', fontSize: 13 }}>
+                                            Presence detected, but no device usage recorded.
+                                        </Text>
+                                    )}
+                                </View>
+                            )}
                         </View>
                     );
+
                 })}
             </View>
         );
@@ -416,16 +479,28 @@ export default function StatisticsPage() {
                     const entities = homeStats[areaName];
                     if (entities.length === 0) return null;
 
+                    const isExpanded = !!expandedRooms[areaName];
+
                     return (
                         <View key={areaName} style={{ marginBottom: 25 }}>
-                            <Text style={{ color: '#8947ca', fontSize: 18, fontWeight: 'bold', marginBottom: 10, textTransform: 'capitalize' }}>
-                                {areaName}
-                            </Text>
-                            <View style={{ marginBottom: 10 }}>
-                                {renderEntityGroup(entities)}
-                            </View>
+                            <TouchableOpacity
+                                onPress={() => toggleRoom(areaName)}
+                                style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10, gap: 10 }}
+                            >
+                                {isExpanded ? <Minus size={20} color="#8947ca" /> : <Plus size={20} color="#ccc" />}
+                                <Text style={{ color: '#8947ca', fontSize: 18, fontWeight: 'bold', marginBottom: 0, textTransform: 'capitalize' }}>
+                                    {areaName}
+                                </Text>
+                            </TouchableOpacity>
+
+                            {isExpanded && (
+                                <View style={{ marginBottom: 10, paddingLeft: 30 }}>
+                                    {renderEntityGroup(entities)}
+                                </View>
+                            )}
                         </View>
                     );
+
                 })}
             </View>
         );
@@ -535,11 +610,166 @@ export default function StatisticsPage() {
         );
     };
 
+    // --- Room Detail Modal (Clocks + Table) ---
+    const [selectedRoom, setSelectedRoom] = useState(null); // { name: 'living_room', intervals: [] }
+    const [processingRoom, setProcessingRoom] = useState(false); // Loader state
+
+    const handleRoomClick = async (roomName) => {
+        setProcessingRoom(true);
+        // Simulate a tiny delay to allow UI to render the loader if calculation is heavy
+        // In reality, we just set the state, but if filtering is expensive, this helps.
+        setTimeout(() => {
+            setSelectedRoom({ name: roomName });
+            setProcessingRoom(false);
+        }, 50);
+    };
+
+    const mergeIntervals = (intervals) => {
+        if (!intervals || intervals.length === 0) return [];
+
+        // Sort by start time
+        const sorted = [...intervals].sort((a, b) => a.start - b.start);
+        const merged = [];
+        let current = sorted[0];
+
+        for (let i = 1; i < sorted.length; i++) {
+            const next = sorted[i];
+            const gap = next.start - current.end;
+
+            // Merge if gap is less than 30 seconds (30000ms)
+            if (gap < 30000) {
+                current.end = Math.max(current.end, next.end);
+            } else {
+                merged.push(current);
+                current = next;
+            }
+        }
+        merged.push(current);
+        return merged;
+    };
+
+    const renderRoomDetailModal = () => {
+        if (!selectedRoom) return null;
+
+        // Helper to normalize keys for matching
+        const normalize = (s) => s.toLowerCase().replace(/_/g, ' ').trim();
+        const target = normalize(selectedRoom.name);
+
+        // Get Intervals
+        let intervals = [];
+        if (stats && stats.presence_intervals) {
+            // Try direct match
+            if (stats.presence_intervals[selectedRoom.name]) {
+                intervals = stats.presence_intervals[selectedRoom.name];
+            } else {
+                // Try fuzzy match
+                const matchKey = Object.keys(stats.presence_intervals).find(k => normalize(k) === target);
+                if (matchKey) {
+                    intervals = stats.presence_intervals[matchKey];
+                }
+            }
+        }
+
+        // Filter intervals by Date Range (selectedDate/viewMode)
+        const { start, end } = range;
+        const sTime = start.getTime();
+        const eTime = end.getTime();
+
+        const rawFiltered = intervals.filter(int => {
+            // Check overlap
+            return (int.start <= eTime && int.end >= sTime);
+        });
+
+        const filteredIntervals = mergeIntervals(rawFiltered);
+
+        return (
+            <Modal visible={true} transparent animationType="slide">
+                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center' }}>
+                    <View style={{ width: '90%', height: '80%', backgroundColor: '#1a1b2e', borderRadius: 20, padding: 20 }}>
+
+                        {/* Header */}
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                            <Text style={{ color: 'white', fontSize: 22, fontWeight: 'bold', textTransform: 'capitalize' }}>
+                                {selectedRoom.name.replace(/_/g, ' ')} Details
+                            </Text>
+                            <TouchableOpacity onPress={() => setSelectedRoom(null)}>
+                                <X color="white" size={28} />
+                            </TouchableOpacity>
+                        </View>
+
+                        <Text style={{ color: '#aaa', fontSize: 14, marginBottom: 20, textAlign: 'center' }}>
+                            {range.label}
+                        </Text>
+
+                        {/* DEBUG TEXT FOR USER */}
+                        {/* DEBUG TEXT FOR USER */}
+                        {(filteredIntervals.length === 0 || !stats.presence_intervals) && (
+                            <View style={{ backgroundColor: '#331111', padding: 10, borderRadius: 8, marginBottom: 10 }}>
+                                <Text style={{ color: 'red', fontSize: 13, fontWeight: 'bold' }}>DEBUG INFO:</Text>
+                                <Text style={{ color: '#ffaaaa', fontSize: 11, marginTop: 4 }}>
+                                    1. Backend Update: {stats.debug_meta ? "OK (V10)" : "MISSING (Restart Required)"}
+                                </Text>
+                                {stats.debug_meta && (
+                                    <>
+                                        <Text style={{ color: '#faaaaa', fontSize: 10 }}>Start: {stats.debug_meta.start_received || 'NULL'}</Text>
+                                        <Text style={{ color: '#faaaaa', fontSize: 10 }}>End: {stats.debug_meta.end_received || 'NULL'}</Text>
+                                        <Text style={{ color: '#faaaaa', fontSize: 10 }}>Ignored: {JSON.stringify(stats.debug_meta.ignored_config)}</Text>
+                                        <Text style={{ color: '#faaaaa', fontSize: 10 }}>Entities: {JSON.stringify(stats.debug_meta.user_entities)}</Text>
+                                    </>
+                                )}
+                                <Text style={{ color: '#faaaaa', fontSize: 10 }}>2. Room: {selectedRoom.name}</Text>
+                                <Text style={{ color: '#faaaaa', fontSize: 10 }}>3. Intervals Found: {rawFiltered.length}</Text>
+                            </View>
+                        )}
+
+                        <ScrollView showsVerticalScrollIndicator={false}>
+                            {/* Clocks */}
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-around', marginBottom: 30 }}>
+                                <AnalogClockPresence intervals={filteredIntervals} type="AM" size={120} />
+                                <AnalogClockPresence intervals={filteredIntervals} type="PM" size={120} />
+                            </View>
+
+                            {/* Interval Table */}
+                            <Text style={{ color: '#ccc', fontSize: 16, fontWeight: 'bold', marginBottom: 10 }}>Presence Log (From - To)</Text>
+
+                            {filteredIntervals.length > 0 ? (
+                                <View style={{ backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 12, padding: 10 }}>
+                                    {filteredIntervals.sort((a, b) => a.start - b.start).map((int, i) => {
+                                        const s = new Date(Math.max(int.start, sTime)); // Clamp to window
+                                        const e = new Date(Math.min(int.end, eTime));   // Clamp to window
+
+                                        const sStr = s.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                        const eStr = e.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                                        const dateLabel = viewMode !== 'daily' ? `(${s.getDate()}/${s.getMonth() + 1}) ` : '';
+
+                                        // Calculate duration 
+                                        const durMins = Math.round((e - s) / 60000);
+
+                                        return (
+                                            <View key={i} style={{ flexDirection: 'row', justifyContent: 'space-between', paddingVertical: 8, borderBottomWidth: i === filteredIntervals.length - 1 ? 0 : 1, borderBottomColor: 'rgba(255,255,255,0.05)' }}>
+                                                <Text style={{ color: 'white', fontSize: 14 }}>{dateLabel}{sStr} - {eStr}</Text>
+                                                <Text style={{ color: '#8947ca', fontSize: 14 }}>{durMins} mins</Text>
+                                            </View>
+                                        );
+                                    })}
+                                </View>
+                            ) : (
+                                <Text style={{ color: '#666', fontStyle: 'italic' }}>No detailed intervals recorded for this period.</Text>
+                            )}
+
+                        </ScrollView>
+                    </View>
+                </View>
+            </Modal>
+        );
+    };
+
     return (
         <View style={styles.container}>
             <Stack.Screen options={{ headerShown: false }} />
             <LinearGradient colors={['#1a1b2e', '#16161e', '#000000']} style={styles.background} />
             {renderCalendarModal()}
+            {renderRoomDetailModal()}
 
             <View style={styles.header}>
                 <TouchableOpacity onPress={() => router.back()} style={styles.backButton}><ChevronLeft color="white" size={28} /></TouchableOpacity>

@@ -13,6 +13,7 @@ import ClimateCard from './ClimateCard';
 import CoverCard from './CoverCard';
 import MediaCard from './MediaCard';
 import HACamerasList from './HACamerasList';
+import RoomClimateChart from './RoomClimateChart';
 
 // Fan Card Component
 function FanCard({ fan, onToggle }) {
@@ -234,8 +235,11 @@ export default function RoomDetailView({
     const tempSensors = sensors.filter(s => s.entity_id.includes('temperature') && !s.entity_id.includes('battery'));
     const humiditySensors = sensors.filter(s => s.entity_id.includes('humidity') && !s.entity_id.includes('battery'));
     // Use the processed doors list if available, else fallback
-    // Use the processed doors list if available, else fallback
     const doorSensors = (doors || []).concat(sensors.filter(s => s.entity_id.startsWith('sensor.door_') && !(doors || []).find(d => d.entity_id === s.entity_id)));
+
+    // Select Main Sensors for Charts
+    const mainTemp = tempSensors.length > 0 ? tempSensors[0] : null;
+    const mainHumidity = humiditySensors.length > 0 ? humiditySensors[0] : null;
 
     const handleUpdate = (entityId, payload) => {
         if (onToggle) onToggle('light', 'turn_on', { entity_id: entityId, ...payload });
@@ -361,6 +365,15 @@ export default function RoomDetailView({
 
             <GestureHandlerRootView style={{ flex: 1 }}>
                 <ScrollView contentContainerStyle={styles.content}>
+
+                    {/* Charts Section */}
+                    {(mainTemp || mainHumidity) && (
+                        <RoomClimateChart
+                            tempEntityId={mainTemp?.entity_id}
+                            humidityEntityId={mainHumidity?.entity_id}
+                        />
+                    )}
+
                     {/* Doors Section (Top Placement) */}
                     {doorSensors.length > 0 && (
                         <View style={{ marginBottom: 20 }}>
@@ -683,5 +696,11 @@ const styles = StyleSheet.create({
     emptyText: {
         color: Colors.textDim,
         fontSize: 16,
+    },
+    sectionTitle: {
+        color: Colors.text,
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginBottom: 12
     }
 });

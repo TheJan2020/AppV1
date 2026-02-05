@@ -1,10 +1,10 @@
-import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, TextInput, FlatList, Alert } from 'react-native';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, TextInput, FlatList, Alert, KeyboardAvoidingView, Platform } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { X, ArrowRight, Check, Search } from 'lucide-react-native';
+import { X, ArrowRight, Check, Search, Save } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
 import { useState, useEffect } from 'react';
 
-export default function AddAlertModal({ visible, onClose, onSuccess }) {
+export default function AddAlertModal({ visible, onClose, onSuccess, initialRule = null }) {
     const [step, setStep] = useState(1);
     const [entities, setEntities] = useState([]);
     const [filteredEntities, setFilteredEntities] = useState([]);
@@ -14,18 +14,29 @@ export default function AddAlertModal({ visible, onClose, onSuccess }) {
     const [selectedEntity, setSelectedEntity] = useState(null);
     const [triggerState, setTriggerState] = useState('');
     const [threshold, setThreshold] = useState('0');
+    const [repeatMinutes, setRepeatMinutes] = useState('0');
 
     const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL;
+    const isEditing = !!initialRule;
 
     useEffect(() => {
         if (visible) {
-            setStep(1);
-            setTriggerState('');
-            setThreshold('0');
-            setSelectedEntity(null);
+            setStep(initialRule ? 2 : 1);
+            if (initialRule) {
+                setSelectedEntity({ entity_id: initialRule.entity_id });
+                setTriggerState(initialRule.trigger_state);
+                setThreshold(String(initialRule.threshold_seconds || 0));
+                setRepeatMinutes(String(initialRule.repeat_minutes || 0));
+            } else {
+                setTriggerState('');
+                setThreshold('0');
+                setRepeatMinutes('0');
+                setSelectedEntity(null);
+                setSearchQuery('');
+            }
             fetchMonitoredEntities();
         }
-    }, [visible]);
+    }, [visible, initialRule]);
 
     useEffect(() => {
         if (!searchQuery) {
@@ -44,6 +55,7 @@ export default function AddAlertModal({ visible, onClose, onSuccess }) {
             if (data.success) {
                 setEntities(data.entities);
                 setFilteredEntities(data.entities);
+                // If editing, ensure we have the full object if needed, though we just need ID
             }
         } catch (e) {
             console.error(e);
@@ -58,14 +70,18 @@ export default function AddAlertModal({ visible, onClose, onSuccess }) {
 
         try {
             const url = adminUrl.endsWith('/') ? `${adminUrl}api/alerts` : `${adminUrl}/api/alerts`;
+            const payload = {
+                entity_id: selectedEntity.entity_id,
+                trigger_state: triggerState,
+                threshold_seconds: threshold,
+                repeat_minutes: repeatMinutes
+            };
+            if (isEditing) payload.id = initialRule.id;
+
             const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    entity_id: selectedEntity.entity_id,
-                    trigger_state: triggerState,
-                    threshold_seconds: threshold
-                })
+                body: JSON.stringify(payload)
             });
             const data = await res.json();
             if (data.success) {
@@ -117,49 +133,61 @@ export default function AddAlertModal({ visible, onClose, onSuccess }) {
     );
 
     const renderStep2 = () => (
-        <View style={{ flex: 1 }}>
-            <Text style={styles.stepTitle}>Configuration</Text>
+        <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={{ flex: 1 }}>
+            <ScrollView style={{ flex: 1 }}>
+                <Text style={styles.stepTitle}>Configuration</Text>
 
-            <View style={styles.infoBox}>
-                <Text style={styles.label}>Selected Entity</Text>
-                <Text style={styles.value}>{selectedEntity?.entity_id}</Text>
-            </View>
+                <View style={styles.infoBox}>
+                    <Text style={styles.label}>Selected Entity</Text>
+                    <Text style={styles.value}>{selectedEntity?.entity_id}</Text>
+                </View>
 
-            <View style={styles.inputGroup}>
-                <Text style={styles.label}>Trigger State</Text>
-                <TextInput
-                    style={styles.input}
-                    placeholder="e.g. on, open, unavailable"
-                    placeholderTextColor={Colors.textDim}
-                    value={triggerState}
-                    onChangeText={setTriggerState}
-                    autoCapitalize="none"
-                />
-                <Text style={styles.helper}>The state that triggers the alert.</Text>
-            </View>
+                <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Trigger State</Text>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="e.g. on, open, unavailable"
+                        placeholderTextColor={Colors.textDim}
+                        value={triggerState}
+                        onChangeText={setTriggerState}
+                        autoCapitalize="none"
+                    />
+                    <Text style={styles.helper}>The state that triggers the alert.</Text>
+                </View>
 
-            <View style={styles.inputGroup}>
-                <Text style={styles.label}>Threshold (In Seconds)</Text>
-                <TextInput
-                    style={styles.input}
-                    placeholder="0"
-                    placeholderTextColor={Colors.textDim}
-                    value={threshold}
-                    onChangeText={setThreshold}
-                    keyboardType="numeric"
-                />
-                <Text style={styles.helper}>Time the entity must remain in state before triggering.</Text>
-            </View>
+                <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Threshold (Seconds)</Text>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="0"
+                        placeholderTextColor={Colors.textDim}
+                        value={threshold}
+                        onChangeText={setThreshold}
+                        keyboardType="numeric"
+                    />
+                    <Text style={styles.helper}>Time the entity must remain in state before triggering.</Text>
+                </View>
 
-            <TouchableOpacity style={styles.saveBtn} onPress={handleSave}>
-                <Check size={20} color="#fff" />
-                <Text style={styles.btnText}>Save Alert</Text>
-            </TouchableOpacity>
+                <View style={styles.inputGroup}>
+                    <Text style={styles.label}>Repeat Alert (Minutes)</Text>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="0 (No Repeat)"
+                        placeholderTextColor={Colors.textDim}
+                        value={repeatMinutes}
+                        onChangeText={setRepeatMinutes}
+                        keyboardType="numeric"
+                    />
+                    <Text style={styles.helper}>Sends notification/script every X minutes if still active. 0 = Once.</Text>
+                </View>
 
-            <TouchableOpacity style={styles.backBtn} onPress={() => setStep(1)}>
-                <Text style={styles.backBtnText}>Back</Text>
-            </TouchableOpacity>
-        </View>
+                {!isEditing && (
+                    <TouchableOpacity style={styles.backBtn} onPress={() => setStep(1)}>
+                        <Text style={styles.backBtnText}>Change Entity</Text>
+                    </TouchableOpacity>
+                )}
+            </ScrollView>
+        </KeyboardAvoidingView>
     );
 
     return (
@@ -171,12 +199,21 @@ export default function AddAlertModal({ visible, onClose, onSuccess }) {
         >
             <View style={styles.overlay}>
                 <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
-                <View style={[styles.contentContainer, { height: step === 1 ? '85%' : '60%' }]}>
+                <View style={[styles.contentContainer, { height: step === 1 ? '85%' : '75%' }]}>
                     <View style={styles.header}>
-                        <Text style={styles.title}>Add New Alert</Text>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
                             <X size={24} color={Colors.textDim} />
                         </TouchableOpacity>
+
+                        <Text style={styles.title}>{isEditing ? 'Edit Alert' : 'Add Alert'}</Text>
+
+                        {step === 2 ? (
+                            <TouchableOpacity onPress={handleSave} style={styles.saveHeaderBtn}>
+                                <Text style={styles.saveHeaderText}>Save</Text>
+                            </TouchableOpacity>
+                        ) : (
+                            <View style={{ width: 40 }} /> // Spacer
+                        )}
                     </View>
 
                     {step === 1 ? renderStep1() : renderStep2()}
@@ -207,11 +244,22 @@ const styles = StyleSheet.create({
     },
     title: {
         color: '#fff',
-        fontSize: 20,
+        fontSize: 18,
         fontWeight: 'bold'
     },
     closeBtn: {
         padding: 5
+    },
+    saveHeaderBtn: {
+        paddingVertical: 6,
+        paddingHorizontal: 12,
+        backgroundColor: Colors.primary,
+        borderRadius: 8
+    },
+    saveHeaderText: {
+        color: '#fff',
+        fontWeight: 'bold',
+        fontSize: 14
     },
     stepTitle: {
         color: Colors.primary,
@@ -304,16 +352,6 @@ const styles = StyleSheet.create({
         color: Colors.textDim,
         fontSize: 12,
         marginTop: 6
-    },
-    saveBtn: {
-        backgroundColor: Colors.primary,
-        padding: 16,
-        borderRadius: 12,
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 10,
-        marginTop: 10
     },
     backBtn: {
         padding: 16,

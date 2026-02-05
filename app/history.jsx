@@ -14,6 +14,7 @@ export default function HistoryPage() {
     const [loadingMore, setLoadingMore] = useState(false);
     const [offset, setOffset] = useState(0);
     const [hasMore, setHasMore] = useState(true);
+    const [showTrackers, setShowTrackers] = useState(false);
     const [showAttributes, setShowAttributes] = useState(false);
     const [activeTab, setActiveTab] = useState(entity_id ? 'all' : 'all'); // Default to 'all'
     const [user, setUser] = useState(null);
@@ -90,45 +91,91 @@ export default function HistoryPage() {
 
     useEffect(() => {
         if (adminUrl) loadHistory(true);
-    }, [adminUrl, entity_id, activeTab, user]);
+    }, [adminUrl, entity_id, activeTab, activeTab === 'my' ? user : null]);
 
     const renderHeader = () => (
         <View style={styles.headerRow}>
-            <Text style={[styles.cell, { flex: 0.5 }]}>Time</Text>
+            <Text style={[styles.cell, { flex: 0.8 }]}>Time</Text>
             {activeTab === 'all' && <Text style={[styles.cell, { flex: 0.9, color: '#4CAF50' }]}>User</Text>}
-            <Text style={[styles.cell, { flex: 1.3 }]}>Entity</Text>
-            <Text style={[styles.cell, { flex: 0.8 }]}>State</Text>
-            <Text style={[styles.cell, { flex: 0.6 }]}>Old</Text>
+            <Text style={[styles.cell, { flex: 0.9, color: '#FFD700' }]}>Room</Text>
+            <Text style={[styles.cell, { flex: 1.5 }]}>Entity</Text>
+            <Text style={[styles.cell, { flex: 1.0 }]}>State</Text>
             {showAttributes && <Text style={[styles.cell, { flex: 2 }]}>Attributes</Text>}
         </View>
     );
 
-    const formatTime = (ts) => {
-        try {
-            return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        } catch (e) {
-            return ts;
-        }
-    };
+    const renderItem = ({ item }) => {
+        const date = new Date(item.timestamp);
+        const now = new Date();
+        const diffMs = now - date;
+        const diffMins = Math.floor(diffMs / 60000);
+        const diffHrs = Math.floor(diffMins / 60);
 
-    const renderItem = ({ item }) => (
-        <TouchableOpacity style={styles.row} onPress={() => setSelectedItem(item)}>
-            <Text style={[styles.cellText, { flex: 0.5, fontSize: 10 }]}>{formatTime(item.timestamp)}</Text>
-            {activeTab === 'all' && (
-                <Text style={[styles.cellText, { flex: 0.9, color: item.changed_by && item.changed_by !== 'System' ? '#4CAF50' : '#888', fontSize: 11 }]} numberOfLines={1}>
-                    {item.changed_by || 'System'}
+        let relativeTime;
+        if (diffHrs < 24) {
+            if (diffHrs > 0) relativeTime = `${diffHrs}h ${diffMins % 60}m ago`;
+            else relativeTime = `${diffMins}m ago`;
+        }
+
+        // Manual formatting for consistency/safety
+        let hours = date.getHours();
+        const minutes = date.getMinutes().toString().padStart(2, '0');
+        const ampm = hours >= 12 ? 'PM' : 'AM';
+        hours = hours % 12;
+        hours = hours ? hours : 12; // the hour '0' should be '12'
+        const time = `${hours}:${minutes}`;
+
+        return (
+            <TouchableOpacity style={styles.row} onPress={() => setSelectedItem(item)}>
+                {/* TIME COLUMN */}
+                <View style={[styles.cellContainer, { flex: 0.8 }]}>
+                    <Text style={styles.timeMain}>{time}</Text>
+                    <Text style={styles.timeSub}>{ampm}</Text>
+                    {relativeTime && <Text style={styles.timeRelative}>{relativeTime}</Text>}
+                </View>
+
+                {/* USER COLUMN */}
+                {activeTab === 'all' && (
+                    <Text style={[styles.cellText, { flex: 0.9, color: item.changed_by && item.changed_by !== 'System' ? '#4CAF50' : '#888', fontSize: 11 }]} numberOfLines={1}>
+                        {item.changed_by || 'System'}
+                    </Text>
+                )}
+
+                {/* ROOM COLUMN - NEW */}
+                <Text style={[styles.cellText, { flex: 0.9, color: '#FFD700', fontSize: 11 }]} numberOfLines={1}>
+                    {item.area_name || '-'}
                 </Text>
-            )}
-            <Text style={[styles.cellText, { flex: 1.3, fontWeight: '600' }]} numberOfLines={1} ellipsizeMode="tail">{item.entity_id}</Text>
-            <Text style={[styles.cellText, { flex: 0.8 }]} numberOfLines={1}>{item.state}</Text>
-            <Text style={[styles.cellText, { flex: 0.6, color: '#aaa', fontSize: 10 }]} numberOfLines={1}>{item.old_state || '-'}</Text>
-            {showAttributes && (
-                <Text style={[styles.cellText, { flex: 2, fontSize: 10, fontFamily: 'monospace', opacity: 0.7 }]} numberOfLines={2}>
-                    {item.attributes}
-                </Text>
-            )}
-        </TouchableOpacity>
-    );
+
+                {/* ENTITY COLUMN */}
+                <View style={[styles.cellContainer, { flex: 1.5, justifyContent: 'center' }]}>
+                    <Text style={[styles.cellText, { fontWeight: '600', fontSize: 12 }]} numberOfLines={1} ellipsizeMode="tail">
+                        {(() => {
+                            try {
+                                const attrs = item.attributes ? JSON.parse(item.attributes) : {};
+                                return attrs.friendly_name || item.entity_id;
+                            } catch { return item.entity_id; }
+                        })()}
+                    </Text>
+                    <Text style={[styles.cellText, { color: 'rgba(255,255,255,0.5)', fontSize: 10 }]} numberOfLines={1} ellipsizeMode="tail">
+                        {item.entity_id}
+                    </Text>
+                </View>
+
+                {/* STATE COLUMN (Merged) */}
+                <View style={[styles.cellContainer, { flex: 1.0, justifyContent: 'center' }]}>
+                    <Text style={[styles.cellText, { fontWeight: 'bold' }]} numberOfLines={1}>{item.state}</Text>
+                    <Text style={[styles.cellText, { color: '#aaa', fontSize: 10 }]} numberOfLines={1}>{item.old_state || '-'}</Text>
+                </View>
+
+                {/* ATTRS COLUMN */}
+                {showAttributes && (
+                    <Text style={[styles.cellText, { flex: 2, fontSize: 10, fontFamily: 'monospace', opacity: 0.7 }]} numberOfLines={2}>
+                        {item.attributes}
+                    </Text>
+                )}
+            </TouchableOpacity>
+        );
+    };
 
     const renderAttributes = (attrsStr) => {
         if (!attrsStr) return <Text style={{ color: '#888', fontStyle: 'italic', marginTop: 5 }}>No attributes</Text>;
@@ -224,7 +271,15 @@ export default function HistoryPage() {
         </Modal>
     );
 
-    const displayData = history;
+    const displayData = history.filter(item => {
+        // If Trackers OFF: Hide items with NO ROOM (empty area_name)
+        if (activeTab === 'all' && !showTrackers) {
+            // If area_name is missing/empty, FILTER OUT.
+            // So we return TRUE only if area_name exists
+            return !!item.area_name;
+        }
+        return true;
+    });
 
     return (
         <View style={styles.container}>
@@ -236,17 +291,52 @@ export default function HistoryPage() {
                     <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
                         <Ionicons name="arrow-back" size={24} color="white" />
                     </TouchableOpacity>
-                    <Text style={[styles.title, { fontSize: entity_id ? 16 : 20 }]} numberOfLines={1}>
-                        {entity_id ? entity_id : 'History Log'}
-                    </Text>
+                    <View style={{ flex: 1, marginHorizontal: 15 }}>
+                        {entity_id ? (
+                            <>
+                                <Text style={{ color: 'white', fontSize: 16, fontWeight: 'bold' }} numberOfLines={1}>
+                                    {(() => {
+                                        if (history.length > 0) {
+                                            try {
+                                                const attrs = JSON.parse(history[0].attributes);
+                                                return attrs.friendly_name || entity_id;
+                                            } catch (e) { return entity_id; }
+                                        }
+                                        return entity_id;
+                                    })()}
+                                </Text>
+                                <Text style={{ color: 'rgba(255,255,255,0.5)', fontSize: 10 }}>
+                                    {entity_id}
+                                    {history.length > 0 && history[0].area_name ? ` • ${history[0].area_name}` : ''}
+                                </Text>
+                            </>
+                        ) : (
+                            <Text style={styles.title}>History Log</Text>
+                        )}
+                    </View>
                     <View style={styles.controls}>
-                        <Text style={styles.label}>Attrs</Text>
-                        <Switch
-                            value={showAttributes}
-                            onValueChange={setShowAttributes}
-                            trackColor={{ false: '#767577', true: '#8947ca' }}
-                            thumbColor={showAttributes ? '#fff' : '#f4f3f4'}
-                        />
+                        {activeTab === 'all' && (
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <Text style={styles.label}>Trackers</Text>
+                                <Switch
+                                    value={showTrackers}
+                                    onValueChange={setShowTrackers}
+                                    trackColor={{ false: '#767577', true: '#8947ca' }}
+                                    thumbColor={showTrackers ? '#fff' : '#f4f3f4'}
+                                    style={{ transform: [{ scaleX: 0.7 }, { scaleY: 0.7 }] }}
+                                />
+                            </View>
+                        )}
+                        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                            <Text style={styles.label}>Attrs</Text>
+                            <Switch
+                                value={showAttributes}
+                                onValueChange={setShowAttributes}
+                                trackColor={{ false: '#767577', true: '#8947ca' }}
+                                thumbColor={showAttributes ? '#fff' : '#f4f3f4'}
+                                style={{ transform: [{ scaleX: 0.7 }, { scaleY: 0.7 }] }}
+                            />
+                        </View>
                     </View>
                 </View>
 
@@ -312,8 +402,8 @@ const styles = StyleSheet.create({
     },
     backBtn: { padding: 5, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 20 },
     title: { color: 'white', fontSize: 20, fontWeight: 'bold' },
-    controls: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-    label: { color: 'rgba(255,255,255,0.6)', fontSize: 12 },
+    controls: { alignItems: 'flex-end', gap: 4 },
+    label: { color: 'rgba(255,255,255,0.6)', fontSize: 10, marginRight: 4 },
     tableContainer: { flex: 1, paddingHorizontal: 15 },
     headerRow: {
         flexDirection: 'row',
@@ -345,5 +435,9 @@ const styles = StyleSheet.create({
     attrRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 8, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
     attrKey: { color: '#aaa', fontSize: 13 },
     closeBtn: { backgroundColor: '#8947ca', paddingVertical: 15, borderRadius: 12, alignItems: 'center', marginTop: 20 },
-    closeBtnText: { color: 'white', fontWeight: 'bold', fontSize: 16 }
+    closeBtnText: { color: 'white', fontWeight: 'bold', fontSize: 16 },
+    cellContainer: { justifyContent: 'center' },
+    timeMain: { color: 'white', fontSize: 12, fontWeight: 'bold' },
+    timeSub: { color: 'rgba(255,255,255,0.6)', fontSize: 10 },
+    timeRelative: { color: '#8947ca', fontSize: 9, fontStyle: 'italic', marginTop: 2 },
 });

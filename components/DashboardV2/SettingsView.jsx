@@ -1,33 +1,47 @@
 import { useState, useEffect } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, FlatList, TextInput, Alert, ActivityIndicator, Switch } from 'react-native'; // Added inputs
+import { View, Text, TouchableOpacity, StyleSheet, ScrollView, FlatList, TextInput, Alert, ActivityIndicator, Switch } from 'react-native';
 import { Colors } from '../../constants/Colors';
-import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database } from 'lucide-react-native'; // Added Brain, Check, Save, Bell
+import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone } from 'lucide-react-native';
 import { router } from 'expo-router';
-import { AIService } from '../../services/ai'; // Import AI Service
-import { AIService } from '../../services/ai'; // Import AI Service
+import { AIService } from '../../services/ai';
 import * as SecureStore from 'expo-secure-store';
 import MonitoredEntitiesModal from './MonitoredEntitiesModal';
 import AlertEntitiesModal from './AlertEntitiesModal';
+import MyPreferencesModal from './MyPreferencesModal';
 
-export default function SettingsView({ areas = [], entities = [], registryDevices = [], registryEntities = [], onSettingChange, onPlayMedia, onNetwork }) {
+export default function SettingsView({
+    areas = [],
+    entities = [],
+    registryDevices = [],
+    registryEntities = [],
+    onSettingChange,
+    onPlayMedia,
+    onNetwork,
+    showFamily, // Prop from parent
+    autoRoomVisit, // Prop from parent
+    autoRoomResume // Prop from parent
+}) {
     const [activeTab, setActiveTab] = useState('general');
     const [selectedArea, setSelectedArea] = useState(null);
 
-    // General Settings State
-    const [showFamily, setShowFamily] = useState(true);
+    // Modals
     const [monitoredModalVisible, setMonitoredModalVisible] = useState(false);
     const [alertModalVisible, setAlertModalVisible] = useState(false);
+    const [preferencesModalVisible, setPreferencesModalVisible] = useState(false);
 
-    useEffect(() => {
-        SecureStore.getItemAsync('settings_show_family').then(val => {
-            setShowFamily(val === 'false' ? false : true);
-        });
-    }, []);
+    // Generic Toggle Handler (Persist + Notify Parent)
+    const handleToggleSetting = async (key, val) => {
+        // Map prop keys to SecureStore keys
+        let storeKey = '';
+        if (key === 'showFamily') storeKey = 'settings_show_family';
+        if (key === 'autoRoomVisit') storeKey = 'settings_auto_room_visit';
+        if (key === 'autoRoomResume') storeKey = 'settings_auto_room_resume';
 
-    const handleToggleFamily = async (val) => {
-        setShowFamily(val);
-        await SecureStore.setItemAsync('settings_show_family', val.toString());
-        if (onSettingChange) onSettingChange('showFamily', val);
+        if (storeKey) {
+            await SecureStore.setItemAsync(storeKey, val.toString());
+        }
+
+        if (onSettingChange) onSettingChange(key, val);
     };
 
     // AI Config State
@@ -83,7 +97,6 @@ export default function SettingsView({ areas = [], entities = [], registryDevice
 
         try {
             await AIService.testKey(provider, key);
-            // Dismiss isn't directly available in standard React Native Alert, but simple Alert works
             Alert.alert('Success', `Valid ${provider} API Key!`);
         } catch (error) {
             Alert.alert('Failed', `Invalid Key: ${error.message}`);
@@ -308,6 +321,8 @@ export default function SettingsView({ areas = [], entities = [], registryDevice
         <ScrollView contentContainerStyle={styles.listContent}>
             <View style={styles.section}>
                 <Text style={styles.sectionHeader}>Display</Text>
+
+                {/* Show Family Toggle */}
                 <View style={styles.listItem}>
                     <View style={styles.itemInfo}>
                         <View style={styles.iconContainer}>
@@ -320,9 +335,47 @@ export default function SettingsView({ areas = [], entities = [], registryDevice
                     </View>
                     <Switch
                         value={showFamily}
-                        onValueChange={handleToggleFamily}
+                        onValueChange={(val) => handleToggleSetting('showFamily', val)}
                         trackColor={{ false: '#767577', true: Colors.primary }}
                         thumbColor={showFamily ? '#fff' : '#f4f3f4'}
+                    />
+                </View>
+
+                {/* Auto Room (Visit) Toggle */}
+                <View style={styles.listItem}>
+                    <View style={styles.itemInfo}>
+                        <View style={styles.iconContainer}>
+                            <Map size={20} color={Colors.text} />
+                        </View>
+                        <View>
+                            <Text style={styles.itemName}>Auto-Room (On Visit)</Text>
+                            <Text style={styles.itemSub}>Open room sheet when location changes</Text>
+                        </View>
+                    </View>
+                    <Switch
+                        value={autoRoomVisit}
+                        onValueChange={(val) => handleToggleSetting('autoRoomVisit', val)}
+                        trackColor={{ false: '#767577', true: Colors.primary }}
+                        thumbColor={autoRoomVisit ? '#fff' : '#f4f3f4'}
+                    />
+                </View>
+
+                {/* Auto Room (Background) Toggle */}
+                <View style={styles.listItem}>
+                    <View style={styles.itemInfo}>
+                        <View style={styles.iconContainer}>
+                            <Smartphone size={20} color={Colors.text} />
+                        </View>
+                        <View>
+                            <Text style={styles.itemName}>Auto-Room (Resume)</Text>
+                            <Text style={styles.itemSub}>Check location when opening app</Text>
+                        </View>
+                    </View>
+                    <Switch
+                        value={autoRoomResume}
+                        onValueChange={(val) => handleToggleSetting('autoRoomResume', val)}
+                        trackColor={{ false: '#767577', true: Colors.primary }}
+                        thumbColor={autoRoomResume ? '#fff' : '#f4f3f4'}
                     />
                 </View>
             </View>
@@ -350,6 +403,19 @@ export default function SettingsView({ areas = [], entities = [], registryDevice
                         <View>
                             <Text style={styles.itemName}>Alert Entities</Text>
                             <Text style={styles.itemSub}>Configure state alerts</Text>
+                        </View>
+                    </View>
+                    <ChevronRight size={20} color={Colors.textDim} />
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.listItem} onPress={() => setPreferencesModalVisible(true)}>
+                    <View style={styles.itemInfo}>
+                        <View style={styles.iconContainer}>
+                            <Brain size={20} color={Colors.text} />
+                        </View>
+                        <View>
+                            <Text style={styles.itemName}>My Preferences</Text>
+                            <Text style={styles.itemSub}>AI-powered room analysis</Text>
                         </View>
                     </View>
                     <ChevronRight size={20} color={Colors.textDim} />
@@ -395,6 +461,16 @@ export default function SettingsView({ areas = [], entities = [], registryDevice
                             <BarChart2 size={20} color={Colors.text} />
                         </View>
                         <Text style={styles.itemName}>My Statistics</Text>
+                    </View>
+                    <ChevronRight size={20} color={Colors.textDim} />
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.listItem} onPress={() => router.push('/insights')}>
+                    <View style={styles.itemInfo}>
+                        <View style={styles.iconContainer}>
+                            <Activity size={20} color={Colors.text} />
+                        </View>
+                        <Text style={styles.itemName}>Insights</Text>
                     </View>
                     <ChevronRight size={20} color={Colors.textDim} />
                 </TouchableOpacity>
@@ -517,6 +593,10 @@ export default function SettingsView({ areas = [], entities = [], registryDevice
             <AlertEntitiesModal
                 visible={alertModalVisible}
                 onClose={() => setAlertModalVisible(false)}
+            />
+            <MyPreferencesModal
+                visible={preferencesModalVisible}
+                onClose={() => setPreferencesModalVisible(false)}
             />
         </View >
     );
@@ -770,22 +850,17 @@ const styles = StyleSheet.create({
     testPushText: {
         color: Colors.primary,
         fontSize: 16,
-        fontWeight: '600',
     },
     logoutBtn: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'rgba(255, 59, 48, 0.1)', // Light Red
-        paddingVertical: 16,
-        paddingHorizontal: 32,
-        borderRadius: 16,
-        gap: 12,
-        borderWidth: 1,
-        borderColor: 'rgba(255, 59, 48, 0.2)',
+        gap: 8,
+        marginTop: 'auto',
+        marginBottom: 40,
     },
     logoutText: {
         color: Colors.error,
-        fontSize: 18,
+        fontSize: 16,
         fontWeight: '600',
-    }
+    },
 });

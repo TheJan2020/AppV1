@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect } from 'react';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import HeaderV2 from '../components/DashboardV2/HeaderV2';
@@ -49,11 +49,21 @@ export default function DashboardV2() {
     const [showYoutubeLauncher, setShowYoutubeLauncher] = useState(false);
     const [showAppleTVRemote, setShowAppleTVRemote] = useState(false);
     const [showNetworkModal, setShowNetworkModal] = useState(false);
+
+    // Settings State
     const [showFamily, setShowFamily] = useState(true);
+    const [autoRoomVisit, setAutoRoomVisit] = useState(true);
+    const [autoRoomResume, setAutoRoomResume] = useState(true);
 
     useEffect(() => {
         SecureStore.getItemAsync('settings_show_family').then(val => {
             setShowFamily(val === 'false' ? false : true);
+        });
+        SecureStore.getItemAsync('settings_auto_room_visit').then(val => {
+            if (val !== null) setAutoRoomVisit(val === 'true');
+        });
+        SecureStore.getItemAsync('settings_auto_room_resume').then(val => {
+            if (val !== null) setAutoRoomResume(val === 'true');
         });
     }, []);
 
@@ -70,6 +80,7 @@ export default function DashboardV2() {
     const [registryAreas, setRegistryAreas] = useState([]);
     const [registryFloors, setRegistryFloors] = useState([]);
     const [selectedFloor, setSelectedFloor] = useState(null);
+    const [alertRules, setAlertRules] = useState([]);
 
     // Initial Load Logic
     useEffect(() => {
@@ -87,6 +98,15 @@ export default function DashboardV2() {
                     setBadgeConfig(data);
                 })
                 .catch(err => console.log('DEBUG: Error loading admin config:', err));
+
+            // Fetch Alert Rules
+            const alertUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/alerts` : `${adminUrl}/api/alerts`) + `?t=${Date.now()}`;
+            fetch(alertUrl)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) setAlertRules(data.rules);
+                })
+                .catch(e => console.log("Alert Rules Error", e));
         }
 
         // 2. Connect to Home Assistant
@@ -179,7 +199,6 @@ export default function DashboardV2() {
     const [settingsModalVisible, setSettingsModalVisible] = useState(false);
 
     // Derived Logic for Badges
-    // Derived Logic for Badges (Global Scan of All Areas)
     const getAllActiveDevices = (type) => {
         if (!registryAreas.length) return [];
 
@@ -281,6 +300,108 @@ export default function DashboardV2() {
         }
     }, []);
 
+    // -------------------------------------------------------------------------
+    // Auto-Room Presentation (User Tracker -> Espresense Match)
+    // -------------------------------------------------------------------------
+    const lastActiveRoomRef = useRef(null);
+    const appState = useRef(AppState.currentState);
+
+    // Refactored check logic for re-use
+    // isResume: Boolean, true if triggered by App Resume
+    const checkPresence = (isResume = false) => {
+        if (!roomsWithCounts.length || !userName) return;
+
+        // Check Settings
+        const shouldRun = isResume ? autoRoomResume : autoRoomVisit;
+        if (!shouldRun) return;
+
+        // 1. Find User Tracker
+        const safeUserName = userName.toLowerCase().replace(/ /g, '_');
+        let tracker = entities.find(e => e.entity_id === `person.${safeUserName}`);
+
+        // If person state is 'home'/'not_home', they might be using an MQTT room sensor 
+        if (!tracker || ['home', 'not_home'].includes(tracker.state)) {
+            const roomSensor = entities.find(e =>
+                e.entity_id.startsWith('sensor.') &&
+                e.entity_id.includes(safeUserName) &&
+                (e.entity_id.includes('room') || e.entity_id.includes('location'))
+            );
+            if (roomSensor) tracker = roomSensor;
+        }
+
+        if (!tracker) return;
+
+        const currentState = tracker.state.toLowerCase();
+
+        // Ignore generic states
+        if (['home', 'not_home', 'unknown', 'unavailable', 'away'].includes(currentState)) {
+            if (lastActiveRoomRef.current) {
+                lastActiveRoomRef.current = null;
+            }
+            return;
+        }
+
+        // 2. Find Room based on Tracker State
+        const normalize = (s) => s.toLowerCase().replace(/_/g, ' ').trim();
+        const targetName = normalize(currentState);
+
+        let foundRoom = null;
+        foundRoom = roomsWithCounts.find(r => normalize(r.name) === targetName);
+
+        if (!foundRoom) {
+            const candidateSensor = registryEntities.find(re =>
+                re.entity_id.startsWith('binary_sensor.espresense_') &&
+                normalize(re.entity_id).includes(targetName)
+            );
+
+            if (candidateSensor) {
+                foundRoom = roomsWithCounts.find(r => r.area_id === candidateSensor.area_id);
+            }
+        }
+
+        if (foundRoom) {
+            // Trigger if room changed OR if we just forced a check (e.g. app resume) and want to show it
+            if (lastActiveRoomRef.current !== foundRoom.area_id) {
+                console.log(`[Dashboard] Auto-detected room (${currentState}) -> ${foundRoom.name}. Resume: ${isResume}`);
+                lastActiveRoomRef.current = foundRoom.area_id;
+
+                setSelectedRoom(foundRoom);
+                setRoomSheetVisible(true);
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            }
+        } else {
+            if (lastActiveRoomRef.current !== null) {
+                lastActiveRoomRef.current = null;
+            }
+        }
+    };
+
+    // Run check on Entity Change
+    useEffect(() => {
+        checkPresence(false);
+    }, [entities, roomsWithCounts, userName, autoRoomVisit]); // Check whenever relevant data updates
+
+    // Run check on App Resume
+    useEffect(() => {
+        const subscription = AppState.addEventListener('change', nextAppState => {
+            if (
+                appState.current.match(/inactive|background/) &&
+                nextAppState === 'active'
+            ) {
+                if (autoRoomResume) {
+                    console.log('[Dashboard] App Resumed: Re-checking Presence...');
+                    // Reset ref to force re-open if user is still in the same room
+                    lastActiveRoomRef.current = null;
+                    checkPresence(true);
+                }
+            }
+            appState.current = nextAppState;
+        });
+
+        return () => {
+            subscription.remove();
+        };
+    }, [entities, roomsWithCounts, userName, autoRoomResume]);
 
 
     const callService = (domain, serviceName, serviceData) => {
@@ -372,7 +493,7 @@ export default function DashboardV2() {
                 return directMatch || deviceMatch;
             });
 
-            // Calculate Active States
+            // Calculate active states
             const activeLights = areaRegEntries.filter(re => {
                 if (!re.entity_id.startsWith('light.')) return false;
                 const stateObj = entities.find(e => e.entity_id === re.entity_id);
@@ -456,7 +577,7 @@ export default function DashboardV2() {
                     <View style={styles.divider} />
 
                     {/* Person Status */}
-                    {showFamily && <PersonBadges entities={entities} />}
+                    {showFamily && <PersonBadges entities={entities} alertRules={alertRules} />}
 
                     <QuickScenes
                         onScenePress={handleScenePress}
@@ -623,8 +744,13 @@ export default function DashboardV2() {
                     entities={entities}
                     registryDevices={registryDevices}
                     registryEntities={registryEntities}
+                    showFamily={showFamily}
+                    autoRoomVisit={autoRoomVisit}
+                    autoRoomResume={autoRoomResume}
                     onSettingChange={(key, val) => {
                         if (key === 'showFamily') setShowFamily(val);
+                        if (key === 'autoRoomVisit') setAutoRoomVisit(val);
+                        if (key === 'autoRoomResume') setAutoRoomResume(val);
                     }}
                     onPlayMedia={() => setShowYoutubeLauncher(true)}
                     onNetwork={() => setShowNetworkModal(true)}

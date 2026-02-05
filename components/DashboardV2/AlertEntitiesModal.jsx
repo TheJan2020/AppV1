@@ -9,6 +9,7 @@ export default function AlertEntitiesModal({ visible, onClose }) {
     const [rules, setRules] = useState([]);
     const [loading, setLoading] = useState(true);
     const [addModalVisible, setAddModalVisible] = useState(false);
+    const [editingRule, setEditingRule] = useState(null);
 
     const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL;
 
@@ -34,7 +35,13 @@ export default function AlertEntitiesModal({ visible, onClose }) {
         }
     };
 
+    const handleEdit = (rule) => {
+        setEditingRule(rule);
+        setAddModalVisible(true);
+    };
+
     const handleDelete = async (id) => {
+        // ... same logic
         Alert.alert(
             "Delete Rule",
             "Are you sure you want to delete this alert rule?",
@@ -78,7 +85,7 @@ export default function AlertEntitiesModal({ visible, onClose }) {
                         Configure alerts for specific entity states. Push notifications and 'script.main_alert' will be triggered.
                     </Text>
 
-                    <TouchableOpacity style={styles.addBtn} onPress={() => setAddModalVisible(true)}>
+                    <TouchableOpacity style={styles.addBtn} onPress={() => { setEditingRule(null); setAddModalVisible(true); }}>
                         <Plus size={20} color="#fff" />
                         <Text style={styles.addBtnText}>Add New Alert</Text>
                     </TouchableOpacity>
@@ -103,12 +110,18 @@ export default function AlertEntitiesModal({ visible, onClose }) {
                                         <Text style={styles.entityId}>{rule.entity_id}</Text>
                                     </View>
                                     <Text style={styles.ruleDetail}>
-                                        If <Text style={{ color: '#fff' }}>{rule.trigger_state}</Text> for <Text style={{ color: '#fff' }}>{rule.threshold_seconds}s</Text>
+                                        <Text style={{ color: '#fff' }}>{rule.trigger_state}</Text> for <Text style={{ color: '#fff' }}>{rule.threshold_seconds}s</Text>
+                                        {rule.repeat_minutes > 0 && <Text style={{ color: Colors.primary }}> • ↻ {rule.repeat_minutes}m</Text>}
                                     </Text>
                                 </View>
-                                <TouchableOpacity onPress={() => handleDelete(rule.id)} style={styles.deleteBtn}>
-                                    <Trash2 size={20} color={Colors.error} />
-                                </TouchableOpacity>
+                                <View style={{ flexDirection: 'row', gap: 8 }}>
+                                    <TouchableOpacity onPress={() => handleEdit(rule)} style={styles.editBtn}>
+                                        <Text style={{ color: Colors.primary, fontSize: 13, fontWeight: 'bold' }}>EDIT</Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity onPress={() => handleDelete(rule.id)} style={styles.deleteBtn}>
+                                        <Trash2 size={20} color={Colors.error} />
+                                    </TouchableOpacity>
+                                </View>
                             </View>
                         ))}
                     </ScrollView>
@@ -118,6 +131,7 @@ export default function AlertEntitiesModal({ visible, onClose }) {
             <AddAlertModal
                 visible={addModalVisible}
                 onClose={() => setAddModalVisible(false)}
+                initialRule={editingRule}
                 onSuccess={() => {
                     setAddModalVisible(false);
                     fetchRules();
@@ -221,6 +235,13 @@ const styles = StyleSheet.create({
         padding: 8,
         backgroundColor: 'rgba(239, 83, 80, 0.1)',
         borderRadius: 8
+    },
+    editBtn: {
+        padding: 8,
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        borderRadius: 8,
+        justifyContent: 'center',
+        alignItems: 'center'
     },
     centered: {
         padding: 40,

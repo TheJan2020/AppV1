@@ -1,50 +1,103 @@
 import React from 'react';
-import { View, Text, StyleSheet, Image, ScrollView } from 'react-native';
+import { View, Text, StyleSheet, Image, ScrollView, TouchableOpacity } from 'react-native';
+import { Bell } from 'lucide-react-native';
 
 const HA_URL = process.env.EXPO_PUBLIC_HA_URL?.replace(/\/$/, '');
 
-export default function PersonBadges({ entities, config }) {
+export default function PersonBadges({ entities, alertRules }) {
     if (!entities) return null;
 
     const people = entities.filter(e => e.entity_id.startsWith('person.'));
 
-    if (people.length === 0) return null;
+    // Calculate Active Alerts
+    const activeAlerts = [];
+    if (alertRules && alertRules.length > 0) {
+        alertRules.forEach(rule => {
+            const entity = entities.find(e => e.entity_id === rule.entity_id);
+            if (entity && entity.state === rule.trigger_state) {
+                activeAlerts.push(entity);
+            }
+        });
+    }
+
+    if (people.length === 0 && activeAlerts.length === 0) return null;
 
     return (
-        <View style={styles.container}>
-            <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.scroll}
-            >
-                {people.map(person => {
-                    const isHome = person.state === 'home';
-                    const name = person.attributes?.friendly_name || person.entity_id.split('.')[1];
-                    // Only append HA_URL if picture path is relative
-                    const picturePath = person.attributes?.entity_picture;
-                    const picture = picturePath
-                        ? (picturePath.startsWith('http') ? picturePath : `${HA_URL}${picturePath}`)
-                        : null;
+        <View>
+            {/* ALERTS ROW - Only visible if alerts exist */}
+            {activeAlerts.length > 0 && (
+                <View style={[styles.container, { marginBottom: 10 }]}>
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.scroll}
+                    >
+                        {activeAlerts.map(alertEntity => {
+                            const name = alertEntity.attributes?.friendly_name || alertEntity.entity_id;
+                            const picturePath = alertEntity.attributes?.entity_picture;
+                            const picture = picturePath
+                                ? (picturePath.startsWith('http') ? picturePath : `${HA_URL}${picturePath}`)
+                                : null;
 
-                    return (
-                        <View key={person.entity_id} style={styles.personContainer}>
-                            <View style={[styles.imageWrapper, isHome ? styles.borderHome : styles.borderAway]}>
-                                {picture ? (
-                                    <Image source={{ uri: picture }} style={styles.image} />
-                                ) : (
-                                    <View style={[styles.image, styles.placeholder]}>
-                                        <Text style={styles.initials}>{name.charAt(0).toUpperCase()}</Text>
+                            return (
+                                <View key={alertEntity.entity_id} style={styles.personContainer}>
+                                    <View style={[styles.imageWrapper, styles.borderAlert]}>
+                                        {picture ? (
+                                            <Image source={{ uri: picture }} style={styles.image} />
+                                        ) : (
+                                            <View style={[styles.image, styles.placeholder, { backgroundColor: '#331111' }]}>
+                                                <Bell size={24} color="#F44336" />
+                                            </View>
+                                        )}
                                     </View>
-                                )}
-                            </View>
-                            <View style={[styles.statusBadge, isHome ? styles.bgHome : styles.bgAway]}>
-                                <Text style={styles.statusText}>{person.state}</Text>
-                            </View>
-                            <Text style={styles.name} numberOfLines={1}>{name}</Text>
-                        </View>
-                    );
-                })}
-            </ScrollView>
+                                    <View style={[styles.statusBadge, styles.bgAlert]}>
+                                        <Text style={styles.statusText}>ALERT!</Text>
+                                    </View>
+                                    <Text style={[styles.name, { color: '#F44336' }]} numberOfLines={1}>{name}</Text>
+                                </View>
+                            );
+                        })}
+                    </ScrollView>
+                </View>
+            )}
+
+            {/* PEOPLE ROW */}
+            {people.length > 0 && (
+                <View style={styles.container}>
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.scroll}
+                    >
+                        {people.map(person => {
+                            const isHome = person.state === 'home';
+                            const name = person.attributes?.friendly_name || person.entity_id.split('.')[1];
+                            const picturePath = person.attributes?.entity_picture;
+                            const picture = picturePath
+                                ? (picturePath.startsWith('http') ? picturePath : `${HA_URL}${picturePath}`)
+                                : null;
+
+                            return (
+                                <View key={person.entity_id} style={styles.personContainer}>
+                                    <View style={[styles.imageWrapper, isHome ? styles.borderHome : styles.borderAway]}>
+                                        {picture ? (
+                                            <Image source={{ uri: picture }} style={styles.image} />
+                                        ) : (
+                                            <View style={[styles.image, styles.placeholder]}>
+                                                <Text style={styles.initials}>{name.charAt(0).toUpperCase()}</Text>
+                                            </View>
+                                        )}
+                                    </View>
+                                    <View style={[styles.statusBadge, isHome ? styles.bgHome : styles.bgAway]}>
+                                        <Text style={styles.statusText}>{person.state}</Text>
+                                    </View>
+                                    <Text style={styles.name} numberOfLines={1}>{name}</Text>
+                                </View>
+                            );
+                        })}
+                    </ScrollView>
+                </View>
+            )}
         </View>
     );
 }
@@ -121,6 +174,18 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontWeight: '500',
         marginTop: 4
+    },
+    borderAlert: {
+        borderColor: '#F44336', // Red
+        borderWidth: 2,
+        shadowColor: "#F44336",
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.8,
+        shadowRadius: 10,
+        elevation: 5
+    },
+    bgAlert: {
+        backgroundColor: '#F44336'
     },
     sensorText: {
         color: 'rgba(255,255,255,0.5)',

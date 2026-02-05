@@ -9,6 +9,7 @@ export default function MonitoredEntitiesModal({ visible, onClose }) {
     const [filteredEntities, setFilteredEntities] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [loading, setLoading] = useState(true);
+    const [changedEntities, setChangedEntities] = useState({}); // { entity_id: newStatus }
 
     const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL;
 
@@ -47,25 +48,47 @@ export default function MonitoredEntitiesModal({ visible, onClose }) {
         }
     };
 
-    const toggleIgnore = async (entityId, currentIgnored) => {
+    const toggleIgnore = (entityId, currentIgnored) => {
         const newStatus = !currentIgnored;
 
         // Optimistic Update
         const updated = entities.map(e => e.entity_id === entityId ? { ...e, ignored: newStatus ? 1 : 0 } : e);
         setEntities(updated);
 
+        // Track Change
+        setChangedEntities(prev => ({
+            ...prev,
+            [entityId]: newStatus
+        }));
+    };
+
+    const handleApply = async () => {
+        const changes = Object.entries(changedEntities);
+        if (changes.length === 0) {
+            onClose();
+            return;
+        }
+
+        setLoading(true);
         try {
             const url = adminUrl.endsWith('/') ? `${adminUrl}api/monitor` : `${adminUrl}/api/monitor`;
-            await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ entity_id: entityId, ignored: newStatus })
-            });
-            // Success
+
+            // Send requests in parallel
+            await Promise.all(changes.map(([entityId, ignored]) =>
+                fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ entity_id: entityId, ignored: ignored })
+                })
+            ));
+
+            setChangedEntities({});
+            onClose();
         } catch (e) {
-            console.error("Failed to update", e);
-            // Revert on error
-            setEntities(entities);
+            console.error("Failed to apply changes", e);
+            alert("Failed to apply some changes");
+        } finally {
+            setLoading(false);
         }
     };
 
@@ -80,10 +103,19 @@ export default function MonitoredEntitiesModal({ visible, onClose }) {
                 <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
                 <View style={styles.contentContainer}>
                     <View style={styles.header}>
-                        <Text style={styles.title}>Monitored Entities</Text>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
                             <X size={24} color={Colors.textDim} />
                         </TouchableOpacity>
+
+                        <Text style={styles.title}>Monitored Entities</Text>
+
+                        {Object.keys(changedEntities).length > 0 ? (
+                            <TouchableOpacity onPress={handleApply} style={styles.applyBtn}>
+                                <Text style={styles.applyBtnText}>Apply</Text>
+                            </TouchableOpacity>
+                        ) : (
+                            <View style={{ width: 60 }} />
+                        )}
                     </View>
 
                     <Text style={styles.subtitle}>
@@ -236,5 +268,16 @@ const styles = StyleSheet.create({
     centered: {
         padding: 40,
         alignItems: 'center'
+    },
+    applyBtn: {
+        backgroundColor: Colors.primary,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 8
+    },
+    applyBtnText: {
+        color: '#fff',
+        fontWeight: 'bold',
+        fontSize: 14
     }
 });
