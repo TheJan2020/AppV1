@@ -1,13 +1,14 @@
 import { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, FlatList, TextInput, Alert, ActivityIndicator, Switch } from 'react-native';
 import { Colors } from '../../constants/Colors';
-import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone } from 'lucide-react-native';
+import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { AIService } from '../../services/ai';
 import * as SecureStore from 'expo-secure-store';
 import MonitoredEntitiesModal from './MonitoredEntitiesModal';
 import AlertEntitiesModal from './AlertEntitiesModal';
 import MyPreferencesModal from './MyPreferencesModal';
+import PreferencedEntitiesModal from './PreferencedEntitiesModal';
 
 export default function SettingsView({
     areas = [],
@@ -23,11 +24,19 @@ export default function SettingsView({
 }) {
     const [activeTab, setActiveTab] = useState('general');
     const [selectedArea, setSelectedArea] = useState(null);
+    const [faceIdEnabled, setFaceIdEnabled] = useState(false);
+
+    useEffect(() => {
+        SecureStore.getItemAsync('face_id_enabled').then(val => {
+            setFaceIdEnabled(val === 'true');
+        });
+    }, []);
 
     // Modals
     const [monitoredModalVisible, setMonitoredModalVisible] = useState(false);
     const [alertModalVisible, setAlertModalVisible] = useState(false);
     const [preferencesModalVisible, setPreferencesModalVisible] = useState(false);
+    const [preferencedEntitiesModalVisible, setPreferencedEntitiesModalVisible] = useState(false);
 
     // Generic Toggle Handler (Persist + Notify Parent)
     const handleToggleSetting = async (key, val) => {
@@ -408,6 +417,54 @@ export default function SettingsView({
                     <ChevronRight size={20} color={Colors.textDim} />
                 </TouchableOpacity>
 
+                <TouchableOpacity style={styles.listItem} onPress={() => setPreferencedEntitiesModalVisible(true)}>
+                    <View style={styles.itemInfo}>
+                        <View style={styles.iconContainer}>
+                            <Heart size={20} color={Colors.text} />
+                        </View>
+                        <View>
+                            <Text style={styles.itemName}>Preferenced Entities</Text>
+                            <Text style={styles.itemSub}>Manage AI preferences inclusion</Text>
+                        </View>
+                    </View>
+                    <ChevronRight size={20} color={Colors.textDim} />
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.listItem} onPress={() => router.push('/ai-preferences')}>
+                    <View style={styles.itemInfo}>
+                        <View style={styles.iconContainer}>
+                            <Sparkles size={20} color={Colors.text} />
+                        </View>
+                        <View>
+                            <Text style={styles.itemName}>AI Learned Preferences</Text>
+                            <Text style={styles.itemSub}>View smart automation patterns</Text>
+                        </View>
+                    </View>
+                    <ChevronRight size={20} color={Colors.textDim} />
+                </TouchableOpacity>
+
+                {/* FaceID Toggle */}
+                <View style={styles.listItem}>
+                    <View style={styles.itemInfo}>
+                        <View style={styles.iconContainer}>
+                            <Brain size={20} color={Colors.text} />
+                        </View>
+                        <View>
+                            <Text style={styles.itemName}>FaceID / Biometrics</Text>
+                            <Text style={styles.itemSub}>Enable biometric login</Text>
+                        </View>
+                    </View>
+                    <Switch
+                        value={faceIdEnabled}
+                        onValueChange={async (val) => {
+                            setFaceIdEnabled(val);
+                            await SecureStore.setItemAsync('face_id_enabled', val.toString());
+                        }}
+                        trackColor={{ false: '#767577', true: Colors.primary }}
+                        thumbColor={faceIdEnabled ? '#fff' : '#f4f3f4'}
+                    />
+                </View>
+
                 <TouchableOpacity style={styles.listItem} onPress={() => setPreferencesModalVisible(true)}>
                     <View style={styles.itemInfo}>
                         <View style={styles.iconContainer}>
@@ -489,13 +546,17 @@ export default function SettingsView({
     );
 
     const renderAccount = () => (
-        <View style={styles.accountContent}>
+        <ScrollView contentContainerStyle={styles.accountContent}>
             <View style={styles.profileSection}>
                 <View style={[styles.iconContainer, { width: 80, height: 80, borderRadius: 40, marginBottom: 16 }]}>
                     <User size={40} color={Colors.text} />
                 </View>
                 <Text style={styles.profileName}>Zeyad</Text>
                 <Text style={styles.profileRole}>Administrator</Text>
+            </View>
+
+            <View style={styles.section}>
+                {/* Transferred to General Settings */}
             </View>
 
             <TouchableOpacity
@@ -529,12 +590,15 @@ export default function SettingsView({
 
             <TouchableOpacity
                 style={styles.logoutBtn}
-                onPress={() => router.replace('/')}
+                onPress={() => {
+                    // Navigate to login
+                    router.replace('/login');
+                }}
             >
                 <LogOut size={20} color={Colors.error} />
                 <Text style={styles.logoutText}>Log Out</Text>
             </TouchableOpacity>
-        </View>
+        </ScrollView>
     );
 
 
@@ -597,6 +661,10 @@ export default function SettingsView({
             <MyPreferencesModal
                 visible={preferencesModalVisible}
                 onClose={() => setPreferencesModalVisible(false)}
+            />
+            <PreferencedEntitiesModal
+                visible={preferencedEntitiesModalVisible}
+                onClose={() => setPreferencedEntitiesModalVisible(false)}
             />
         </View >
     );
@@ -817,7 +885,7 @@ const styles = StyleSheet.create({
     },
     // Account Styles
     accountContent: {
-        flex: 1,
+        flexGrow: 1, // Changed from flex: 1 to flexGrow: 1 for ScrollView
         alignItems: 'center',
         paddingTop: 40,
     },
@@ -855,8 +923,9 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 8,
-        marginTop: 'auto',
+        marginTop: 40, // Fixed margin instead of auto
         marginBottom: 40,
+        padding: 16, // Increase hit area
     },
     logoutText: {
         color: Colors.error,

@@ -32,8 +32,15 @@ import * as SecureStore from 'expo-secure-store';
 export default function DashboardV2() {
     const router = useRouter();
     const { userName } = useLocalSearchParams();
-    const haUrl = process.env.EXPO_PUBLIC_HA_URL;
-    const haToken = process.env.EXPO_PUBLIC_HA_TOKEN;
+
+    // Config State
+    const [connectionConfig, setConnectionConfig] = useState({
+        url: process.env.EXPO_PUBLIC_HA_URL,
+        token: process.env.EXPO_PUBLIC_HA_TOKEN,
+        adminUrl: process.env.EXPO_PUBLIC_ADMIN_URL,
+        loaded: false
+    });
+
     const service = useRef(null);
     const frigateService = useRef(null); // Frigate Service Ref
 
@@ -65,7 +72,28 @@ export default function DashboardV2() {
         SecureStore.getItemAsync('settings_auto_room_resume').then(val => {
             if (val !== null) setAutoRoomResume(val === 'true');
         });
+
+        loadConnectionConfig();
     }, []);
+
+    const loadConnectionConfig = async () => {
+        try {
+            const sUrl = await SecureStore.getItemAsync('ha_url');
+            const sToken = await SecureStore.getItemAsync('ha_token');
+            const sAdmin = await SecureStore.getItemAsync('admin_url');
+
+            setConnectionConfig({
+                url: sUrl || process.env.EXPO_PUBLIC_HA_URL,
+                token: sToken || process.env.EXPO_PUBLIC_HA_TOKEN,
+                adminUrl: sAdmin || process.env.EXPO_PUBLIC_ADMIN_URL,
+                loaded: true
+            });
+        } catch (e) {
+            console.log('Error loading connection config:', e);
+            // Fallback
+            setConnectionConfig(prev => ({ ...prev, loaded: true }));
+        }
+    };
 
     const handleFrigateCameraPress = (camera, mode = 'live') => {
         console.log('[Dashboard] Camera pressed:', camera?.name, 'Mode:', mode);
@@ -84,8 +112,11 @@ export default function DashboardV2() {
 
     // Initial Load Logic
     useEffect(() => {
+        if (!connectionConfig.loaded) return;
+
+        const { url: haUrl, token: haToken, adminUrl } = connectionConfig;
+
         // ... (Admin Config Fetch remains) ...
-        const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL;
         console.log('DEBUG: Fetching Admin Config from:', adminUrl);
 
         if (adminUrl) {
@@ -110,56 +141,58 @@ export default function DashboardV2() {
         }
 
         // 2. Connect to Home Assistant
-        service.current = new HAService(haUrl, haToken);
-        service.current.connect();
-        service.current.subscribe(data => {
-            if (data.type === 'connected') {
-                service.current.getStates().then(states => {
-                    setEntities(states || []);
-                });
-                service.current.getConfig().then(config => {
-                    if (config && config.location_name) {
-                        setCityName(config.location_name);
-                    }
-                });
+        if (haUrl && haToken) {
+            service.current = new HAService(haUrl, haToken);
+            service.current.connect();
+            service.current.subscribe(data => {
+                if (data.type === 'connected') {
+                    service.current.getStates().then(states => {
+                        setEntities(states || []);
+                    });
+                    service.current.getConfig().then(config => {
+                        if (config && config.location_name) {
+                            setCityName(config.location_name);
+                        }
+                    });
 
-                // Fetch Registries
-                service.current.getDeviceRegistry().then(devices => {
-                    setRegistryDevices(devices || []);
-                });
-                service.current.getEntityRegistry().then(regs => {
-                    setRegistryEntities(regs || []);
-                });
-                service.current.getAreaRegistry().then(areas => {
-                    if (areas && areas.length > 0) {
-                        console.log('DEBUG: First Area:', JSON.stringify(areas[0]));
-                    }
-                    setRegistryAreas(areas || []);
-                });
-                service.current.getFloorRegistry().then(floors => {
-                    setRegistryFloors(floors || []);
-                    if (floors && floors.length > 0) {
-                        // Sort floors by level (optional) or just use default order
-                        const sorted = floors.sort((a, b) => (a.level || 0) - (b.level || 0));
-                        setSelectedFloor(sorted[0].floor_id);
-                    }
-                });
+                    // Fetch Registries
+                    service.current.getDeviceRegistry().then(devices => {
+                        setRegistryDevices(devices || []);
+                    });
+                    service.current.getEntityRegistry().then(regs => {
+                        setRegistryEntities(regs || []);
+                    });
+                    service.current.getAreaRegistry().then(areas => {
+                        if (areas && areas.length > 0) {
+                            console.log('DEBUG: First Area:', JSON.stringify(areas[0]));
+                        }
+                        setRegistryAreas(areas || []);
+                    });
+                    service.current.getFloorRegistry().then(floors => {
+                        setRegistryFloors(floors || []);
+                        if (floors && floors.length > 0) {
+                            // Sort floors by level (optional) or just use default order
+                            const sorted = floors.sort((a, b) => (a.level || 0) - (b.level || 0));
+                            setSelectedFloor(sorted[0].floor_id);
+                        }
+                    });
 
-            } else if (data.type === 'state_changed' && data.event && data.event.data) {
-                const newEvent = data.event.data.new_state;
-                if (!newEvent) return; // Ignore deletions or null states
+                } else if (data.type === 'state_changed' && data.event && data.event.data) {
+                    const newEvent = data.event.data.new_state;
+                    if (!newEvent) return; // Ignore deletions or null states
 
-                setEntities(prev => {
-                    const index = prev.findIndex(e => e.entity_id === newEvent.entity_id);
-                    if (index !== -1) {
-                        const newEntities = [...prev];
-                        newEntities[index] = newEvent;
-                        return newEntities;
-                    }
-                    return [...prev, newEvent];
-                });
-            }
-        });
+                    setEntities(prev => {
+                        const index = prev.findIndex(e => e.entity_id === newEvent.entity_id);
+                        if (index !== -1) {
+                            const newEntities = [...prev];
+                            newEntities[index] = newEvent;
+                            return newEntities;
+                        }
+                        return [...prev, newEvent];
+                    });
+                }
+            });
+        }
 
         // 3. Connect to Frigate
         const frigateUrl = process.env.EXPO_PUBLIC_FRIGATE_URL || 'http://192.168.100.18:5000';
@@ -181,7 +214,7 @@ export default function DashboardV2() {
         });
 
         return () => service.current?.socket?.close();
-    }, []);
+    }, [connectionConfig.loaded]);
 
     const weather = entities.find(e => e.entity_id.startsWith('weather.'));
 
@@ -639,8 +672,8 @@ export default function DashboardV2() {
                     <HACamerasList
                         cameras={entities.filter(e => e.entity_id.startsWith('camera.'))}
                         allEntities={entities}
-                        haUrl={haUrl}
-                        haToken={haToken}
+                        haUrl={connectionConfig.url}
+                        haToken={connectionConfig.token}
                         onCameraPress={(cam) => {
                             // Can add a modal for HA cameras here later if needed
                             console.log('HA Camera Pressed:', cam.entity_id);
@@ -731,8 +764,8 @@ export default function DashboardV2() {
                     registryEntities={registryEntities}
                     registryAreas={registryAreas}
                     onExit={() => setActiveTab('home')}
-                    haUrl={haUrl}
-                    haToken={haToken}
+                    haUrl={connectionConfig.url}
+                    haToken={connectionConfig.token}
                 />
             );
         }
