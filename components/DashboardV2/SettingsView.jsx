@@ -443,7 +443,18 @@ export default function SettingsView({
                     <ChevronRight size={20} color={Colors.textDim} />
                 </TouchableOpacity>
 
-                {/* FaceID Toggle */}
+                <TouchableOpacity style={styles.listItem} onPress={() => router.push('/analysis-monitor')}>
+                    <View style={styles.itemInfo}>
+                        <View style={styles.iconContainer}>
+                            <Play size={20} color={Colors.text} />
+                        </View>
+                        <View>
+                            <Text style={styles.itemName}>Run AI Analysis Now</Text>
+                            <Text style={styles.itemSub}>Monitor learning process live</Text>
+                        </View>
+                    </View>
+                    <ChevronRight size={20} color={Colors.textDim} />
+                </TouchableOpacity>
                 <View style={styles.listItem}>
                     <View style={styles.itemInfo}>
                         <View style={styles.iconContainer}>
