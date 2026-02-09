@@ -56,6 +56,7 @@ export default function DashboardV2() {
     const [showYoutubeLauncher, setShowYoutubeLauncher] = useState(false);
     const [showAppleTVRemote, setShowAppleTVRemote] = useState(false);
     const [showNetworkModal, setShowNetworkModal] = useState(false);
+    const [roomTrackingLookup, setRoomTrackingLookup] = useState({}); // Tracking state -> area_id mapping
 
     // Settings State
     const [showFamily, setShowFamily] = useState(true);
@@ -138,6 +139,18 @@ export default function DashboardV2() {
                     if (data.success) setAlertRules(data.rules);
                 })
                 .catch(e => console.log("Alert Rules Error", e));
+
+            // Fetch Room Tracking Lookup
+            const roomTrackingUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/room-tracking/lookup` : `${adminUrl}/api/room-tracking/lookup`);
+            fetch(roomTrackingUrl)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        console.log('[Room Tracking] Loaded lookup map:', data.lookup);
+                        setRoomTrackingLookup(data.lookup);
+                    }
+                })
+                .catch(e => console.log("[Room Tracking] Error loading lookup:", e));
         }
 
         // 2. Connect to Home Assistant
@@ -342,67 +355,92 @@ export default function DashboardV2() {
     // Refactored check logic for re-use
     // isResume: Boolean, true if triggered by App Resume
     const checkPresence = (isResume = false) => {
-        if (!roomsWithCounts.length || !userName) return;
+        console.log('[Auto-Room] checkPresence called. isResume:', isResume, 'userName:', userName, 'roomsCount:', roomsWithCounts.length);
+
+        if (!roomsWithCounts.length || !userName) {
+            console.log('[Auto-Room] Early exit - no rooms or userName');
+            return;
+        }
 
         // Check Settings
         const shouldRun = isResume ? autoRoomResume : autoRoomVisit;
-        if (!shouldRun) return;
-
-        // 1. Find User Tracker
-        const safeUserName = userName.toLowerCase().replace(/ /g, '_');
-        let tracker = entities.find(e => e.entity_id === `person.${safeUserName}`);
-
-        // If person state is 'home'/'not_home', they might be using an MQTT room sensor 
-        if (!tracker || ['home', 'not_home'].includes(tracker.state)) {
-            const roomSensor = entities.find(e =>
-                e.entity_id.startsWith('sensor.') &&
-                e.entity_id.includes(safeUserName) &&
-                (e.entity_id.includes('room') || e.entity_id.includes('location'))
-            );
-            if (roomSensor) tracker = roomSensor;
+        console.log('[Auto-Room] Setting check:', isResume ? 'autoRoomResume' : 'autoRoomVisit', '=', shouldRun);
+        if (!shouldRun) {
+            console.log('[Auto-Room] Feature disabled by settings');
+            return;
         }
 
-        if (!tracker) return;
+        // 1. Find User's Tracked Device Sensor
+        // Look for tracked device sensor that includes the username
+        // e.g., sensor.zeyad_iphone_room for userName "Zeyad"
+        const safeUserName = userName.toLowerCase().replace(/ /g, '_');
+        console.log('[Auto-Room] Looking for sensor matching user:', safeUserName);
+
+        // First try to find sensor with "room" in the name
+        let tracker = entities.find(e =>
+            e.entity_id.includes(safeUserName) &&
+            e.entity_id.includes('room') &&
+            !e.entity_id.includes('geocoded')
+        );
+
+        // Fallback to any location sensor (but not geocoded)
+        if (!tracker) {
+            tracker = entities.find(e =>
+                e.entity_id.includes(safeUserName) &&
+                e.entity_id.includes('location') &&
+                !e.entity_id.includes('geocoded')
+            );
+        }
+
+        console.log('[Auto-Room] Tracker sensor:', tracker?.entity_id, 'state:', tracker?.state);
+
+        if (!tracker) {
+            console.log('[Auto-Room] Tracker sensor not found for user:', safeUserName);
+            return;
+        }
 
         const currentState = tracker.state.toLowerCase();
+        console.log('[Auto-Room] Current state:', currentState);
 
         // Ignore generic states
-        if (['home', 'not_home', 'unknown', 'unavailable', 'away'].includes(currentState)) {
+        if (['home', 'not_home', 'unknown', 'unavailable', 'away', 'none'].includes(currentState)) {
+            console.log('[Auto-Room] State is generic, ignoring');
             if (lastActiveRoomRef.current) {
                 lastActiveRoomRef.current = null;
             }
             return;
         }
 
-        // 2. Find Room based on Tracker State
-        const normalize = (s) => s.toLowerCase().replace(/_/g, ' ').trim();
-        const targetName = normalize(currentState);
+        // 2. Find Room using Lookup Map from Backend
+        console.log('[Auto-Room] Using lookup map for state:', currentState);
+
+        // Direct lookup from database mapping
+        const mappedAreaId = roomTrackingLookup[currentState];
+        console.log('[Auto-Room] Mapped area_id:', mappedAreaId);
 
         let foundRoom = null;
-        foundRoom = roomsWithCounts.find(r => normalize(r.name) === targetName);
-
-        if (!foundRoom) {
-            const candidateSensor = registryEntities.find(re =>
-                re.entity_id.startsWith('binary_sensor.espresense_') &&
-                normalize(re.entity_id).includes(targetName)
-            );
-
-            if (candidateSensor) {
-                foundRoom = roomsWithCounts.find(r => r.area_id === candidateSensor.area_id);
-            }
+        if (mappedAreaId) {
+            foundRoom = roomsWithCounts.find(r => r.area_id === mappedAreaId);
+            console.log('[Auto-Room] ✓ Found room via lookup:', foundRoom?.name);
+        } else {
+            console.log('[Auto-Room] ✗ No mapping found for state:', currentState);
         }
 
         if (foundRoom) {
             // Trigger if room changed OR if we just forced a check (e.g. app resume) and want to show it
             if (lastActiveRoomRef.current !== foundRoom.area_id) {
-                console.log(`[Dashboard] Auto-detected room (${currentState}) -> ${foundRoom.name}. Resume: ${isResume}`);
+                console.log(`[Auto-Room] ✅ Opening room sheet: ${foundRoom.name}. Resume: ${isResume}`);
                 lastActiveRoomRef.current = foundRoom.area_id;
 
                 setSelectedRoom(foundRoom);
                 setRoomSheetVisible(true);
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            } else {
+                console.log('[Auto-Room] Already in this room, not re-opening');
             }
         } else {
+            console.log('[Auto-Room] ❌ No room found for state:', currentState);
+            console.log('[Auto-Room] Available lookup states:', Object.keys(roomTrackingLookup).join(', '));
             if (lastActiveRoomRef.current !== null) {
                 lastActiveRoomRef.current = null;
             }
@@ -464,6 +502,34 @@ export default function DashboardV2() {
             // Show Modal Popup (Home tab)
             setSelectedRoom(room);
             setRoomSheetVisible(true);
+        }
+    };
+
+    const handleHeaderRoomPress = () => {
+        // Find the current user's person entity
+        const personEntity = entities.find(e =>
+            e.entity_id.startsWith('person.') &&
+            (e.attributes?.friendly_name?.toLowerCase() === userName?.toLowerCase() ||
+                e.entity_id.includes(userName?.toLowerCase()))
+        );
+
+        const currentLocation = personEntity?.state;
+
+        // If at home or no location, don't open sheet
+        if (!currentLocation || currentLocation === 'home' || currentLocation === 'not_home') {
+            return;
+        }
+
+        // Find the room that matches the current location
+        const currentRoom = registryAreas.find(area =>
+            area.name?.toLowerCase() === currentLocation.toLowerCase() ||
+            area.area_id?.toLowerCase() === currentLocation.toLowerCase()
+        );
+
+        if (currentRoom) {
+            setSelectedRoom(currentRoom);
+            setRoomSheetVisible(true);
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
     };
 
@@ -598,6 +664,7 @@ export default function DashboardV2() {
                         userName={userName}
                         entities={entities}
                         config={badgeConfig}
+                        onRoomPress={handleHeaderRoomPress}
                     />
                     <StatusBadges
                         securityState={securityState}

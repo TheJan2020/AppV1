@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Modal } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
-import { ChevronLeft, ChevronDown, ChevronRight, Info, Zap } from 'lucide-react-native';
+import { ChevronLeft, ChevronDown, ChevronRight, Info, Zap, Check, X } from 'lucide-react-native';
 import * as SecureStore from 'expo-secure-store';
 import { Colors } from '../constants/Colors';
 
@@ -13,10 +13,11 @@ export default function AIPreferencesScreen() {
     const [expandedAreas, setExpandedAreas] = useState({});
     const [selectedEntity, setSelectedEntity] = useState(null);
     const [backendUrl, setBackendUrl] = useState('');
+    const [selectedHour, setSelectedHour] = useState(new Date().getHours()); // Auto-select current hour // null = show all hours
 
     useEffect(() => {
         loadPreferences();
-    }, []);
+    }, [selectedHour]); // Reload when hour changes
 
     const loadPreferences = async () => {
         try {
@@ -27,20 +28,46 @@ export default function AIPreferencesScreen() {
             const now = new Date();
             const season = getSeasonFromDate(now);
             const dayType = getDayType(now);
-            const hour = now.getHours();
 
-            const response = await fetch(`${url}/api/preferences/get-all?season=${season}&dayType=${dayType}&hour=${hour}&userId=zeyad`);
+            // Build query with hour filter
+            let query = `?season=${season}&dayType=${dayType}`;
+            if (selectedHour !== null) {
+                query += `&hour=${selectedHour}`;
+            }
+
+            const response = await fetch(`${url}/api/preferences/get-all${query}`);
             const data = await response.json();
 
             if (data.success) {
-                setGroupedData(data.grouped);
+                console.log('[AI Preferences] API Response:', JSON.stringify(data, null, 2));
+
+                // Sort entities within each area by domain (light, climate, media, etc.)
+                const sortedGrouped = {};
+                Object.keys(data.grouped).forEach(areaName => {
+                    sortedGrouped[areaName] = data.grouped[areaName].sort((a, b) => {
+                        const domainA = a.entity_id.split('.')[0];
+                        const domainB = b.entity_id.split('.')[0];
+                        return domainA.localeCompare(domainB);
+                    });
+                });
+
+                setGroupedData(sortedGrouped);
                 setContext(data.context);
 
                 // Auto-expand first area
-                const firstArea = Object.keys(data.grouped)[0];
+                const firstArea = Object.keys(sortedGrouped)[0];
                 if (firstArea) {
                     setExpandedAreas({ [firstArea]: true });
                 }
+
+                // Debug: Log entities with manual actions
+                Object.entries(sortedGrouped).forEach(([area, entities]) => {
+                    entities.forEach(e => {
+                        if (e.manual_count > 0) {
+                            console.log(`[Manual Action Found] ${area}/${e.entity_id}: hour=${e.hour}, manual_count=${e.manual_count}`);
+                        }
+                    });
+                });
             }
         } catch (error) {
             console.error('Failed to load preferences:', error);
@@ -105,20 +132,45 @@ export default function AIPreferencesScreen() {
 
     return (
         <LinearGradient colors={[Colors.background, Colors.backgroundDim]} style={styles.container}>
-            {/* Header */}
-            <View style={styles.header}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                    <ChevronLeft size={24} color={Colors.text} />
-                </TouchableOpacity>
-                <View style={styles.headerTextContainer}>
-                    <Text style={styles.headerTitle}>AI Learned Preferences</Text>
-                    <Text style={styles.headerSubtitle}>
-                        {context.season} • {context.dayType} • {context.hour}:00
-                    </Text>
-                </View>
-                <TouchableOpacity onPress={loadPreferences} style={styles.refreshButton}>
-                    <Zap size={20} color={Colors.primary} />
-                </TouchableOpacity>
+            {/* Hour Timeline Selector */}
+            <View style={styles.timelineContainer}>
+                <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.timelineContent}
+                >
+                    {/* Hour buttons 0-23 (removed All option) */}
+                    {Array.from({ length: 24 }, (_, i) => i).map(hour => {
+                        // Check if this hour has any entities with manual actions
+                        const hasManualActions = Object.values(groupedData).some(entities =>
+                            entities.some(e => e.has_preference && e.hour === hour && e.manual_count > 0)
+                        );
+
+                        // Debug logging
+                        if (hasManualActions) {
+                            console.log(`[Timeline] Hour ${hour} has manual actions`);
+                        }
+
+                        return (
+                            <TouchableOpacity
+                                key={hour}
+                                style={[
+                                    styles.hourButton,
+                                    selectedHour === hour && styles.hourButtonSelected,
+                                    hasManualActions && styles.hourButtonManual  // Apply last for precedence
+                                ]}
+                                onPress={() => setSelectedHour(hour)}
+                            >
+                                <Text style={[
+                                    styles.hourText,
+                                    selectedHour === hour && styles.hourTextSelected
+                                ]}>
+                                    {hour.toString().padStart(2, '0')}:00
+                                </Text>
+                            </TouchableOpacity>
+                        );
+                    })}
+                </ScrollView>
             </View>
 
             {/* Stats */}
@@ -142,6 +194,10 @@ export default function AIPreferencesScreen() {
             {/* Area List */}
             <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
                 {Object.entries(groupedData).map(([area, entities]) => {
+                    // Filter entities by selectedHour (since API now returns all hours)
+                    // const entities = allEntities.filter(e => e.hour === selectedHour);
+                    // if (entities.length === 0) return null; // Skip areas with no entities for this hour
+
                     const isExpanded = expandedAreas[area];
                     const areaLearnedCount = entities.filter(e => e.has_preference).length;
 
@@ -160,6 +216,11 @@ export default function AIPreferencesScreen() {
                                     <View style={styles.areaBadge}>
                                         <Text style={styles.areaBadgeText}>
                                             {areaLearnedCount}/{entities.length}
+                                        </Text>
+                                    </View>
+                                    <View style={[styles.areaBadge, { backgroundColor: '#4CAF5030', marginLeft: 6 }]}>
+                                        <Text style={[styles.areaBadgeText, { color: '#4CAF50' }]}>
+                                            {entities.filter(e => e.matches).length} ✓
                                         </Text>
                                     </View>
                                 </View>
@@ -189,9 +250,18 @@ export default function AIPreferencesScreen() {
                                                     </View>
                                                 </View>
                                                 {entity.has_preference && (
-                                                    <TouchableOpacity onPress={() => setSelectedEntity(entity)}>
-                                                        <Info size={18} color={Colors.primary} />
-                                                    </TouchableOpacity>
+                                                    <>
+                                                        <TouchableOpacity onPress={() => setSelectedEntity(entity)}>
+                                                            <Info size={18} color={Colors.primary} />
+                                                        </TouchableOpacity>
+                                                        {entity.matches !== undefined && (
+                                                            entity.matches ? (
+                                                                <Check size={20} color="#4CAF50" style={{ marginLeft: 8 }} />
+                                                            ) : (
+                                                                <X size={20} color="#F44336" style={{ marginLeft: 8 }} />
+                                                            )
+                                                        )}
+                                                    </>
                                                 )}
                                             </View>
 
@@ -257,8 +327,8 @@ export default function AIPreferencesScreen() {
             {selectedEntity && (
                 <Modal
                     visible={!!selectedEntity}
-                    transparent
-                    animationType="fade"
+                    transparent={false}
+                    animationType="slide"
                     onRequestClose={() => setSelectedEntity(null)}
                 >
                     <TouchableOpacity
@@ -276,7 +346,7 @@ export default function AIPreferencesScreen() {
                                 <View style={styles.modalStat}>
                                     <Text style={styles.modalStatLabel}>Confidence</Text>
                                     <Text style={styles.modalStatValue}>
-                                        {Math.round(selectedEntity.confidence * 100)}%
+                                        {(selectedEntity.confidence * 100).toFixed(1)}%
                                     </Text>
                                 </View>
                                 <View style={styles.modalStat}>
@@ -317,6 +387,50 @@ const styles = StyleSheet.create({
     headerTitle: { fontSize: 20, fontWeight: '600', color: Colors.text },
     headerSubtitle: { fontSize: 12, color: Colors.textDim, marginTop: 2 },
     refreshButton: { padding: 8 },
+    timelineContainer: {
+        paddingVertical: 12,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.1)',
+    },
+    timelineContent: {
+        paddingHorizontal: 16,
+        gap: 8,
+    },
+    hourButton: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 20,
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+    },
+    hourButtonSelected: {
+        backgroundColor: Colors.primary,
+        borderColor: Colors.primary,
+    },
+    hourButtonManual: {
+        backgroundColor: '#FF6B00',  // Bright orange
+        borderColor: '#FF6B00',
+        borderWidth: 2,
+    },
+    hourText: {
+        color: Colors.text,
+        fontSize: 13,
+        fontWeight: '500',
+    },
+    hourTextSelected: {
+        color: '#fff',
+        fontWeight: '600',
+    },
+    manualIndicator: {
+        position: 'absolute',
+        top: 4,
+        right: 4,
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: '#FF9800',
+    },
     statsContainer: { flexDirection: 'row', paddingHorizontal: 20, marginBottom: 20, gap: 12 },
     statCard: { flex: 1, backgroundColor: Colors.card, borderRadius: 12, padding: 16, alignItems: 'center' },
     statValue: { fontSize: 24, fontWeight: '700', color: Colors.primary },

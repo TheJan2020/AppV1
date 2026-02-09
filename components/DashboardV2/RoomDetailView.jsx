@@ -14,6 +14,7 @@ import CoverCard from './CoverCard';
 import MediaCard from './MediaCard';
 import HACamerasList from './HACamerasList';
 import RoomClimateChart from './RoomClimateChart';
+import ActivatePreferencesButton from './ActivatePreferencesButton';
 
 // Fan Card Component
 function FanCard({ fan, onToggle }) {
@@ -249,6 +250,48 @@ export default function RoomDetailView({
         if (onToggle) onToggle('light', 'turn_on', { entity_id: entityId, brightness: brightness });
     };
 
+    const handleActivatePreferences = async (entities) => {
+        // Apply preferred states to each entity
+        for (const entity of entities) {
+            const domain = entity.entity_id.split('.')[0];
+
+            // Determine service based on domain and state
+            let service = '';
+            let data = { entity_id: entity.entity_id };
+
+            switch (domain) {
+                case 'light':
+                    service = entity.preferred_state === 'on' ? 'turn_on' : 'turn_off';
+                    break;
+                case 'fan':
+                    service = entity.preferred_state === 'on' ? 'turn_on' : 'turn_off';
+                    break;
+                case 'climate':
+                    if (entity.preferred_state === 'off') {
+                        service = 'turn_off';
+                    } else {
+                        service = 'set_hvac_mode';
+                        data.hvac_mode = entity.preferred_state; // e.g., 'heat', 'cool', 'auto'
+                    }
+                    break;
+                case 'media_player':
+                    service = entity.preferred_state === 'on' || entity.preferred_state === 'playing' ? 'turn_on' : 'turn_off';
+                    break;
+                case 'cover':
+                    service = entity.preferred_state === 'open' ? 'open_cover' : 'close_cover';
+                    break;
+                default:
+                    continue; // Skip unknown domains
+            }
+
+            if (service && onToggle) {
+                onToggle(domain, service, data);
+                // Small delay between commands
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+        }
+    };
+
     const haUrl = process.env.EXPO_PUBLIC_HA_URL;
     // Don't show image in Modal mode
     const imageUrl = !isModal && room.picture ? `${haUrl}${room.picture}` : null;
@@ -365,6 +408,12 @@ export default function RoomDetailView({
 
             <GestureHandlerRootView style={{ flex: 1 }}>
                 <ScrollView contentContainerStyle={styles.content}>
+
+                    {/* Activate Preferences Button */}
+                    <ActivatePreferencesButton
+                        roomName={room.name}
+                        onActivate={handleActivatePreferences}
+                    />
 
                     {/* Charts Section */}
                     {(mainTemp || mainHumidity) && (

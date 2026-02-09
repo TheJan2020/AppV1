@@ -2,8 +2,7 @@ import { useState, useRef } from 'react';
 import { View, Text, TouchableOpacity, ScrollView, StyleSheet, ActivityIndicator, Platform } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../constants/Colors';
-import { Play, Square, ChevronLeft } from 'lucide-react-native';
-import { router } from 'expo-router';
+import { Play, Square } from 'lucide-react-native';
 import * as SecureStore from 'expo-secure-store';
 
 export default function AnalysisMonitorScreen() {
@@ -16,7 +15,7 @@ export default function AnalysisMonitorScreen() {
         setRunning(true);
 
         try {
-            addLog('� Loading backend configuration...', 'info');
+            addLog('📋 Loading backend configuration...', 'info');
             const backendUrl = await SecureStore.getItemAsync('admin_url');
 
             addLog(`Backend URL: ${backendUrl || 'NOT FOUND'}`, 'info');
@@ -93,14 +92,6 @@ export default function AnalysisMonitorScreen() {
 
     return (
         <LinearGradient colors={[Colors.background, Colors.backgroundDim]} style={styles.container}>
-            <View style={styles.header}>
-                <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
-                    <ChevronLeft size={24} color={Colors.text} />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>AI Analysis Monitor</Text>
-                <View style={{ width: 24 }} />
-            </View>
-
             <View style={styles.controlPanel}>
                 <TouchableOpacity
                     style={[styles.button, running && styles.buttonStop]}
@@ -147,9 +138,6 @@ export default function AnalysisMonitorScreen() {
 
 const styles = StyleSheet.create({
     container: { flex: 1, paddingTop: 60 },
-    header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 20, marginBottom: 20 },
-    backButton: { padding: 8 },
-    headerTitle: { fontSize: 20, fontWeight: '600', color: Colors.text },
     controlPanel: { paddingHorizontal: 20, marginBottom: 20 },
     button: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', backgroundColor: Colors.primary, borderRadius: 12, paddingVertical: 16, gap: 8 },
     buttonStop: { backgroundColor: '#ff6b6b' },
