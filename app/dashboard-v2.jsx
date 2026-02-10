@@ -24,6 +24,7 @@ import RoomSheet from '../components/DashboardV2/RoomSheet';
 import OpacitySettingsModal from '../components/DashboardV2/OpacitySettingsModal';
 import SlideAction from '../components/DashboardV2/SlideAction';
 import BrainView from '../components/DashboardV2/BrainView';
+import VoiceConversation from '../components/VoiceConversation';
 import { LockOpen, Warehouse, DoorOpen } from 'lucide-react-native';
 
 import { FrigateService } from '../services/frigate';
@@ -487,6 +488,13 @@ export default function DashboardV2() {
         // TODO: Implement actual scene activation via HAService
     };
 
+    const handleVoiceCommand = async (command) => {
+        console.log('[Dashboard] Voice command:', command);
+        if (command.action === 'call_service') {
+            await callService(command.domain, command.service, command.service_data);
+        }
+    };
+
     const handleRoomPress = (room) => {
         if (activeTab === 'rooms') {
             // Navigate to new Room Page
@@ -681,6 +689,131 @@ export default function DashboardV2() {
 
                     <QuickScenes
                         onScenePress={handleScenePress}
+                    />
+
+                    {/* Voice Conversation */}
+                    <VoiceConversation
+                        onCommand={handleVoiceCommand}
+                        context={{
+                            userName: userName,
+                            time: new Date().toLocaleTimeString(),
+                            rooms: roomsWithCounts.map(room => ({
+                                name: room.name,
+                                area_id: room.area_id,
+                                lights: registryEntities
+                                    .filter(re => {
+                                        const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
+                                        const areaDeviceIds = areaDevices.map(d => d.id);
+                                        return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
+                                            && re.entity_id.startsWith('light.');
+                                    })
+                                    .map(re => {
+                                        const entity = entities.find(e => e.entity_id === re.entity_id);
+                                        return {
+                                            entity_id: re.entity_id,
+                                            friendly_name: entity?.attributes?.friendly_name || re.entity_id,
+                                            state: entity?.state || 'unknown'
+                                        };
+                                    }),
+                                climate: registryEntities
+                                    .filter(re => {
+                                        const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
+                                        const areaDeviceIds = areaDevices.map(d => d.id);
+                                        return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
+                                            && re.entity_id.startsWith('climate.');
+                                    })
+                                    .map(re => {
+                                        const entity = entities.find(e => e.entity_id === re.entity_id);
+                                        return {
+                                            entity_id: re.entity_id,
+                                            friendly_name: entity?.attributes?.friendly_name || re.entity_id,
+                                            state: entity?.state || 'unknown',
+                                            temperature: entity?.attributes?.current_temperature,
+                                            target_temp: entity?.attributes?.temperature
+                                        };
+                                    }),
+                                covers: registryEntities
+                                    .filter(re => {
+                                        const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
+                                        const areaDeviceIds = areaDevices.map(d => d.id);
+                                        return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
+                                            && re.entity_id.startsWith('cover.');
+                                    })
+                                    .map(re => {
+                                        const entity = entities.find(e => e.entity_id === re.entity_id);
+                                        return {
+                                            entity_id: re.entity_id,
+                                            friendly_name: entity?.attributes?.friendly_name || re.entity_id,
+                                            state: entity?.state || 'unknown',
+                                            current_position: entity?.attributes?.current_position
+                                        };
+                                    }),
+                                media: registryEntities
+                                    .filter(re => {
+                                        const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
+                                        const areaDeviceIds = areaDevices.map(d => d.id);
+                                        return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
+                                            && re.entity_id.startsWith('media_player.');
+                                    })
+                                    .map(re => {
+                                        const entity = entities.find(e => e.entity_id === re.entity_id);
+                                        return {
+                                            entity_id: re.entity_id,
+                                            friendly_name: entity?.attributes?.friendly_name || re.entity_id,
+                                            state: entity?.state || 'unknown'
+                                        };
+                                    }),
+                                switches: registryEntities
+                                    .filter(re => {
+                                        const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
+                                        const areaDeviceIds = areaDevices.map(d => d.id);
+                                        return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
+                                            && re.entity_id.startsWith('switch.');
+                                    })
+                                    .map(re => {
+                                        const entity = entities.find(e => e.entity_id === re.entity_id);
+                                        return {
+                                            entity_id: re.entity_id,
+                                            friendly_name: entity?.attributes?.friendly_name || re.entity_id,
+                                            state: entity?.state || 'unknown'
+                                        };
+                                    }),
+                                sensors: registryEntities
+                                    .filter(re => {
+                                        const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
+                                        const areaDeviceIds = areaDevices.map(d => d.id);
+                                        return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
+                                            && re.entity_id.startsWith('sensor.')
+                                            && !re.entity_id.includes('signal_strength')
+                                            && !re.entity_id.includes('battery');
+                                    })
+                                    .map(re => {
+                                        const entity = entities.find(e => e.entity_id === re.entity_id);
+                                        return {
+                                            entity_id: re.entity_id,
+                                            friendly_name: entity?.attributes?.friendly_name || re.entity_id,
+                                            state: entity?.state || 'unknown',
+                                            unit: entity?.attributes?.unit_of_measurement
+                                        };
+                                    }),
+                                binary_sensors: registryEntities
+                                    .filter(re => {
+                                        const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
+                                        const areaDeviceIds = areaDevices.map(d => d.id);
+                                        return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
+                                            && re.entity_id.startsWith('binary_sensor.');
+                                    })
+                                    .map(re => {
+                                        const entity = entities.find(e => e.entity_id === re.entity_id);
+                                        return {
+                                            entity_id: re.entity_id,
+                                            friendly_name: entity?.attributes?.friendly_name || re.entity_id,
+                                            state: entity?.state || 'unknown',
+                                            device_class: entity?.attributes?.device_class
+                                        };
+                                    })
+                            }))
+                        }}
                     />
 
 
