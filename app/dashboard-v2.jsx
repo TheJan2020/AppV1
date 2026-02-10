@@ -60,19 +60,23 @@ export default function DashboardV2() {
     const [roomTrackingLookup, setRoomTrackingLookup] = useState({}); // Tracking state -> area_id mapping
 
     // Settings State
-    const [showFamily, setShowFamily] = useState(true);
+    const [showFamily, setShowFamily] = useState(false);
     const [autoRoomVisit, setAutoRoomVisit] = useState(true);
     const [autoRoomResume, setAutoRoomResume] = useState(true);
+    const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
 
     useEffect(() => {
         SecureStore.getItemAsync('settings_show_family').then(val => {
-            setShowFamily(val === 'false' ? false : true);
+            if (val !== null) setShowFamily(val === 'true');
         });
         SecureStore.getItemAsync('settings_auto_room_visit').then(val => {
             if (val !== null) setAutoRoomVisit(val === 'true');
         });
         SecureStore.getItemAsync('settings_auto_room_resume').then(val => {
             if (val !== null) setAutoRoomResume(val === 'true');
+        });
+        SecureStore.getItemAsync('settings_show_voice_assistant').then(val => {
+            if (val !== null) setShowVoiceAssistant(val === 'true');
         });
 
         loadConnectionConfig();
@@ -351,6 +355,7 @@ export default function DashboardV2() {
     // Auto-Room Presentation (User Tracker -> Espresense Match)
     // -------------------------------------------------------------------------
     const lastActiveRoomRef = useRef(null);
+    const lastTrackerStateRef = useRef(null);
     const appState = useRef(AppState.currentState);
 
     // Refactored check logic for re-use
@@ -401,6 +406,13 @@ export default function DashboardV2() {
         }
 
         const currentState = tracker.state.toLowerCase();
+
+        // Optimization: Prevent infinite loops if state hasn't changed
+        if (!isResume && lastTrackerStateRef.current === currentState) {
+            return;
+        }
+        lastTrackerStateRef.current = currentState;
+
         console.log('[Auto-Room] Current state:', currentState);
 
         // Ignore generic states
@@ -692,7 +704,7 @@ export default function DashboardV2() {
                     />
 
                     {/* Voice Conversation */}
-                    <VoiceConversation
+                    {showVoiceAssistant && <VoiceConversation
                         onCommand={handleVoiceCommand}
                         context={{
                             userName: userName,
@@ -814,7 +826,7 @@ export default function DashboardV2() {
                                     })
                             }))
                         }}
-                    />
+                    />}
 
 
 
@@ -980,10 +992,12 @@ export default function DashboardV2() {
                     showFamily={showFamily}
                     autoRoomVisit={autoRoomVisit}
                     autoRoomResume={autoRoomResume}
+                    showVoiceAssistant={showVoiceAssistant}
                     onSettingChange={(key, val) => {
                         if (key === 'showFamily') setShowFamily(val);
                         if (key === 'autoRoomVisit') setAutoRoomVisit(val);
                         if (key === 'autoRoomResume') setAutoRoomResume(val);
+                        if (key === 'showVoiceAssistant') setShowVoiceAssistant(val);
                     }}
                     onPlayMedia={() => setShowYoutubeLauncher(true)}
                     onNetwork={() => setShowNetworkModal(true)}

@@ -3,7 +3,11 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
-const BACKEND_URL = (process.env.EXPO_PUBLIC_ADMIN_URL?.replace(/\/$/, '') || 'https://mobilev1.primewave1.click');
+const BACKEND_URL = process.env.EXPO_PUBLIC_ADMIN_URL?.replace(/\/$/, '');
+
+if (!BACKEND_URL) {
+    console.error('[Push] EXPO_PUBLIC_ADMIN_URL is not defined in .env');
+}
 
 // Configure how notifications behave when the app is in foreground
 Notifications.setNotificationHandler({

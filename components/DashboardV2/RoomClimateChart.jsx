@@ -16,7 +16,12 @@ export default function RoomClimateChart({ tempEntityId, humidityEntityId }) {
         const fetchData = async () => {
             try {
                 // Fetch both
-                const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL || 'https://mobilev1.primewave1.click';
+                const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL;
+                if (!adminUrl) {
+                    console.error("RoomClimateChart: EXPO_PUBLIC_ADMIN_URL is missing");
+                    setLoading(false);
+                    return;
+                }
                 const baseUrl = adminUrl.endsWith('/') ? adminUrl : adminUrl + '/';
 
                 const ids = [];

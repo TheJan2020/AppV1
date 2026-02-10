@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Image, SectionList, ActivityI
 import { BlurView } from 'expo-blur';
 import { Play } from 'lucide-react-native';
 
-const BACKEND_URL = (process.env.EXPO_PUBLIC_ADMIN_URL?.replace('/api/config', '') || 'https://mobilev1.primewave1.click').replace(/\/$/, '');
+const BACKEND_URL = process.env.EXPO_PUBLIC_ADMIN_URL?.replace('/api/config', '').replace(/\/$/, '');
 
 export default function FrigateTimeline({ events, onEventPress, onLoadMore, hasMore, loadingMore, selectedEventId, listRef }) {
 

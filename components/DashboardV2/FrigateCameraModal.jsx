@@ -10,7 +10,7 @@ import { Play, Calendar, Video as VideoIcon, Radio } from 'lucide-react-native';
 const { width, height } = Dimensions.get('window');
 
 // Get backend URL from environment variable (remove trailing slash to prevent double slashes)
-const BACKEND_URL = (process.env.EXPO_PUBLIC_ADMIN_URL?.replace('/api/config', '') || 'https://mobilev1.primewave1.click').replace(/\/$/, '');
+const BACKEND_URL = process.env.EXPO_PUBLIC_ADMIN_URL?.replace('/api/config', '').replace(/\/$/, '');
 
 const LiveStream = ({ service, cameraName, isMuted, onToggleMute }) => {
     const webViewRef = useRef(null);

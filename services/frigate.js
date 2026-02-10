@@ -1,3 +1,5 @@
+import { Alert } from 'react-native';
+
 export class FrigateService {
     constructor(baseUrl, username, password) {
         this.baseUrl = baseUrl.replace(/\/$/, ''); // Remove trailing slash
@@ -26,6 +28,7 @@ export class FrigateService {
 
             if (!response.ok) {
                 console.error('Frigate Login Failed:', response.status);
+                Alert.alert('Frigate Login Failed', `Status: ${response.status}`);
                 return false;
             }
 
@@ -50,6 +53,7 @@ export class FrigateService {
             return true;
         } catch (error) {
             console.error('Frigate Login Error:', error);
+            Alert.alert('Frigate Login Error', error.message || 'Unknown error');
             return false;
         }
     }
@@ -99,6 +103,7 @@ export class FrigateService {
 
             if (!response.ok) {
                 console.error('Frigate: Config fetch failed with status:', response.status);
+                Alert.alert('Connection Error', 'Unable to connect to Frigate');
                 return null;
             }
 
@@ -107,6 +112,7 @@ export class FrigateService {
             return data;
         } catch (error) {
             console.error('Frigate Config Error:', error.message || error);
+            Alert.alert('Connection Error', 'Unable to connect to Frigate');
             return null;
         }
     }
@@ -118,6 +124,7 @@ export class FrigateService {
             return await response.json();
         } catch (error) {
             console.error('Frigate Stats Error:', error);
+            // Alert.alert('Frigate Stats Error', error.message || String(error)); // Commented out to avoid spamming stats loop
             return null;
         }
     }
@@ -145,6 +152,7 @@ export class FrigateService {
             return await response.json();
         } catch (error) {
             console.error('Frigate Events Error:', error);
+            Alert.alert('Frigate Events Error', error.message || String(error));
             return [];
         }
     }
@@ -176,6 +184,7 @@ export class FrigateService {
             return await response.json();
         } catch (e) {
             console.error('Frigate Recording Summary Error:', e);
+            Alert.alert('Frigate Recording Error', e.message || String(e));
             return [];
         }
     }
@@ -195,6 +204,7 @@ export class FrigateService {
             return response.ok;
         } catch (error) {
             console.error('PTZ Error:', error);
+            Alert.alert('PTZ Error', error.message || String(error));
             return false;
         }
     }

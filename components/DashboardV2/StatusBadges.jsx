@@ -84,16 +84,6 @@ export default function StatusBadges({ securityState, lightsOn, acOn, doorsOpen,
     return (
         <View style={styles.container}>
             <View style={styles.mainRow}>
-                {/* Loop Toggle Button */}
-                <TouchableOpacity
-                    style={[styles.toggleButton, mode !== 'loop' && styles.toggleButtonActive]}
-                    onPress={handleToggleMode}
-                >
-                    {mode === 'loop' && <Repeat size={14} color="rgba(255,255,255,0.6)" />}
-                    {mode === 'fixed-1' && <Text style={styles.toggleText}>1</Text>}
-                    {mode === 'fixed-2' && <Text style={styles.toggleText}>2</Text>}
-                </TouchableOpacity>
-
                 {/* Animated Content */}
                 <View style={{ flex: 1 }}>
                     {activeIndex === 0 ? (
@@ -103,9 +93,6 @@ export default function StatusBadges({ securityState, lightsOn, acOn, doorsOpen,
                             exiting={FadeOut.duration(500)}
                             style={styles.row}
                         >
-                            <View style={styles.iconContainer}>
-                                <Zap size={18} color="rgba(255,255,255,0.7)" />
-                            </View>
                             <View style={styles.badgesContainer}>
                                 {powerItems.map(renderBadge)}
                             </View>
@@ -117,15 +104,22 @@ export default function StatusBadges({ securityState, lightsOn, acOn, doorsOpen,
                             exiting={FadeOut.duration(500)}
                             style={styles.row}
                         >
-                            <View style={styles.iconContainer}>
-                                <Shield size={18} color="rgba(255,255,255,0.7)" />
-                            </View>
                             <View style={styles.badgesContainer}>
                                 {securityItems.map(renderBadge)}
                             </View>
                         </Animated.View>
                     )}
                 </View>
+
+                {/* Loop Toggle Button */}
+                <TouchableOpacity
+                    style={[styles.toggleButton, mode !== 'loop' && styles.toggleButtonActive]}
+                    onPress={handleToggleMode}
+                >
+                    {mode === 'loop' && <Repeat size={14} color="rgba(255,255,255,0.6)" />}
+                    {mode === 'fixed-1' && <Text style={styles.toggleText}>1</Text>}
+                    {mode === 'fixed-2' && <Text style={styles.toggleText}>2</Text>}
+                </TouchableOpacity>
             </View>
         </View>
     );
@@ -165,14 +159,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 12
     },
-    iconContainer: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
-        backgroundColor: 'rgba(255,255,255,0.05)',
-        alignItems: 'center',
-        justifyContent: 'center'
-    },
+
     badgesContainer: {
         flexDirection: 'row',
         gap: 8,

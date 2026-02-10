@@ -20,7 +20,8 @@ export default function SettingsView({
     onNetwork,
     showFamily, // Prop from parent
     autoRoomVisit, // Prop from parent
-    autoRoomResume // Prop from parent
+    autoRoomResume, // Prop from parent
+    showVoiceAssistant // Prop from parent
 }) {
     const [activeTab, setActiveTab] = useState('general');
     const [selectedArea, setSelectedArea] = useState(null);
@@ -45,6 +46,7 @@ export default function SettingsView({
         if (key === 'showFamily') storeKey = 'settings_show_family';
         if (key === 'autoRoomVisit') storeKey = 'settings_auto_room_visit';
         if (key === 'autoRoomResume') storeKey = 'settings_auto_room_resume';
+        if (key === 'showVoiceAssistant') storeKey = 'settings_show_voice_assistant';
 
         if (storeKey) {
             await SecureStore.setItemAsync(storeKey, val.toString());
@@ -387,6 +389,25 @@ export default function SettingsView({
                         thumbColor={autoRoomResume ? '#fff' : '#f4f3f4'}
                     />
                 </View>
+
+                {/* Voice Assistant Toggle */}
+                <View style={styles.listItem}>
+                    <View style={styles.itemInfo}>
+                        <View style={styles.iconContainer}>
+                            <Sparkles size={20} color={Colors.text} />
+                        </View>
+                        <View>
+                            <Text style={styles.itemName}>Voice Assistant</Text>
+                            <Text style={styles.itemSub}>Show voice assistant on dashboard</Text>
+                        </View>
+                    </View>
+                    <Switch
+                        value={showVoiceAssistant}
+                        onValueChange={(val) => handleToggleSetting('showVoiceAssistant', val)}
+                        trackColor={{ false: '#767577', true: Colors.primary }}
+                        thumbColor={showVoiceAssistant ? '#fff' : '#f4f3f4'}
+                    />
+                </View>
             </View>
 
             <View style={styles.section}>
@@ -574,8 +595,14 @@ export default function SettingsView({
                 style={styles.testPushBtn}
                 onPress={async () => {
                     try {
+                        const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL?.replace(/\/$/, '');
+                        if (!adminUrl) {
+                            Alert.alert('Configuration Error', 'EXPO_PUBLIC_ADMIN_URL is missing in .env');
+                            return;
+                        }
+
                         const loading = Alert.alert('Sending...', 'Triggering test notification...', [], { cancelable: false });
-                        const response = await fetch(`${(process.env.EXPO_PUBLIC_ADMIN_URL?.replace(/\/$/, '') || 'https://mobilev1.primewave1.click')}/api/notifications/send`, {
+                        const response = await fetch(`${adminUrl}/api/notifications/send`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({

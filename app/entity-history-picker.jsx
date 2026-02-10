@@ -9,9 +9,15 @@ export default function EntityHistoryPicker() {
     const router = useRouter();
     const [loading, setLoading] = useState(true);
     const [homeStats, setHomeStats] = useState(null);
-    const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL || 'https://mobilev1.primewave1.click';
+    const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL;
 
     useEffect(() => {
+        if (!adminUrl) {
+            console.error("EntityHistoryPicker: EXPO_PUBLIC_ADMIN_URL is missing");
+            setLoading(false);
+            return;
+        }
+
         const fetchStats = async () => {
             const now = new Date();
             const start = new Date(now); start.setHours(0, 0, 0, 0);
