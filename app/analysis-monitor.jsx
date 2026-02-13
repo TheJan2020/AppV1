@@ -4,6 +4,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../constants/Colors';
 import { Play, Square } from 'lucide-react-native';
 import * as SecureStore from 'expo-secure-store';
+import { getActiveProfileConfig } from '../services/profile';
 
 export default function AnalysisMonitorScreen() {
     const [running, setRunning] = useState(false);
@@ -16,7 +17,8 @@ export default function AnalysisMonitorScreen() {
 
         try {
             addLog('📋 Loading backend configuration...', 'info');
-            const backendUrl = await SecureStore.getItemAsync('admin_url');
+            const config = await getActiveProfileConfig();
+            const backendUrl = config?.adminUrl;
 
             addLog(`Backend URL: ${backendUrl || 'NOT FOUND'}`, 'info');
 

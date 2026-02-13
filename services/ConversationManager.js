@@ -2,6 +2,7 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as SecureStore from 'expo-secure-store';
 import * as Haptics from 'expo-haptics';
+import { getActiveProfileConfig } from './profile';
 
 /**
  * Conversation Session Manager
@@ -164,7 +165,8 @@ export class ConversationManager {
 
     async processCommand(audioUri) {
         try {
-            const backendUrl = await SecureStore.getItemAsync('admin_url');
+            const config = await getActiveProfileConfig();
+            const backendUrl = config?.adminUrl;
             const apiKey = await SecureStore.getItemAsync('api_key_openai');
 
             if (!backendUrl || !apiKey) {

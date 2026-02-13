@@ -9,7 +9,7 @@ import { useEffect, useState } from 'react';
 // Assets
 const IMG_TEXTURE = require('../../assets/cover_widget/shutter_texture.png');
 
-export default function CoverCard({ cover, sensor, onUpdate }) {
+export default function CoverCard({ cover, sensor, onUpdate, needsChange }) {
     if (!cover) return null;
 
     const { attributes, state } = cover.stateObj;
@@ -222,7 +222,10 @@ export default function CoverCard({ cover, sensor, onUpdate }) {
     const controlsContainerStyle = isShutter ? [styles.controlsCol, { width: 60 }] : styles.controlsCol;
 
     return (
-        <View style={styles.container}>
+        <View style={[
+            styles.container,
+            needsChange && { borderColor: '#8947ca', borderWidth: 2 }
+        ]}>
             {/* Header */}
             <View style={styles.header}>
                 <Text style={styles.name} numberOfLines={1}>{friendlyName}</Text>
@@ -348,7 +351,8 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         padding: 12,
         height: 180, // Increased height for better visual ratio
-        justifyContent: 'space-between'
+        justifyContent: 'space-between',
+        borderWidth: 0, // Default no border
     },
     header: {
         flexDirection: 'row',

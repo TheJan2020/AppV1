@@ -11,7 +11,10 @@ export default function RoomSheet({
     registryDevices = [],
     registryEntities = [],
     allEntities = [],
-    onToggle
+    onToggle,
+    lightMappings = [],
+    mediaMappings = [],
+    adminUrl
 }) {
     if (!room) return null;
 
@@ -41,6 +44,9 @@ export default function RoomSheet({
                         onToggle={onToggle}
                         onClose={onClose}
                         isModal={true}
+                        lightMappings={lightMappings}
+                        mediaMappings={mediaMappings}
+                        adminUrl={adminUrl}
                     />
                 </View>
             </View>

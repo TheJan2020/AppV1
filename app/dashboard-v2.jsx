@@ -1,5 +1,7 @@
 import { useRef, useState, useEffect } from 'react';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
+import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
+
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -17,6 +19,7 @@ import QuickScenes from '../components/DashboardV2/QuickScenes';
 import YouTubeLauncherModal from '../components/DashboardV2/YouTubeLauncherModal';
 import AppleTVRemoteModal from '../components/DashboardV2/AppleTVRemoteModal';
 import RoomsList from '../components/DashboardV2/RoomsList';
+import DraggableRoomList from '../components/DashboardV2/DraggableRoomList';
 import CamerasList from '../components/DashboardV2/CamerasList';
 import HACamerasList from '../components/DashboardV2/HACamerasList';
 import TabBar from '../components/DashboardV2/TabBar';
@@ -25,7 +28,7 @@ import OpacitySettingsModal from '../components/DashboardV2/OpacitySettingsModal
 import SlideAction from '../components/DashboardV2/SlideAction';
 import BrainView from '../components/DashboardV2/BrainView';
 import VoiceConversation from '../components/VoiceConversation';
-import { LockOpen, Warehouse, DoorOpen } from 'lucide-react-native';
+import { LockOpen } from 'lucide-react-native';
 
 import { FrigateService } from '../services/frigate';
 import * as SecureStore from 'expo-secure-store';
@@ -36,9 +39,9 @@ export default function DashboardV2() {
 
     // Config State
     const [connectionConfig, setConnectionConfig] = useState({
-        url: process.env.EXPO_PUBLIC_HA_URL,
-        token: process.env.EXPO_PUBLIC_HA_TOKEN,
-        adminUrl: process.env.EXPO_PUBLIC_ADMIN_URL,
+        url: '',
+        token: '',
+        adminUrl: '',
         loaded: false
     });
 
@@ -65,6 +68,11 @@ export default function DashboardV2() {
     const [autoRoomResume, setAutoRoomResume] = useState(true);
     const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
 
+
+    // Room Reordering State
+    const [savedRoomOrder, setSavedRoomOrder] = useState([]);
+    const [isReorderMode, setIsReorderMode] = useState(false);
+
     useEffect(() => {
         SecureStore.getItemAsync('settings_show_family').then(val => {
             if (val !== null) setShowFamily(val === 'true');
@@ -78,22 +86,45 @@ export default function DashboardV2() {
         SecureStore.getItemAsync('settings_show_voice_assistant').then(val => {
             if (val !== null) setShowVoiceAssistant(val === 'true');
         });
+        // Load Room Order
+        SecureStore.getItemAsync('room_reorder_config').then(val => {
+            if (val !== null) {
+                try {
+                    setSavedRoomOrder(JSON.parse(val));
+                } catch (e) {
+                    console.log('Error parsing room order:', e);
+                }
+            }
+        });
 
         loadConnectionConfig();
     }, []);
 
     const loadConnectionConfig = async () => {
         try {
-            const sUrl = await SecureStore.getItemAsync('ha_url');
-            const sToken = await SecureStore.getItemAsync('ha_token');
-            const sAdmin = await SecureStore.getItemAsync('admin_url');
+            // 1. Try to load from Profiles first
+            const activeProfileId = await SecureStore.getItemAsync('ha_active_profile_id');
+            const profilesJson = await SecureStore.getItemAsync('ha_profiles');
 
-            setConnectionConfig({
-                url: sUrl || process.env.EXPO_PUBLIC_HA_URL,
-                token: sToken || process.env.EXPO_PUBLIC_HA_TOKEN,
-                adminUrl: sAdmin || process.env.EXPO_PUBLIC_ADMIN_URL,
-                loaded: true
-            });
+            if (activeProfileId && profilesJson) {
+                const profiles = JSON.parse(profilesJson);
+                const activeProfile = profiles.find(p => p.id === activeProfileId);
+
+                if (activeProfile) {
+                    console.log('[Dashboard] Loaded active profile:', activeProfile.name);
+                    setConnectionConfig({
+                        url: activeProfile.haUrl,
+                        token: activeProfile.haToken,
+                        adminUrl: activeProfile.adminUrl,
+                        loaded: true
+                    });
+                    return;
+                }
+            }
+
+            // If we get here, no valid profile found.
+            console.log('[Dashboard] No active profile found. Staying disconnected.');
+            setConnectionConfig(prev => ({ ...prev, loaded: true }));
         } catch (e) {
             console.log('Error loading connection config:', e);
             // Fallback
@@ -115,6 +146,56 @@ export default function DashboardV2() {
     const [registryFloors, setRegistryFloors] = useState([]);
     const [selectedFloor, setSelectedFloor] = useState(null);
     const [alertRules, setAlertRules] = useState([]);
+    const [lightMappings, setLightMappings] = useState([]);
+    const [mediaMappings, setMediaMappings] = useState([]);
+
+    const fetchMappings = () => {
+        if (!connectionConfig.loaded || !connectionConfig.adminUrl) return;
+        const adminUrl = connectionConfig.adminUrl;
+        const baseUrl = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
+
+        // 1. Lights
+        const lightsUrl = `${baseUrl}api/monitored-entities?type=light&t=${Date.now()}`;
+        console.log('[Dashboard] Fetching light mappings...');
+        fetch(lightsUrl)
+            .then(res => res.json())
+            .then(data => {
+                if (Array.isArray(data)) {
+                    console.log('[Light Mappings] Loaded:', data.length);
+                    setLightMappings(data);
+                }
+            })
+            .catch(e => console.log("[Light Mappings] Error:", e));
+
+        // 2. Media
+        const mediaUrl = `${baseUrl}api/monitored-entities?type=media_player&t=${Date.now()}`;
+        console.log('[Dashboard] Fetching media mappings...');
+        fetch(mediaUrl)
+            .then(res => res.json())
+            .then(data => {
+                if (Array.isArray(data)) {
+                    console.log('[Media Mappings] Loaded:', data.length);
+                    setMediaMappings(data);
+                }
+            })
+            .catch(e => console.log("[Media Mappings] Error:", e));
+    };
+
+    useEffect(() => {
+        fetchMappings();
+    }, [connectionConfig.loaded, connectionConfig.adminUrl]);
+
+    // DEBUG: Alert Debugging
+    useEffect(() => {
+        if (entities.length > 0) {
+            const doors = entities.filter(e => e.entity_id.startsWith('sensor.door_'));
+            if (doors.length > 0) {
+                const debugStr = doors.map(d => `${d.entity_id}: ${d.state}`).join('\n');
+                // Alert.alert('Door Debug', debugStr); // Uncomment to see debug
+                console.log('Door Debug:\n' + debugStr);
+            }
+        }
+    }, [entities]);
 
     // Initial Load Logic
     useEffect(() => {
@@ -156,6 +237,8 @@ export default function DashboardV2() {
                     }
                 })
                 .catch(e => console.log("[Room Tracking] Error loading lookup:", e));
+
+
         }
 
         // 2. Connect to Home Assistant
@@ -231,13 +314,23 @@ export default function DashboardV2() {
             }
         });
 
-        return () => service.current?.socket?.close();
+        return () => {
+            if (service.current) {
+                if (service.current.disconnect) {
+                    service.current.disconnect();
+                } else {
+                    service.current.socket?.close();
+                }
+            }
+        };
     }, [connectionConfig.loaded]);
 
     const weather = entities.find(e => e.entity_id.startsWith('weather.'));
 
     // Active Devices Modal State
     const [modalVisible, setModalVisible] = useState(false);
+    const [securityModalVisible, setSecurityModalVisible] = useState(false);
+
     const [activeBadgeType, setActiveBadgeType] = useState(null); // 'lights', 'ac', 'doors'
 
     // Room Sheet State
@@ -270,19 +363,14 @@ export default function DashboardV2() {
                     if (type === 'lights') return e.entity_id.startsWith('light.') && e.state === 'on';
                     if (type === 'ac') return e.entity_id.startsWith('climate.') && e.state !== 'off' && e.state !== 'unavailable';
                     if (type === 'doors') {
-                        const isBinaryDoor = e.entity_id.startsWith('binary_sensor.') && (
-                            e.attributes?.device_class === 'door' ||
-                            e.attributes?.device_class === 'garage' ||
-                            e.attributes?.device_class === 'window' ||
-                            e.attributes?.device_class === 'opening' ||
-                            e.entity_id.includes('door')
-                        );
-                        // Sensor Door: sensor.door_ANYTEXT
-                        const isSensorDoor = e.entity_id.startsWith('sensor.door_') && (e.state.toLowerCase() === 'open' || e.state.toLowerCase() === 'on');
-
-                        const isGarageCover = e.entity_id.startsWith('cover.') && e.attributes?.device_class === 'garage' && e.state === 'open';
-
-                        return (isBinaryDoor && e.state === 'on') || isSensorDoor || isGarageCover;
+                        const isDoor = e.entity_id.startsWith('sensor.door_');
+                        if (isDoor) {
+                            const s = e.state.toLowerCase();
+                            const isActive = s === 'open' || s === 'on' || s === 'true' || s === '1';
+                            if (!isActive) console.log(`[Door Debug] Ignored ${e.entity_id} with state '${e.state}'`);
+                            return isActive;
+                        }
+                        return false;
                     }
                     return false;
                 });
@@ -315,8 +403,12 @@ export default function DashboardV2() {
     const { title: modalTitle, devices: modalDevices } = getModalData();
 
     const handleBadgePress = (type) => {
-        setActiveBadgeType(type);
-        setModalVisible(true);
+        if (type === 'security') {
+            setSecurityModalVisible(true);
+        } else {
+            setActiveBadgeType(type);
+            setModalVisible(true);
+        }
     };
 
     // Calculate Counts from Grouped Data
@@ -327,7 +419,22 @@ export default function DashboardV2() {
     const acOn = activeACGrouped.reduce((sum, group) => sum + group.data.length, 0);
 
     const activeDoorsGrouped = getAllActiveDevices('doors');
-    const doorsOpen = activeDoorsGrouped.reduce((sum, group) => sum + group.data.length, 0);
+    // Global scan for doors to ensure accuracy
+    const doorsOpen = entities.filter(e => {
+        const isSensorDoor = e.entity_id.startsWith('sensor.door_');
+        const isBinaryDoor = e.entity_id.startsWith('binary_sensor.') && (
+            e.attributes?.device_class === 'door' ||
+            e.attributes?.device_class === 'garage' ||
+            e.attributes?.device_class === 'window' ||
+            e.attributes?.device_class === 'opening' ||
+            e.entity_id.includes('door')
+        );
+
+        if (!isSensorDoor && !isBinaryDoor) return false;
+
+        const s = e.state.toLowerCase();
+        return s === 'open' || s === 'on' || s === 'true' || s === '1';
+    }).length;
 
     // Power and Security still single entities for now
     let power = null;
@@ -342,6 +449,9 @@ export default function DashboardV2() {
         power = pEntity ? pEntity.state : null;
         const sEntity = entities.find(e => e.entity_id.startsWith('alarm_control_panel.'));
         securityState = sEntity ? sEntity.state : 'Unknown';
+        if (sEntity) {
+            console.log('[Security Debug] Entity:', sEntity.entity_id, 'Attributes:', JSON.stringify(sEntity.attributes, null, 2));
+        }
     }
 
     // Default floor selection
@@ -478,6 +588,9 @@ export default function DashboardV2() {
                     lastActiveRoomRef.current = null;
                     checkPresence(true);
                 }
+
+                // Always refresh config on resume
+                fetchMappings();
             }
             appState.current = nextAppState;
         });
@@ -553,43 +666,7 @@ export default function DashboardV2() {
         }
     };
 
-    // Temporary State for Door/Garage
-    const [isDoorUnlocked, setIsDoorUnlocked] = useState(false);
-    const [isGarageOpen, setIsGarageOpen] = useState(false);
 
-    const handleUnlockDoor = () => {
-        // Trigger Service Immediate
-        const lock = entities.find(e => e.entity_id.startsWith('lock.') && (e.entity_id.includes('front') || e.entity_id.includes('door')));
-        if (lock) {
-            callService('lock', 'unlock', { entity_id: lock.entity_id });
-        } else {
-            console.log("DEBUG: No front door lock found");
-        }
-
-        // Delay visual state change to allow Success Animation (2.5s) to play
-        setTimeout(() => {
-            setIsDoorUnlocked(true);
-            // Revert 5 seconds AFTER the state changes
-            setTimeout(() => setIsDoorUnlocked(false), 5000);
-        }, 2200);
-    };
-
-    const handleOpenGarage = () => {
-        // Trigger Service Immediate
-        const garage = entities.find(e => e.entity_id.startsWith('cover.') && e.entity_id.includes('garage'));
-        if (garage) {
-            callService('cover', 'open_cover', { entity_id: garage.entity_id });
-        } else {
-            console.log("DEBUG: No garage cover found");
-        }
-
-        // Delay visual state change to allow Success Animation (2.5s) to play
-        setTimeout(() => {
-            setIsGarageOpen(true);
-            // Revert 5 seconds AFTER the state changes
-            setTimeout(() => setIsGarageOpen(false), 5000);
-        }, 2200);
-    };
 
     const handleTabPress = (tabId) => {
         setActiveTab(tabId);
@@ -603,7 +680,7 @@ export default function DashboardV2() {
 
         if (!sourceAreas || sourceAreas.length === 0) return [];
 
-        return sourceAreas.map(area => {
+        const computedRooms = sourceAreas.map(area => {
             const areaDevices = registryDevices.filter(d => d.area_id === area.area_id);
             const areaDeviceIds = areaDevices.map(d => d.id);
             const areaRegEntries = registryEntities.filter(re => {
@@ -635,22 +712,21 @@ export default function DashboardV2() {
                 const stateObj = entities.find(e => e.entity_id === re.entity_id);
                 if (!stateObj) return false;
 
-                // Check binary sensors for doors/windows
-                if (re.entity_id.startsWith('binary_sensor.')) {
-                    const isDoor = stateObj?.attributes?.device_class === 'door' ||
-                        stateObj?.attributes?.device_class === 'window' ||
-                        stateObj?.attributes?.device_class === 'garage' ||
-                        stateObj?.attributes?.device_class === 'opening' ||
-                        re.entity_id.includes('door') ||
-                        re.entity_id.includes('window');
+                // Check sensor.door_* OR binary_sensor doors
+                const isSensorDoor = re.entity_id.startsWith('sensor.door_');
+                const isBinaryDoor = re.entity_id.startsWith('binary_sensor.') && (
+                    stateObj.attributes?.device_class === 'door' ||
+                    stateObj.attributes?.device_class === 'garage' ||
+                    stateObj.attributes?.device_class === 'window' ||
+                    stateObj.attributes?.device_class === 'opening' ||
+                    re.entity_id.includes('door')
+                );
 
-                    return isDoor && stateObj.state === 'on';
-                }
-
-                // Check sensor.door_*
-                if (re.entity_id.startsWith('sensor.door_')) {
+                if (isSensorDoor || isBinaryDoor) {
                     const s = stateObj.state.toLowerCase();
-                    return s === 'open' || s === 'on';
+                    const isActive = s === 'open' || s === 'on' || s === 'true' || s === '1';
+                    // console.log(`[RoomCount Debug] ${re.entity_id} state='${stateObj.state}' isActive=${isActive}`);
+                    return isActive;
                 }
 
                 return false;
@@ -670,9 +746,31 @@ export default function DashboardV2() {
                 hasPresenceSensor
             };
         });
+
+        // Apply Sorting if savedRoomOrder exists
+        if (savedRoomOrder && savedRoomOrder.length > 0) {
+            return computedRooms.sort((a, b) => {
+                const indexA = savedRoomOrder.indexOf(a.area_id);
+                const indexB = savedRoomOrder.indexOf(b.area_id);
+
+                const valA = indexA === -1 ? 9999 : indexA;
+                const valB = indexB === -1 ? 9999 : indexB;
+
+                return valA - valB;
+            });
+        }
+
+        return computedRooms;
     };
 
     const roomsWithCounts = getRoomsWithCounts();
+
+    const handleRoomReorder = (data) => {
+        // Optimistic update (although derived state helps)
+        const newOrder = data.map(r => r.area_id);
+        setSavedRoomOrder(newOrder);
+        SecureStore.setItemAsync('room_reorder_config', JSON.stringify(newOrder));
+    };
 
     const renderContent = () => {
         if (activeTab === 'home') {
@@ -830,44 +928,35 @@ export default function DashboardV2() {
 
 
 
-                    {/* Sliders / Status Indicators */}
-                    <View style={styles.sliderRow}>
-                        {/* Door Lock */}
-                        <View style={styles.sliderContainer}>
-                            {/* Logic: Check if door is unlocked. */}
-                            {isDoorUnlocked ? (
-                                <View style={[styles.statusCard, { backgroundColor: '#EF5350' }]}>
-                                    <LockOpen size={24} color="#fff" />
-                                    <Text style={styles.statusText}>Unlocked</Text>
-                                </View>
-                            ) : (
-                                <SlideAction
-                                    label="Unlock Door"
-                                    icon={LockOpen}
-                                    color="#8947ca"
-                                    onSlide={handleUnlockDoor}
-                                />
-                            )}
-                        </View>
+                    {/* Dynamic Lock Sliders */}
+                    {entities.some(e => e.entity_id.startsWith('lock.')) && (
+                        <View style={styles.sliderRow}>
+                            {entities
+                                .filter(e => e.entity_id.startsWith('lock.'))
+                                .map(lock => {
+                                    const isUnlocked = lock.state === 'unlocked' || lock.state === 'open';
+                                    const name = lock.attributes.friendly_name || lock.entity_id;
 
-                        {/* Garage Door */}
-                        <View style={styles.sliderContainer}>
-                            {/* Logic: Check if garage is open. */}
-                            {isGarageOpen ? (
-                                <View style={[styles.statusCard, { backgroundColor: '#EF5350' }]}>
-                                    <MaterialCommunityIcons name="garage-open-variant" size={24} color="#fff" />
-                                    <Text style={styles.statusText}>Garage Open</Text>
-                                </View>
-                            ) : (
-                                <SlideAction
-                                    label="Open Garage"
-                                    icon={Warehouse}
-                                    color="#8947ca"
-                                    onSlide={handleOpenGarage}
-                                />
-                            )}
+                                    return (
+                                        <View key={lock.entity_id} style={styles.sliderContainer}>
+                                            {isUnlocked ? (
+                                                <View style={[styles.statusCard, { backgroundColor: '#EF5350' }]}>
+                                                    <LockOpen size={24} color="#fff" />
+                                                    <Text style={styles.statusText}>Unlocked</Text>
+                                                </View>
+                                            ) : (
+                                                <SlideAction
+                                                    label={`Unlock ${name}`}
+                                                    icon={LockOpen}
+                                                    color="#8947ca"
+                                                    onSlide={() => callService('lock', 'unlock', { entity_id: lock.entity_id })}
+                                                />
+                                            )}
+                                        </View>
+                                    );
+                                })}
                         </View>
-                    </View>
+                    )}
 
                     <RoomsList
                         rooms={roomsWithCounts}
@@ -910,44 +999,64 @@ export default function DashboardV2() {
             });
 
             return (
-                <View style={[styles.content, { paddingHorizontal: 20, marginTop: 60, paddingBottom: 100 }]}>
-                    <Text style={styles.sectionTitle}>Rooms</Text>
+                <View style={[styles.content, { paddingHorizontal: 20, marginTop: 60, paddingBottom: 100, flex: 1 }]}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                        <Text style={styles.sectionTitle}>Rooms</Text>
+                        <TouchableOpacity onPress={() => setIsReorderMode(!isReorderMode)}>
+                            <Text style={{ color: '#8947ca', fontWeight: 'bold', fontSize: 16 }}>
+                                {isReorderMode ? 'Done' : 'Edit'}
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
 
-                    {/* Floor Selector */}
-                    {availableFloors.length > 0 && (
-                        <View style={{ flexDirection: 'row', marginBottom: 20, gap: 10 }}>
-                            {availableFloors.map(floor => (
-                                <TouchableOpacity
-                                    key={floor.floor_id}
-                                    onPress={() => setSelectedFloor(floor.floor_id)}
-                                    style={{
-                                        paddingVertical: 8,
-                                        paddingHorizontal: 16,
-                                        backgroundColor: selectedFloor === floor.floor_id ? '#8947ca' : 'rgba(255,255,255,0.1)',
-                                        borderRadius: 20
-                                    }}
-                                >
-                                    <Text style={{
-                                        color: selectedFloor === floor.floor_id ? 'white' : 'rgba(255,255,255,0.6)',
-                                        fontWeight: '600'
-                                    }}>
-                                        {floor.name ? floor.name.toUpperCase() : floor.floor_id.toUpperCase()}
-                                    </Text>
-                                </TouchableOpacity>
-                            ))}
+                    {isReorderMode ? (
+                        <View style={{ flex: 1, height: '100%' }}>
+                            <DraggableRoomList
+                                rooms={filteredRooms}
+                                registryEntities={registryEntities}
+                                allEntities={entities}
+                                onOrderChange={handleRoomReorder}
+                            />
                         </View>
-                    )}
+                    ) : (
+                        <>
+                            {/* Floor Selector - Hide in reorder mode to avoid confusion */}
+                            {availableFloors.length > 0 && (
+                                <View style={{ flexDirection: 'row', marginBottom: 20, gap: 10 }}>
+                                    {availableFloors.map(floor => (
+                                        <TouchableOpacity
+                                            key={floor.floor_id}
+                                            onPress={() => setSelectedFloor(floor.floor_id)}
+                                            style={{
+                                                paddingVertical: 8,
+                                                paddingHorizontal: 16,
+                                                backgroundColor: selectedFloor === floor.floor_id ? '#8947ca' : 'rgba(255,255,255,0.1)',
+                                                borderRadius: 20
+                                            }}
+                                        >
+                                            <Text style={{
+                                                color: selectedFloor === floor.floor_id ? 'white' : 'rgba(255,255,255,0.6)',
+                                                fontWeight: '600'
+                                            }}>
+                                                {floor.name ? floor.name.toUpperCase() : floor.floor_id.toUpperCase()}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+                            )}
 
-                    <RoomsList
-                        rooms={filteredRooms}
-                        registryEntities={registryEntities}
-                        allEntities={entities}
-                        onRoomPress={handleRoomPress}
-                        overlayOpacity={cardOpacity}
-                        overlayColor={cardColor}
-                        onSettingsPress={() => setSettingsModalVisible(true)}
-                        layout="grid"
-                    />
+                            <RoomsList
+                                rooms={filteredRooms}
+                                registryEntities={registryEntities}
+                                allEntities={entities}
+                                onRoomPress={handleRoomPress}
+                                overlayOpacity={cardOpacity}
+                                overlayColor={cardColor}
+                                onSettingsPress={() => setSettingsModalVisible(true)}
+                                layout="grid"
+                            />
+                        </>
+                    )}
                 </View>
             );
         }
@@ -1017,6 +1126,13 @@ export default function DashboardV2() {
             />
             <StatusBar style="light" />
 
+            <SecurityControlModal
+                visible={securityModalVisible}
+                onClose={() => setSecurityModalVisible(false)}
+                entity={entities.find(e => e.entity_id.startsWith('alarm_control_panel.'))}
+                onCallService={callService}
+            />
+
             <ActiveDevicesModal
                 visible={modalVisible}
                 title={modalTitle}
@@ -1072,6 +1188,9 @@ export default function DashboardV2() {
                 registryEntities={registryEntities}
                 allEntities={entities}
                 onToggle={callService}
+                lightMappings={lightMappings}
+                mediaMappings={mediaMappings}
+                adminUrl={connectionConfig.adminUrl}
             />
 
             <OpacitySettingsModal

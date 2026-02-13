@@ -4,7 +4,7 @@ import { Power, Flame, Snowflake, Fan, ChevronUp, ChevronDown, Droplets, Wind, Z
 import * as Haptics from 'expo-haptics';
 import { Colors } from '../../constants/Colors';
 
-export default function ClimateCard({ climate, onUpdate }) {
+export default function ClimateCard({ climate, onUpdate, needsChange }) {
     if (!climate) return null;
 
     const { attributes, state } = climate.stateObj;
@@ -81,7 +81,10 @@ export default function ClimateCard({ climate, onUpdate }) {
     const isShowingTargetAsMain = currentTemp === null && targetTemp !== null;
 
     return (
-        <View style={styles.container}>
+        <View style={[
+            styles.container,
+            needsChange && { borderColor: '#8947ca', borderWidth: 2 }
+        ]}>
             {/* Left Side: Status */}
             <View style={styles.leftSide}>
                 <View style={styles.tempRow}>
@@ -184,6 +187,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between', // Push Left/Right apart
         marginTop: 10,
+        borderWidth: 0, // Default no border
     },
     leftSide: {
         flex: 1, // Allow text to take space

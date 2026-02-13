@@ -1,12 +1,15 @@
 export class HAService {
     constructor(url, token) {
-        this.url = url.replace('http', 'ws') + '/api/websocket';
+        const cleanUrl = url.replace(/\/$/, '');
+        this.url = cleanUrl.replace('http', 'ws') + '/api/websocket';
         this.token = token;
         this.socket = null;
         this.id = 1;
         this.pending = new Map();
         this.listeners = new Set();
         this.authenticated = false;
+        this.reconnectTimer = null;
+        HAService.instances.add(this);
     }
 
     connect() {
@@ -29,12 +32,30 @@ export class HAService {
             this.authenticated = false;
             this.socket = null;
             // Reconnect logic usually goes here
-            setTimeout(() => this.connect(), 5000);
+            this.reconnectTimer = setTimeout(() => this.connect(), 5000);
         };
 
         this.socket.onerror = (e) => {
             console.log('Socket Error', e.message);
         };
+    }
+
+    disconnect() {
+        // Clear any pending reconnect timer
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+
+        if (this.socket) {
+            console.log('Disconnecting socket...');
+            // Prevent auto-reconnect logic
+            this.socket.onclose = null;
+            this.socket.close();
+            this.socket = null;
+            this.authenticated = false;
+        }
+        HAService.instances.delete(this);
     }
 
     handleMessage(data) {
@@ -135,6 +156,21 @@ export class HAService {
         this.listeners.forEach(l => l(data));
     }
 }
+
+// Static registry to track all instances
+HAService.instances = new Set();
+
+HAService.disconnectAll = () => {
+    console.log(`[HAService] Disconnecting all ${HAService.instances.size} active instances...`);
+    HAService.instances.forEach(instance => {
+        try {
+            instance.disconnect();
+        } catch (e) {
+            console.error('[HAService] Error disconnecting instance:', e);
+        }
+    });
+    HAService.instances.clear();
+};
 
 // Singleton or Factory?
 // We'll export a generic helper for now, but usually we need the URL from discovery.

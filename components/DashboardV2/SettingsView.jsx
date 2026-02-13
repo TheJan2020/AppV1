@@ -328,6 +328,8 @@ export default function SettingsView({
         );
     };
 
+
+
     const renderGeneralSettings = () => (
         <ScrollView contentContainerStyle={styles.listContent}>
             <View style={styles.section}>
@@ -370,6 +372,20 @@ export default function SettingsView({
                         thumbColor={autoRoomVisit ? '#fff' : '#f4f3f4'}
                     />
                 </View>
+
+                {/* Automations Page Button */}
+                <TouchableOpacity style={styles.listItem} onPress={() => router.push('/automations')}>
+                    <View style={styles.itemInfo}>
+                        <View style={styles.iconContainer}>
+                            <Play size={20} color={Colors.text} />
+                        </View>
+                        <View>
+                            <Text style={styles.itemName}>Automations</Text>
+                            <Text style={styles.itemSub}>Manage home automations</Text>
+                        </View>
+                    </View>
+                    <ChevronRight size={20} color={Colors.textDim} />
+                </TouchableOpacity>
 
                 {/* Auto Room (Background) Toggle */}
                 <View style={styles.listItem}>
@@ -505,6 +521,19 @@ export default function SettingsView({
                         <View>
                             <Text style={styles.itemName}>My Preferences</Text>
                             <Text style={styles.itemSub}>AI-powered room analysis</Text>
+                        </View>
+                    </View>
+                    <ChevronRight size={20} color={Colors.textDim} />
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.listItem} onPress={() => router.push('/about')}>
+                    <View style={styles.itemInfo}>
+                        <View style={styles.iconContainer}>
+                            <ScrollText size={20} color={Colors.text} />
+                        </View>
+                        <View>
+                            <Text style={styles.itemName}>About</Text>
+                            <Text style={styles.itemSub}>Version & Developer Info</Text>
                         </View>
                     </View>
                     <ChevronRight size={20} color={Colors.textDim} />

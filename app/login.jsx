@@ -1,42 +1,93 @@
 import { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Image, Modal, FlatList, KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Image, Modal, FlatList, KeyboardAvoidingView, Platform, ScrollView, Keyboard, TouchableWithoutFeedback } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import { Colors } from '../constants/Colors';
-import { Scan, Lock, User, Server, ChevronDown, Check, Settings, Fingerprint, X } from 'lucide-react-native';
+import { Scan, Lock, User, Server, ChevronDown, Check, Settings, Fingerprint, X, Plus, Trash2, Edit2, Shield } from 'lucide-react-native';
 import { scanNetwork } from '../utils/discovery';
 import { HAService } from '../services/ha';
 import { validateCredentials } from '../services/auth';
 
+const SETTINGS_KEY_PROFILES = 'ha_profiles';
+const SETTINGS_KEY_ACTIVE_PROFILE = 'ha_active_profile_id';
+const SETTINGS_KEY_MIGRATION_COMPLETED = 'ha_migration_completed_v1';
+
+// Helper to generate simple ID
+const generateId = () => Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+
 export default function Login() {
     const router = useRouter();
     const service = useRef(null);
+    const passwordInputRef = useRef(null);
+    const scrollViewRef = useRef(null);
 
+    // Login Form State
     const [password, setPassword] = useState('');
     const [username, setUsername] = useState('');
-    const [haUrl, setHaUrl] = useState(process.env.EXPO_PUBLIC_HA_URL || '');
-    const [haToken, setHaToken] = useState(process.env.EXPO_PUBLIC_HA_TOKEN || '');
 
-    // User Management
+    // ... (rest of state)
+
+    const scrollToInput = () => {
+        // slight delay to allow keyboard to show
+        setTimeout(() => {
+            scrollViewRef.current?.scrollToEnd({ animated: true });
+        }, 300);
+    };
+
+    // Connection State (derived from active profile)
+    const [haUrl, setHaUrl] = useState('');
+    const [haToken, setHaToken] = useState('');
+    const [adminUrl, setAdminUrl] = useState('');
+
+    // User Management State
     const [users, setUsers] = useState([]);
     const [selectedUser, setSelectedUser] = useState(null);
     const [showUserModal, setShowUserModal] = useState(false);
     const [loadingUsers, setLoadingUsers] = useState(false);
 
+    // UI/Auth State
     const [isScanning, setIsScanning] = useState(false);
     const [isLoggingIn, setIsLoggingIn] = useState(false);
     const [isBiometricSupported, setIsBiometricSupported] = useState(false);
-
-    // Settings
-    const [showSettings, setShowSettings] = useState(false);
-    const [adminUrl, setAdminUrl] = useState(process.env.EXPO_PUBLIC_ADMIN_URL || '');
     const [faceIdEnabled, setFaceIdEnabled] = useState(false);
+
+    // Profile Management State
+    const [showSettings, setShowSettings] = useState(false);
+    const [profiles, setProfiles] = useState([]);
+    const [activeProfileId, setActiveProfileId] = useState(null);
+
+    // Profile Editing State
+    const [editingProfile, setEditingProfile] = useState(null); // If null, showing list. If object, showing form.
 
     useEffect(() => {
         checkBiometrics();
         loadSettings();
     }, []);
+
+    // Sync active profile to connection state
+    useEffect(() => {
+        if (activeProfileId && profiles.length > 0) {
+            const profile = profiles.find(p => p.id === activeProfileId);
+            if (profile) {
+                setHaUrl(profile.haUrl || '');
+                setHaToken(profile.haToken || '');
+                setAdminUrl(profile.adminUrl || '');
+            }
+        } else if (profiles.length === 0) {
+            // No profiles, clear connection state
+            setHaUrl('');
+            setHaToken('');
+            setAdminUrl('');
+        }
+    }, [activeProfileId, profiles]);
+
+    // Auto-connect when connection details change
+    useEffect(() => {
+        if (haUrl && haToken && users.length === 0) {
+            connectAndFetchUsers();
+        }
+    }, [haUrl, haToken, users.length]);
 
     const checkBiometrics = async () => {
         const compatible = await LocalAuthentication.hasHardwareAsync();
@@ -46,55 +97,211 @@ export default function Login() {
 
     const loadSettings = async () => {
         try {
-            const savedUrl = await SecureStore.getItemAsync('ha_url');
-            const savedToken = await SecureStore.getItemAsync('ha_token');
-            const savedAdminUrl = await SecureStore.getItemAsync('admin_url');
+            // Load FaceID setting
             const savedFaceId = await SecureStore.getItemAsync('face_id_enabled');
-
-            if (savedUrl) setHaUrl(savedUrl);
-            if (savedToken) setHaToken(savedToken);
-            if (savedAdminUrl) setAdminUrl(savedAdminUrl);
             if (savedFaceId === 'true') setFaceIdEnabled(true);
 
-            // If we have URL/Token, fetch users
-            if ((savedUrl || haUrl) && (savedToken || haToken)) {
-                // We need to ensure state is updated before calling fetch, but for now
-                // relies on the next render effect or we call it explicitly with vals
-                // Actually the existing useEffect[haUrl, haToken] might not trigger if we set them inside a promise?
-                // It surely triggers re-render.
+            // Load Profiles
+            const profilesJson = await SecureStore.getItemAsync(SETTINGS_KEY_PROFILES);
+            const savedActiveId = await SecureStore.getItemAsync(SETTINGS_KEY_ACTIVE_PROFILE);
+
+            let loadedProfiles = [];
+            if (profilesJson) {
+                try {
+                    loadedProfiles = JSON.parse(profilesJson);
+                } catch (e) {
+                    console.log('Error parsing profiles:', e);
+                }
             }
+
+            // MIGRATION: If no profiles AND migration not done
+            const migrationDone = await SecureStore.getItemAsync(SETTINGS_KEY_MIGRATION_COMPLETED);
+
+            if (loadedProfiles.length === 0 && !migrationDone) {
+                const legacyUrl = await SecureStore.getItemAsync('ha_url');
+                const legacyToken = await SecureStore.getItemAsync('ha_token');
+                const legacyAdmin = await SecureStore.getItemAsync('admin_url');
+
+                if (legacyUrl) {
+                    console.log('Migrating legacy settings to default profile...');
+                    const defaultProfile = {
+                        id: generateId(),
+                        name: 'Default Home',
+                        haUrl: legacyUrl,
+                        haToken: legacyToken || '',
+                        adminUrl: legacyAdmin || ''
+                    };
+                    loadedProfiles = [defaultProfile];
+                    await saveProfilesToStorage(loadedProfiles);
+                    await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, defaultProfile.id);
+                    await SecureStore.setItemAsync(SETTINGS_KEY_MIGRATION_COMPLETED, 'true');
+                    setActiveProfileId(defaultProfile.id);
+                } else {
+                    // No legacy URL, just mark migration as done so we don't check again
+                    await SecureStore.setItemAsync(SETTINGS_KEY_MIGRATION_COMPLETED, 'true');
+                }
+            } else {
+                setProfiles(loadedProfiles);
+                // Set active profile
+                if (savedActiveId && loadedProfiles.find(p => p.id === savedActiveId)) {
+                    setActiveProfileId(savedActiveId);
+                } else if (loadedProfiles.length > 0) {
+                    // Fallback to first if active not found
+                    setActiveProfileId(loadedProfiles[0].id);
+                    await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, loadedProfiles[0].id);
+                }
+
+                // Ensure migration flag is set if we have profiles, to prevent future backfill
+                if (loadedProfiles.length > 0) {
+                    await SecureStore.setItemAsync(SETTINGS_KEY_MIGRATION_COMPLETED, 'true');
+                }
+            }
+
+            // CLEANUP: If we have profiles, ensure legacy keys are GONE so they don't haunt us
+            if (loadedProfiles.length > 0) {
+                await SecureStore.deleteItemAsync('ha_url');
+                await SecureStore.deleteItemAsync('ha_token');
+                await SecureStore.deleteItemAsync('admin_url');
+            }
+
         } catch (e) {
             console.log('Error loading settings:', e);
         }
     };
 
-    const handleSaveSettings = async () => {
+    const saveProfilesToStorage = async (newProfiles) => {
         try {
-            await SecureStore.setItemAsync('ha_url', haUrl);
-            await SecureStore.setItemAsync('ha_token', haToken);
-            await SecureStore.setItemAsync('admin_url', adminUrl);
-            await SecureStore.setItemAsync('face_id_enabled', faceIdEnabled.toString());
-
-            Alert.alert('Success', 'Settings saved');
-            setShowSettings(false);
-            connectAndFetchUsers();
+            await SecureStore.setItemAsync(SETTINGS_KEY_PROFILES, JSON.stringify(newProfiles));
+            setProfiles(newProfiles);
         } catch (e) {
-            Alert.alert('Error', 'Failed to save settings');
+            console.log('Error saving profiles:', e);
+            Alert.alert('Error', 'Failed to save profiles');
         }
     };
 
-    useEffect(() => {
-        // Auto-connect to fetch users if URL/Token available (and not already fetching)
-        if (haUrl && haToken && !loadingUsers && users.length === 0) {
-            connectAndFetchUsers();
+    const handleSaveProfile = async () => {
+        if (!editingProfile.name || !editingProfile.haUrl) {
+            Alert.alert('Error', 'Name and Home Assistant URL are required');
+            return;
         }
-    }, [haUrl, haToken]);
+
+        let newProfiles = [...profiles];
+
+        if (editingProfile.id) {
+            // Update existing
+            const index = newProfiles.findIndex(p => p.id === editingProfile.id);
+            if (index !== -1) {
+                newProfiles[index] = { ...editingProfile };
+            }
+        } else {
+            // Create new
+            const newProfile = {
+                ...editingProfile,
+                id: generateId()
+            };
+            newProfiles.push(newProfile);
+
+            // If this is the first profile, make it active
+            if (newProfiles.length === 1) {
+                setActiveProfileId(newProfile.id);
+                await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, newProfile.id);
+            }
+        }
+
+        await saveProfilesToStorage(newProfiles);
+
+        // If we just edited the active profile, clear users to force re-fetch/re-connect
+        if (editingProfile.id === activeProfileId || newProfiles.length === 1) {
+            // FORCE DISCONNECT ALL instances to prevent zombies
+            HAService.disconnectAll();
+
+            setUsers([]);
+            setSelectedUser(null);
+            setUsername('');
+            setPassword('');
+            setHaUrl(editingProfile.haUrl);
+            setHaToken(editingProfile.haToken);
+            setAdminUrl(editingProfile.adminUrl || '');
+        }
+
+        setEditingProfile(null); // Return to list
+    };
+
+    const handleDeleteProfile = async (profileId) => {
+        Alert.alert(
+            'Delete Profile',
+            'Are you sure you want to delete this profile?',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: async () => {
+                        const newProfiles = profiles.filter(p => p.id !== profileId);
+                        await saveProfilesToStorage(newProfiles);
+
+                        // If we deleted the active profile, switch to another or clear
+                        if (profileId === activeProfileId) {
+                            // FORCE DISCONNECT ALL
+                            HAService.disconnectAll();
+
+                            if (newProfiles.length > 0) {
+                                setActiveProfileId(newProfiles[0].id);
+                                await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, newProfiles[0].id);
+                            } else {
+                                setActiveProfileId(null);
+                                await SecureStore.deleteItemAsync(SETTINGS_KEY_ACTIVE_PROFILE);
+                            }
+                        }
+                    }
+                }
+            ]
+        );
+    };
+
+    const handleSelectProfile = async (profileId) => {
+        // FORCE DISCONNECT ALL when switching profiles
+        HAService.disconnectAll();
+
+        setActiveProfileId(profileId);
+        await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, profileId);
+        // Clear users when switching profiles to force re-fetch
+        setUsers([]);
+        setSelectedUser(null);
+        setUsername('');
+    };
+
+    const handleSaveFaceId = async () => {
+        try {
+            await SecureStore.setItemAsync('face_id_enabled', faceIdEnabled.toString());
+            // We don't close the modal here, it's just a toggle
+        } catch (e) {
+            console.log('Error saving FaceID setting:', e);
+        }
+    };
+
+    // Monitor FaceID toggle to save immediately (optional UX choice)
+    useEffect(() => {
+        handleSaveFaceId();
+    }, [faceIdEnabled]);
+
 
     const connectAndFetchUsers = () => {
         if (!haUrl || !haToken) return;
         setLoadingUsers(true);
 
         try {
+            // Close existing connection if any
+            if (service.current) {
+                console.log('Closing existing socket before reconnecting...');
+                if (service.current.disconnect) {
+                    service.current.disconnect();
+                } else if (service.current.socket) {
+                    service.current.socket.close();
+                }
+                service.current = null;
+            }
+
             service.current = new HAService(haUrl, haToken);
             service.current.connect();
             service.current.subscribe(data => {
@@ -137,16 +344,33 @@ export default function Login() {
     };
 
     const handleScan = async () => {
+        // Find existing profile to update, or create a temporary one in editing mode?
+        // Since scan is only available in the form now (conceptually), we assume we are editing.
+        // Wait, the scan button was on the main login screen too. 
+        // If on main screen, we should probably update the ACTIVE profile.
+
+        if (!activeProfileId) {
+            Alert.alert('No Profile', 'Please create a profile in settings first.');
+            return;
+        }
+
         setIsScanning(true);
         let found = false;
-        await scanNetwork((url) => {
+        await scanNetwork(async (url) => {
             if (!found) {
                 found = true;
-                setHaUrl(url);
                 setIsScanning(false);
                 Alert.alert('Instance Found', `Discovered Home Assistant at ${url}`);
-                // Try to fetch users after scan if token exists
-                if (haToken) connectAndFetchUsers();
+
+                // Update active profile
+                const newProfiles = profiles.map(p => {
+                    if (p.id === activeProfileId) {
+                        return { ...p, haUrl: url };
+                    }
+                    return p;
+                });
+                await saveProfilesToStorage(newProfiles);
+                // State will auto-update via useEffect
             }
         });
         if (!found) setIsScanning(false);
@@ -166,15 +390,8 @@ export default function Login() {
         setIsLoggingIn(true);
 
         try {
-            // Attempt to derive username from selected user
-            // 1. Try entity_id suffix (person.zeyad -> zeyad)
-            // 2. Try friendly_name            
-            // If user manually entered a username, use that. 
-            // Otherwise if they cleared it, maybe we should warn, but let's just try.
-
             let authenticated = false;
 
-            // Use entered username
             if (username) {
                 console.log('Trying auth with entered username:', username);
                 const isValid = await validateCredentials(haUrl, username, password);
@@ -256,219 +473,380 @@ export default function Login() {
         }
     };
 
-    return (
-        <View style={styles.container}>
-            <View style={styles.header}>
-                <Image
-                    source={require('../assets/login-logo.png')}
-                    style={styles.logo}
-                    resizeMode="contain"
-                />
+    const renderProfileList = () => (
+        <View style={{ flex: 1 }}>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                <Text style={styles.sectionTitle}>Profiles</Text>
                 <TouchableOpacity
-                    style={styles.settingsBtn}
-                    onPress={() => setShowSettings(true)}
+                    style={styles.addProfileBtn}
+                    onPress={() => setEditingProfile({ name: '', haUrl: '', adminUrl: '', haToken: '' })}
                 >
-                    <Settings size={24} color={Colors.textDim} />
+                    <Plus size={20} color="#fff" />
+                    <Text style={styles.addProfileText}>Add Profile</Text>
                 </TouchableOpacity>
             </View>
 
-            <View style={styles.form}>
-                <View style={styles.inputContainer}>
-                    <Server size={20} color={Colors.textDim} style={styles.inputIcon} />
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Home Assistant URL"
-                        placeholderTextColor={Colors.textDim}
-                        value={haUrl}
-                        onChangeText={setHaUrl}
-                        autoCapitalize="none"
-                    />
-                    <TouchableOpacity onPress={handleScan} disabled={isScanning}>
-                        {isScanning ? <ActivityIndicator size="small" color={Colors.primary} /> : <Scan size={20} color={Colors.primary} />}
-                    </TouchableOpacity>
-                </View>
-
-                {/* User Dropdown */}
-                <TouchableOpacity
-                    style={styles.inputContainer}
-                    onPress={() => setShowUserModal(true)}
-                >
-                    <User size={20} color={Colors.textDim} style={styles.inputIcon} />
-                    <View style={{ flex: 1 }}>
-                        <Text style={[styles.input, { lineHeight: 60, color: selectedUser ? Colors.text : Colors.textDim }]}>
-                            {selectedUser ? selectedUser.name : (loadingUsers ? "Loading users..." : "Select User")}
-                        </Text>
-                    </View>
-                    {loadingUsers ? (
-                        <ActivityIndicator size="small" color={Colors.primary} />
-                    ) : (
-                        <ChevronDown size={20} color={Colors.textDim} />
-                    )}
-                </TouchableOpacity>
-
-                {/* Username Input */}
-                <View style={styles.inputContainer}>
-                    <User size={20} color={Colors.textDim} style={styles.inputIcon} />
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Username"
-                        placeholderTextColor={Colors.textDim}
-                        value={username}
-                        onChangeText={setUsername}
-                        autoCapitalize="none"
-                    />
-                </View>
-
-                <View style={styles.inputContainer}>
-                    <Lock size={20} color={Colors.textDim} style={styles.inputIcon} />
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Password"
-                        placeholderTextColor={Colors.textDim}
-                        value={password}
-                        onChangeText={setPassword}
-                        secureTextEntry
-                    />
-                </View>
-
-                <TouchableOpacity
-                    style={[styles.button, { backgroundColor: '#8947ca', opacity: isLoggingIn ? 0.7 : 1 }]}
-                    onPress={() => handleLogin('/dashboard-v2')}
-                    disabled={isLoggingIn}
-                >
-                    {isLoggingIn ? (
-                        <ActivityIndicator color="#fff" />
-                    ) : (
-                        <Text style={styles.buttonText}>Login</Text>
-                    )}
-                </TouchableOpacity>
-
-                {faceIdEnabled && isBiometricSupported && (
+            <FlatList
+                data={profiles}
+                keyExtractor={item => item.id}
+                contentContainerStyle={{ paddingBottom: 20 }}
+                renderItem={({ item }) => (
                     <TouchableOpacity
-                        style={[styles.bioButton]}
-                        onPress={handleBiometricLogin}
+                        style={[
+                            styles.profileItem,
+                            activeProfileId === item.id && styles.activeProfileItem
+                        ]}
+                        onPress={() => handleSelectProfile(item.id)}
                     >
-                        <Fingerprint size={28} color={Colors.primary} />
-                        <Text style={styles.bioText}>Use FaceID</Text>
+                        <View style={styles.profileInfo}>
+                            <View style={styles.profileHeader}>
+                                <Text style={styles.profileName}>{item.name}</Text>
+                                {activeProfileId === item.id && (
+                                    <View style={styles.activeBadge}>
+                                        <Text style={styles.activeBadgeText}>Active</Text>
+                                    </View>
+                                )}
+                            </View>
+                            <Text style={styles.profileUrl} numberOfLines={1}>{item.haUrl}</Text>
+                        </View>
+
+                        <View style={styles.profileActions}>
+                            <TouchableOpacity
+                                style={styles.actionBtn}
+                                onPress={() => setEditingProfile({ ...item })}
+                            >
+                                <Edit2 size={18} color={Colors.textDim} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.actionBtn}
+                                onPress={() => handleDeleteProfile(item.id)}
+                            >
+                                <Trash2 size={18} color="#ff4444" />
+                            </TouchableOpacity>
+                        </View>
                     </TouchableOpacity>
                 )}
+                ListEmptyComponent={
+                    <View style={styles.emptyState}>
+                        <Text style={styles.emptyStateText}>No profiles found. Create one to get started.</Text>
+                    </View>
+                }
+            />
 
+            <View style={styles.globalSettings}>
+                <Text style={styles.sectionTitle}>Global Settings</Text>
+                <View style={styles.switchRow}>
+                    <Text style={[styles.switchLabel, { color: Colors.text }]}>Enable FaceID Login</Text>
+                    <TouchableOpacity
+                        style={[styles.switch, faceIdEnabled && styles.switchActive]}
+                        onPress={() => setFaceIdEnabled(!faceIdEnabled)}
+                    >
+                        <View style={[styles.switchThumb, faceIdEnabled && styles.switchThumbActive]} />
+                    </TouchableOpacity>
+                </View>
+            </View>
+        </View>
+    );
+
+    const renderProfileForm = () => (
+        <ScrollView>
+            <TouchableOpacity
+                style={styles.backButton}
+                onPress={() => setEditingProfile(null)}
+            >
+                <ChevronDown size={24} color={Colors.text} style={{ transform: [{ rotate: '90deg' }] }} />
+                <Text style={styles.backButtonText}>Back to Profiles</Text>
+            </TouchableOpacity>
+
+            <Text style={styles.modalTitle}>{editingProfile.id ? 'Edit Profile' : 'New Profile'}</Text>
+
+            <View style={styles.formGroup}>
+                <Text style={styles.label}>Profile Name</Text>
+                <TextInput
+                    style={styles.settingsInput}
+                    value={editingProfile.name}
+                    onChangeText={text => setEditingProfile({ ...editingProfile, name: text })}
+                    placeholder="e.g. Home, Office, Cabin"
+                    placeholderTextColor={Colors.textDim}
+                />
             </View>
 
-            {/* User Selection Modal */}
-            <Modal
-                visible={showUserModal}
-                transparent={true}
-                animationType="slide"
-                onRequestClose={() => setShowUserModal(false)}
-            >
-                <View style={styles.modalOverlay}>
-                    <View style={styles.modalContent}>
-                        <Text style={styles.modalTitle}>Select User</Text>
-                        <FlatList
-                            data={users}
-                            keyExtractor={item => item.id}
-                            renderItem={({ item }) => (
-                                <TouchableOpacity
-                                    style={styles.userItem}
-                                    onPress={() => {
-                                        setSelectedUser(item);
-                                        // Auto-guess username
-                                        const guessed = item.id.replace('person.', '');
-                                        setUsername(guessed);
-                                        setShowUserModal(false);
-                                    }}
-                                >
-                                    <View style={styles.userRow}>
-                                        {/* Ideally show user picture here if available */}
-                                        <View style={styles.userAvatar}>
-                                            <Text style={styles.userInitials}>{item.name.substring(0, 2).toUpperCase()}</Text>
-                                        </View>
-                                        <Text style={[styles.userItemText, selectedUser?.id === item.id && { color: '#8947ca', fontWeight: 'bold' }]}>
-                                            {item.name}
-                                        </Text>
-                                    </View>
-                                    {selectedUser?.id === item.id && <Check size={20} color="#8947ca" />}
-                                </TouchableOpacity>
-                            )}
-                        />
-                        <TouchableOpacity style={styles.closeButton} onPress={() => setShowUserModal(false)}>
-                            <Text style={styles.closeButtonText}>Cancel</Text>
-                        </TouchableOpacity>
-                    </View>
+            <View style={styles.formGroup}>
+                <Text style={styles.label}>Home Assistant URL</Text>
+                <View style={{ flexDirection: 'row', gap: 10 }}>
+                    <TextInput
+                        style={[styles.settingsInput, { flex: 1 }]}
+                        value={editingProfile.haUrl}
+                        onChangeText={text => setEditingProfile({ ...editingProfile, haUrl: text })}
+                        placeholder="https://homeassistant.local:8123"
+                        placeholderTextColor={Colors.textDim}
+                        autoCapitalize="none"
+                    />
+                    <TouchableOpacity
+                        style={styles.scanBtn}
+                        onPress={async () => {
+                            // Inner scan for form
+                            let found = false;
+                            await scanNetwork((url) => {
+                                if (!found) {
+                                    found = true;
+                                    setEditingProfile(prev => ({ ...prev, haUrl: url }));
+                                    Alert.alert('Found', `Discovered: ${url}`);
+                                }
+                            });
+                        }}
+                    >
+                        <Scan size={20} color={Colors.text} />
+                    </TouchableOpacity>
                 </View>
-            </Modal>
-            {/* Settings Modal */}
-            <Modal
-                visible={showSettings}
-                transparent={true}
-                animationType="slide"
-                onRequestClose={() => setShowSettings(false)}
+            </View>
+
+            <View style={styles.formGroup}>
+                <Text style={styles.label}>Admin Backend URL</Text>
+                <TextInput
+                    style={styles.settingsInput}
+                    value={editingProfile.adminUrl}
+                    onChangeText={text => setEditingProfile({ ...editingProfile, adminUrl: text })}
+                    placeholder="Optional admin backend URL"
+                    placeholderTextColor={Colors.textDim}
+                    autoCapitalize="none"
+                />
+            </View>
+
+            <View style={styles.formGroup}>
+                <Text style={styles.label}>Long-Lived Access Token</Text>
+                <TextInput
+                    style={[styles.settingsInput, { height: 100, textAlignVertical: 'top', paddingTop: 10 }]}
+                    value={editingProfile.haToken}
+                    onChangeText={text => setEditingProfile({ ...editingProfile, haToken: text })}
+                    placeholder="Paste your token here..."
+                    placeholderTextColor={Colors.textDim}
+                    multiline
+                />
+            </View>
+
+            <TouchableOpacity
+                style={styles.saveButton}
+                onPress={handleSaveProfile}
             >
-                <View style={styles.modalOverlay}>
-                    <View style={[styles.modalContent, { maxHeight: '90%' }]}>
-                        <View style={styles.modalHeader}>
-                            <Text style={styles.modalTitle}>Connection Settings</Text>
-                            <TouchableOpacity onPress={() => setShowSettings(false)}>
-                                <X size={24} color={Colors.textDim} />
+                <Text style={styles.saveButtonText}>Save Profile</Text>
+            </TouchableOpacity>
+        </ScrollView>
+    );
+
+    return (
+        <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={{ flex: 1 }}
+        >
+            <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+                <View style={styles.container}>
+                    <ScrollView
+                        ref={scrollViewRef}
+                        style={{ flex: 1 }}
+                        contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+                        keyboardShouldPersistTaps="handled"
+                        showsVerticalScrollIndicator={false}
+                    >
+                        <View style={styles.header}>
+                            <Image
+                                source={require('../assets/login-logo.png')}
+                                style={styles.logo}
+                                resizeMode="contain"
+                            />
+                            <TouchableOpacity
+                                style={styles.settingsBtn}
+                                onPress={() => {
+                                    setEditingProfile(null);
+                                    setShowSettings(true);
+                                }}
+                            >
+                                <Settings size={24} color={Colors.textDim} />
                             </TouchableOpacity>
                         </View>
 
-                        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
-                            <ScrollView contentContainerStyle={{ paddingBottom: 40 }}>
-                                <View style={{ gap: 20 }}>
-                                    <View>
-                                        <Text style={styles.label}>Home Assistant URL</Text>
-                                        <TextInput
-                                            style={styles.settingsInput}
-                                            value={haUrl}
-                                            onChangeText={setHaUrl}
-                                            placeholder="https://..."
-                                            placeholderTextColor={Colors.textDim}
-                                            autoCapitalize="none"
-                                        />
-                                    </View>
-
-                                    <View>
-                                        <Text style={styles.label}>Admin URL</Text>
-                                        <TextInput
-                                            style={styles.settingsInput}
-                                            value={adminUrl}
-                                            onChangeText={setAdminUrl}
-                                            placeholder="https://..."
-                                            placeholderTextColor={Colors.textDim}
-                                            autoCapitalize="none"
-                                        />
-                                    </View>
-
-                                    <View>
-                                        <Text style={styles.label}>Long-Lived Access Token</Text>
-                                        <TextInput
-                                            style={[styles.settingsInput, { height: 120, textAlignVertical: 'top', paddingTop: 12 }]}
-                                            value={haToken}
-                                            onChangeText={setHaToken}
-                                            placeholder="ey..."
-                                            placeholderTextColor={Colors.textDim}
-                                            multiline
-                                        />
-                                    </View>
-
-                                    <View style={styles.switchRow}>
-                                        <Text style={[styles.switchLabel, { color: Colors.textDim, fontSize: 14 }]}>
-                                            To enable FaceID, please log in and go to Settings {'>'} General.
-                                        </Text>
-                                    </View>
-
-                                    <TouchableOpacity style={[styles.button, { backgroundColor: Colors.primary, marginTop: 10 }]} onPress={handleSaveSettings}>
-                                        <Text style={styles.buttonText}>Save Connection Settings</Text>
+                        <View style={styles.form}>
+                            {profiles.length === 0 ? (
+                                <View style={styles.noProfileWarning}>
+                                    <Shield size={40} color={Colors.primary} style={{ marginBottom: 10 }} />
+                                    <Text style={styles.warningText}>No Connection Profiles</Text>
+                                    <Text style={styles.warningSubText}>Please add a Home Assistant connection profile in settings to continue.</Text>
+                                    <TouchableOpacity
+                                        style={styles.createProfileBtn}
+                                        onPress={() => {
+                                            setEditingProfile({ name: 'My Home', haUrl: '', adminUrl: '', haToken: '' });
+                                            setShowSettings(true);
+                                        }}
+                                    >
+                                        <Text style={styles.createProfileBtnText}>Create Profile</Text>
                                     </TouchableOpacity>
                                 </View>
-                            </ScrollView>
-                        </KeyboardAvoidingView>
+                            ) : (
+                                <>
+                                    <View style={styles.inputContainer}>
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={styles.inputLabel}>Connected to</Text>
+                                            <Text style={styles.connectedProfileName}>
+                                                {profiles.find(p => p.id === activeProfileId)?.name || 'Unknown Profile'}
+                                            </Text>
+                                        </View>
+                                        <TouchableOpacity onPress={handleScan} disabled={isScanning}>
+                                            {isScanning ? <ActivityIndicator size="small" color={Colors.primary} /> : <Scan size={20} color={Colors.primary} />}
+                                        </TouchableOpacity>
+                                    </View>
+
+                                    {/* User Dropdown */}
+                                    <TouchableOpacity
+                                        style={styles.inputContainer}
+                                        onPress={() => setShowUserModal(true)}
+                                    >
+                                        <User size={20} color={Colors.textDim} style={styles.inputIcon} />
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={[styles.input, { lineHeight: 60, color: selectedUser ? Colors.text : Colors.textDim }]}>
+                                                {selectedUser ? selectedUser.name : (loadingUsers ? "Loading users..." : "Select User")}
+                                            </Text>
+                                        </View>
+                                        {loadingUsers ? (
+                                            <ActivityIndicator size="small" color={Colors.primary} />
+                                        ) : (
+                                            <ChevronDown size={20} color={Colors.textDim} />
+                                        )}
+                                    </TouchableOpacity>
+
+                                    {/* Username Input */}
+                                    <View style={styles.inputContainer}>
+                                        <User size={20} color={Colors.textDim} style={styles.inputIcon} />
+                                        <TextInput
+                                            style={styles.input}
+                                            placeholder="Username"
+                                            placeholderTextColor={Colors.textDim}
+                                            value={username}
+                                            onChangeText={setUsername}
+                                            autoCapitalize="none"
+                                            returnKeyType="next"
+                                            onSubmitEditing={() => passwordInputRef.current?.focus()}
+                                            blurOnSubmit={false}
+                                            onFocus={scrollToInput}
+                                        />
+                                    </View>
+
+                                    <View style={styles.inputContainer}>
+                                        <Lock size={20} color={Colors.textDim} style={styles.inputIcon} />
+                                        <TextInput
+                                            style={styles.input}
+                                            placeholder="Password"
+                                            placeholderTextColor={Colors.textDim}
+                                            value={password}
+                                            onChangeText={setPassword}
+                                            secureTextEntry
+                                            ref={passwordInputRef}
+                                            returnKeyType="go"
+                                            onSubmitEditing={() => handleLogin('/dashboard-v2')}
+                                            onFocus={scrollToInput}
+                                        />
+                                    </View>
+
+
+
+                                    {faceIdEnabled && isBiometricSupported && (
+                                        <TouchableOpacity
+                                            style={[styles.bioButton]}
+                                            onPress={handleBiometricLogin}
+                                        >
+                                            <Fingerprint size={28} color={Colors.primary} />
+                                            <Text style={styles.bioText}>Use FaceID</Text>
+                                        </TouchableOpacity>
+                                    )}
+                                </>
+                            )}
+                        </View>
+
+
+
+                        {/* User Selection Modal */}
+                        <Modal
+                            visible={showUserModal}
+                            transparent={true}
+                            animationType="slide"
+                            onRequestClose={() => setShowUserModal(false)}
+                        >
+                            <View style={styles.modalOverlay}>
+                                <View style={styles.modalContent}>
+                                    <Text style={styles.modalTitle}>Select User</Text>
+                                    <FlatList
+                                        data={users}
+                                        keyExtractor={item => item.id}
+                                        renderItem={({ item }) => (
+                                            <TouchableOpacity
+                                                style={styles.userItem}
+                                                onPress={() => {
+                                                    setSelectedUser(item);
+                                                    // Auto-guess username
+                                                    const guessed = item.id.replace('person.', '');
+                                                    setUsername(guessed);
+                                                    setShowUserModal(false);
+                                                }}
+                                            >
+                                                <View style={styles.userRow}>
+                                                    <View style={styles.userAvatar}>
+                                                        <Text style={styles.userInitials}>{item.name.substring(0, 2).toUpperCase()}</Text>
+                                                    </View>
+                                                    <Text style={[styles.userItemText, selectedUser?.id === item.id && { color: '#8947ca', fontWeight: 'bold' }]}>
+                                                        {item.name}
+                                                    </Text>
+                                                </View>
+                                                {selectedUser?.id === item.id && <Check size={20} color="#8947ca" />}
+                                            </TouchableOpacity>
+                                        )}
+                                    />
+                                    <TouchableOpacity style={styles.closeButton} onPress={() => setShowUserModal(false)}>
+                                        <Text style={styles.closeButtonText}>Cancel</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            </View>
+                        </Modal>
+
+                        {/* Settings Modal */}
+                        <Modal
+                            visible={showSettings}
+                            transparent={true}
+                            animationType="slide"
+                            onRequestClose={() => setShowSettings(false)}
+                        >
+                            <View style={styles.modalOverlay}>
+                                <View style={[styles.modalContent, { maxHeight: '90%' }]}>
+                                    <View style={styles.modalHeader}>
+                                        <Text style={styles.modalTitle}>Settings</Text>
+                                        <TouchableOpacity onPress={() => setShowSettings(false)}>
+                                            <X size={24} color={Colors.textDim} />
+                                        </TouchableOpacity>
+                                    </View>
+
+                                    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+                                        {editingProfile ? renderProfileForm() : renderProfileList()}
+                                    </KeyboardAvoidingView>
+                                </View>
+                            </View>
+                        </Modal>
+                    </ScrollView>
+
+                    {/* Sticky Footer for Login Button */}
+                    <View style={{ paddingTop: 10, paddingBottom: 20, backgroundColor: Colors.background }}>
+                        <TouchableOpacity
+                            style={[styles.button, { backgroundColor: '#8947ca', opacity: isLoggingIn ? 0.7 : 1, marginTop: 0 }]}
+                            onPress={() => handleLogin('/dashboard-v2')}
+                            disabled={isLoggingIn}
+                        >
+                            {isLoggingIn ? (
+                                <ActivityIndicator color="#fff" />
+                            ) : (
+                                <Text style={styles.buttonText}>Login</Text>
+                            )}
+                        </TouchableOpacity>
                     </View>
                 </View>
-            </Modal>
-        </View>
+            </TouchableWithoutFeedback >
+        </KeyboardAvoidingView >
     );
 }
 
@@ -514,7 +892,17 @@ const styles = StyleSheet.create({
         flex: 1,
         color: Colors.text,
         fontSize: 16,
-        height: '100%' // Ensure text input takes full height
+        height: '100%'
+    },
+    inputLabel: {
+        color: Colors.textDim,
+        fontSize: 12,
+        marginBottom: 2
+    },
+    connectedProfileName: {
+        color: Colors.primary,
+        fontSize: 16,
+        fontWeight: 'bold'
     },
     button: {
         backgroundColor: Colors.primary,
@@ -544,16 +932,22 @@ const styles = StyleSheet.create({
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
         padding: 24,
-        height: '85%', // Increased height
+        height: '85%',
         maxHeight: '90%'
     },
     modalTitle: {
         color: 'white',
         fontSize: 20,
         fontWeight: 'bold',
-        marginBottom: 20,
         textAlign: 'center'
     },
+    modalHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 20
+    },
+    // User Item Styles
     userItem: {
         paddingVertical: 15,
         borderBottomWidth: 1,
@@ -594,12 +988,110 @@ const styles = StyleSheet.create({
         color: 'white',
         fontWeight: '600'
     },
-    // Settings Modal Styles
-    modalHeader: {
+    // FaceID
+    bioButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 10,
+        padding: 15,
+        marginTop: 20
+    },
+    bioText: {
+        color: Colors.primary,
+        fontSize: 16,
+        fontWeight: '600'
+    },
+    // Settings & Profiles
+    sectionTitle: {
+        color: Colors.textDim,
+        fontSize: 14,
+        fontWeight: 'bold',
+        textTransform: 'uppercase'
+    },
+    profileItem: {
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderRadius: 12,
+        padding: 15,
+        marginBottom: 10,
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'transparent'
+    },
+    activeProfileItem: {
+        borderColor: Colors.primary,
+        backgroundColor: 'rgba(137, 71, 202, 0.1)'
+    },
+    profileInfo: {
+        flex: 1,
+        marginRight: 10
+    },
+    profileHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 4,
+        gap: 8
+    },
+    profileName: {
+        color: Colors.text,
+        fontSize: 16,
+        fontWeight: 'bold'
+    },
+    profileUrl: {
+        color: Colors.textDim,
+        fontSize: 12
+    },
+    activeBadge: {
+        backgroundColor: Colors.primary,
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 4
+    },
+    activeBadgeText: {
+        color: '#fff',
+        fontSize: 10,
+        fontWeight: 'bold'
+    },
+    profileActions: {
+        flexDirection: 'row',
+        gap: 15
+    },
+    actionBtn: {
+        padding: 5
+    },
+    addProfileBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: Colors.primary,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 16,
+        gap: 4
+    },
+    addProfileText: {
+        color: '#fff',
+        fontSize: 14,
+        fontWeight: '600'
+    },
+    emptyState: {
+        padding: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderStyle: 'dashed',
+        borderWidth: 1,
+        borderColor: Colors.textDim,
+        borderRadius: 12,
         marginBottom: 20
+    },
+    emptyStateText: {
+        color: Colors.textDim,
+        fontSize: 14
+    },
+    // Form Styles
+    formGroup: {
+        marginBottom: 15
     },
     label: {
         color: Colors.textDim,
@@ -607,17 +1099,88 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '600'
     },
+    settingsInput: {
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        borderRadius: 8,
+        padding: 12,
+        color: '#fff',
+        fontSize: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+        minHeight: 50
+    },
+    scanBtn: {
+        width: 50,
+        justifyContent: 'center',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        borderRadius: 8,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+    },
+    saveButton: {
+        backgroundColor: Colors.primary,
+        padding: 15,
+        borderRadius: 12,
+        alignItems: 'center',
+        marginTop: 10
+    },
+    saveButtonText: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: 'bold'
+    },
+    backButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 20,
+        paddingVertical: 10
+    },
+    backButtonText: {
+        color: Colors.text,
+        marginLeft: 10,
+        fontSize: 16
+    },
+    noProfileWarning: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 30,
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderRadius: 16
+    },
+    warningText: {
+        color: Colors.text,
+        fontSize: 18,
+        fontWeight: 'bold',
+        marginBottom: 5
+    },
+    warningSubText: {
+        color: Colors.textDim,
+        textAlign: 'center',
+        marginBottom: 20,
+        lineHeight: 20
+    },
+    createProfileBtn: {
+        backgroundColor: Colors.primary,
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        borderRadius: 24
+    },
+    createProfileBtnText: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: 'bold'
+    },
     switchRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
         marginTop: 10,
-        paddingVertical: 10,
+        paddingVertical: 15,
         borderTopWidth: 1,
         borderTopColor: 'rgba(255,255,255,0.1)'
     },
     switchLabel: {
-        color: Colors.text,
         fontSize: 16,
         fontWeight: '500'
     },
@@ -640,23 +1203,7 @@ const styles = StyleSheet.create({
     switchThumbActive: {
         transform: [{ translateX: 20 }]
     },
-    bioButton: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 10,
-        padding: 15,
+    globalSettings: {
         marginTop: 20
-    },
-    // Setting Inputs
-    settingsInput: {
-        backgroundColor: 'rgba(255,255,255,0.08)',
-        borderRadius: 8,
-        padding: 12,
-        color: '#fff',
-        fontSize: 16,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
-        minHeight: 50
     }
 });

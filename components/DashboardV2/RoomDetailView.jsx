@@ -7,6 +7,7 @@ import { useState, useEffect, useRef } from 'react';
 import { GestureHandlerRootView, PanGestureHandler, State } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing, cancelAnimation } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
+import { SvgUri } from 'react-native-svg';
 
 import LightControlModal from './LightControlModal';
 import ClimateCard from './ClimateCard';
@@ -17,7 +18,7 @@ import RoomClimateChart from './RoomClimateChart';
 import ActivatePreferencesButton from './ActivatePreferencesButton';
 
 // Fan Card Component
-function FanCard({ fan, onToggle }) {
+function FanCard({ fan, onToggle, needsChange: fanCardNeedsChange }) {
     const isOn = fan.stateObj.state === 'on';
     const rotation = useSharedValue(0);
 
@@ -50,7 +51,10 @@ function FanCard({ fan, onToggle }) {
     return (
         <View style={styles.cardContainer}>
             <TouchableOpacity
-                style={styles.card}
+                style={[
+                    styles.card,
+                    fanCardNeedsChange && { borderColor: '#8947ca', borderWidth: 2 }
+                ]}
                 onPress={() => onToggle(fan.entity_id, fan.stateObj.state)}
                 activeOpacity={0.9}
             >
@@ -76,7 +80,7 @@ function FanCard({ fan, onToggle }) {
 }
 
 // Light Card Component
-function LightCard({ light, onToggle, onBrightnessChange, onLongPress }) {
+function LightCard({ light, onToggle, onBrightnessChange, onLongPress, needsChange: lightCardNeedsChange, mapping, adminUrl }) {
     const colorModes = light.stateObj.attributes.supported_color_modes || [];
     const hasColorMode = colorModes.some(mode =>
         ['brightness', 'hs', 'xy', 'rgb', 'rgbw', 'rgbww', 'color_temp', 'white'].includes(mode)
@@ -135,7 +139,7 @@ function LightCard({ light, onToggle, onBrightnessChange, onLongPress }) {
     };
 
     const pulseScale = useSharedValue(1);
-    const pulseOpacity = useSharedValue(1); // Start visible for pulse? Logic check: original was 0.
+    const pulseOpacity = useSharedValue(1);
 
     useEffect(() => {
         if (isOn) {
@@ -167,6 +171,13 @@ function LightCard({ light, onToggle, onBrightnessChange, onLongPress }) {
         onToggle(light.entity_id, light.stateObj.state);
     };
 
+    const iconUrl = mapping?.lightType?.icon_path ? `${adminUrl}${mapping.lightType.icon_path}` : null;
+    if (light.entity_id === 'light.guest_room_light_covedled') {
+        console.log(`[LightCard] ${light.entity_id} mapping:`, JSON.stringify(mapping));
+        console.log(`[LightCard] ${light.entity_id} iconUrl:`, iconUrl);
+        console.log(`[LightCard] adminUrl:`, adminUrl);
+    }
+
     return (
         <PanGestureHandler
             onGestureEvent={handleGestureEvent}
@@ -175,7 +186,10 @@ function LightCard({ light, onToggle, onBrightnessChange, onLongPress }) {
         >
             <View style={styles.cardContainer}>
                 <TouchableOpacity
-                    style={styles.card}
+                    style={[
+                        styles.card,
+                        lightCardNeedsChange && { borderColor: '#8947ca', borderWidth: 2 }
+                    ]}
                     onPress={handlePress}
                     onLongPress={() => {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
@@ -200,7 +214,17 @@ function LightCard({ light, onToggle, onBrightnessChange, onLongPress }) {
                                 },
                                 pulseStyle
                             ]} />
-                            <Lightbulb size={24} color={iconColor} fill={isOn ? '#fff' : 'transparent'} />
+                            {iconUrl ? (
+                                <SvgUri
+                                    width={24}
+                                    height={24}
+                                    uri={iconUrl}
+                                    fill={iconColor}
+                                    stroke={iconColor}
+                                />
+                            ) : (
+                                <Lightbulb size={24} color={iconColor} fill={isOn ? '#fff' : 'transparent'} />
+                            )}
                         </View>
 
                         <View style={styles.textContainer}>
@@ -229,16 +253,23 @@ export default function RoomDetailView({
     doors = [],
     onToggle,
     onClose,
-    isModal = false // To adjust header style slightly if needed
+    isModal = false,
+    lightMappings = [],
+    mediaMappings = [],
+    adminUrl
 }) {
     const [selectedLight, setSelectedLight] = useState(null);
+    const [preferences, setPreferences] = useState([]);
+
+    const checkNeedsChange = (entityId) => {
+        const pref = preferences.find(p => p.entity_id === entityId);
+        return pref ? pref.needs_change : false;
+    };
 
     const tempSensors = sensors.filter(s => s.entity_id.includes('temperature') && !s.entity_id.includes('battery'));
     const humiditySensors = sensors.filter(s => s.entity_id.includes('humidity') && !s.entity_id.includes('battery'));
-    // Use the processed doors list if available, else fallback
     const doorSensors = (doors || []).concat(sensors.filter(s => s.entity_id.startsWith('sensor.door_') && !(doors || []).find(d => d.entity_id === s.entity_id)));
 
-    // Select Main Sensors for Charts
     const mainTemp = tempSensors.length > 0 ? tempSensors[0] : null;
     const mainHumidity = humiditySensors.length > 0 ? humiditySensors[0] : null;
 
@@ -251,11 +282,8 @@ export default function RoomDetailView({
     };
 
     const handleActivatePreferences = async (entities) => {
-        // Apply preferred states to each entity
         for (const entity of entities) {
             const domain = entity.entity_id.split('.')[0];
-
-            // Determine service based on domain and state
             let service = '';
             let data = { entity_id: entity.entity_id };
 
@@ -271,7 +299,7 @@ export default function RoomDetailView({
                         service = 'turn_off';
                     } else {
                         service = 'set_hvac_mode';
-                        data.hvac_mode = entity.preferred_state; // e.g., 'heat', 'cool', 'auto'
+                        data.hvac_mode = entity.preferred_state;
                     }
                     break;
                 case 'media_player':
@@ -281,26 +309,22 @@ export default function RoomDetailView({
                     service = entity.preferred_state === 'open' ? 'open_cover' : 'close_cover';
                     break;
                 default:
-                    continue; // Skip unknown domains
+                    continue;
             }
 
             if (service && onToggle) {
                 onToggle(domain, service, data);
-                // Small delay between commands
                 await new Promise(resolve => setTimeout(resolve, 200));
             }
         }
     };
 
     const haUrl = process.env.EXPO_PUBLIC_HA_URL;
-    // Don't show image in Modal mode
     const imageUrl = !isModal && room.picture ? `${haUrl}${room.picture}` : null;
 
     return (
         <View style={[styles.container, isModal && styles.modalContainer]}>
-            {/* Conditional Header Section */}
             {isModal ? (
-                /* Simple Header for Modal */
                 <View style={styles.simpleHeader}>
                     <View style={styles.handle} />
                     <View style={styles.headerTop}>
@@ -324,11 +348,21 @@ export default function RoomDetailView({
                                     <Text style={styles.sensorText}>{s.stateObj.state}{s.stateObj.attributes.unit_of_measurement}</Text>
                                 </View>
                             ))}
+                            {doorSensors.map(d => {
+                                const isOpen = d.stateObj.state.toLowerCase() === 'open' || d.stateObj.state.toLowerCase() === 'on';
+                                return (
+                                    <View key={d.entity_id} style={styles.sensorChip}>
+                                        {isOpen ? <DoorOpen size={14} color="#EF5350" /> : <DoorClosed size={14} color="#4CAF50" />}
+                                        <Text style={styles.sensorText}>
+                                            {isOpen ? 'Open' : 'Closed'}
+                                        </Text>
+                                    </View>
+                                );
+                            })}
                         </View>
                     </View>
                 </View>
             ) : (
-                /* Full Image Header for Room Page */
                 <View style={styles.headerContainer}>
                     {imageUrl ? (
                         <ImageBackground
@@ -344,7 +378,6 @@ export default function RoomDetailView({
                                 style={styles.gradient}
                             />
 
-                            {/* Back Button - Top Left */}
                             <TouchableOpacity onPress={onClose} style={styles.backButton}>
                                 <ChevronLeft size={28} color="#fff" />
                             </TouchableOpacity>
@@ -367,6 +400,17 @@ export default function RoomDetailView({
                                                     <Text style={styles.sensorText}>{s.stateObj.state}{s.stateObj.attributes.unit_of_measurement}</Text>
                                                 </View>
                                             ))}
+                                            {doorSensors.map(d => {
+                                                const isOpen = d.stateObj.state.toLowerCase() === 'open' || d.stateObj.state.toLowerCase() === 'on';
+                                                return (
+                                                    <View key={d.entity_id} style={styles.sensorChip}>
+                                                        {isOpen ? <DoorOpen size={14} color="#EF5350" /> : <DoorClosed size={14} color="#4CAF50" />}
+                                                        <Text style={styles.sensorText}>
+                                                            {isOpen ? 'Open' : 'Closed'}
+                                                        </Text>
+                                                    </View>
+                                                );
+                                            })}
                                         </View>
                                     </View>
                                 </View>
@@ -374,7 +418,6 @@ export default function RoomDetailView({
                         </ImageBackground>
                     ) : (
                         <View style={[styles.headerImage, { backgroundColor: '#2a2a35' }]}>
-                            {/* Back Button - Top Left */}
                             <TouchableOpacity onPress={onClose} style={styles.backButton}>
                                 <ChevronLeft size={28} color="#fff" />
                             </TouchableOpacity>
@@ -397,6 +440,17 @@ export default function RoomDetailView({
                                                     <Text style={styles.sensorText}>{s.stateObj.state}{s.stateObj.attributes.unit_of_measurement}</Text>
                                                 </View>
                                             ))}
+                                            {doorSensors.map(d => {
+                                                const isOpen = d.stateObj.state.toLowerCase() === 'open' || d.stateObj.state.toLowerCase() === 'on';
+                                                return (
+                                                    <View key={d.entity_id} style={styles.sensorChip}>
+                                                        {isOpen ? <DoorOpen size={14} color="#EF5350" /> : <DoorClosed size={14} color="#4CAF50" />}
+                                                        <Text style={styles.sensorText}>
+                                                            {isOpen ? 'Open' : 'Closed'}
+                                                        </Text>
+                                                    </View>
+                                                );
+                                            })}
                                         </View>
                                     </View>
                                 </View>
@@ -409,47 +463,17 @@ export default function RoomDetailView({
             <GestureHandlerRootView style={{ flex: 1 }}>
                 <ScrollView contentContainerStyle={styles.content}>
 
-                    {/* Activate Preferences Button */}
                     <ActivatePreferencesButton
                         roomName={room.name}
                         onActivate={handleActivatePreferences}
+                        onPreferencesLoaded={setPreferences}
                     />
 
-                    {/* Charts Section */}
                     {(mainTemp || mainHumidity) && (
                         <RoomClimateChart
                             tempEntityId={mainTemp?.entity_id}
                             humidityEntityId={mainHumidity?.entity_id}
                         />
-                    )}
-
-                    {/* Doors Section (Top Placement) */}
-                    {doorSensors.length > 0 && (
-                        <View style={{ marginBottom: 20 }}>
-                            <Text style={styles.sectionTitle}>Doors</Text>
-                            <View style={[styles.grid, { gap: 10 }]}>
-                                {doorSensors.map(door => {
-                                    // State: 'Open', 'Closed', 'open', 'closed'
-                                    const isOpen = door.stateObj.state.toLowerCase() === 'open' || door.stateObj.state.toLowerCase() === 'on';
-                                    const activeColor = isOpen ? '#EF5350' : '#4CAF50';
-
-                                    return (
-                                        <View key={door.entity_id} style={[styles.card, { height: 60, width: '48%', backgroundColor: 'rgba(255,255,255,0.05)' }]}>
-                                            <View style={styles.cardContent}>
-                                                <View style={[styles.iconContainer, { backgroundColor: isOpen ? 'rgba(239, 83, 80, 0.2)' : 'rgba(76, 175, 80, 0.2)' }]}>
-                                                    {isOpen ? <DoorOpen size={20} color={activeColor} /> : <DoorClosed size={20} color={activeColor} />}
-                                                </View>
-                                                <View style={styles.textContainer}>
-                                                    <Text style={[styles.lightName, { fontSize: 13 }]} numberOfLines={1}>{door.displayName.replace('sensor.door_', '').replace('Door', '').trim() || door.displayName}</Text>
-                                                    <Text style={[styles.lightState, { color: activeColor }]}>{isOpen ? 'Open' : 'Closed'}</Text>
-                                                </View>
-                                            </View>
-                                        </View>
-                                    );
-                                })}
-                            </View>
-                            <View style={styles.divider} />
-                        </View>
                     )}
 
                     {lights.length === 0 && fans.length === 0 && doorSensors.length === 0 ? (
@@ -463,6 +487,9 @@ export default function RoomDetailView({
                                 <LightCard
                                     key={light.entity_id}
                                     light={light}
+                                    needsChange={checkNeedsChange(light.entity_id)}
+                                    mapping={lightMappings.find(m => m.entity_id === light.entity_id)}
+                                    adminUrl={adminUrl}
                                     onToggle={(id, state) => {
                                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                                         if (onToggle) onToggle('light', 'toggle', { entity_id: id });
@@ -475,6 +502,7 @@ export default function RoomDetailView({
                                 <FanCard
                                     key={fan.entity_id}
                                     fan={fan}
+                                    needsChange={checkNeedsChange(fan.entity_id)}
                                     onToggle={(id, state) => {
                                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                                         if (onToggle) onToggle('fan', 'toggle', { entity_id: id });
@@ -484,7 +512,6 @@ export default function RoomDetailView({
                         </View>
                     )}
 
-                    {/* Cameras Section */}
                     {cameras.length > 0 && (
                         <View>
                             <View style={styles.divider} />
@@ -498,22 +525,19 @@ export default function RoomDetailView({
                         </View>
                     )}
 
-                    {/* Covers Section */}
                     {covers.length > 0 && (
                         <View>
                             <View style={styles.divider} />
                             <View style={styles.grid}>
                                 {covers.map(cover => {
-                                    // Binding Sensor Automatically: sensor.<shutter_name>
-                                    // Assuming cover.entity_id is 'cover.shutter_name', we look for 'sensor.shutter_name'
                                     const sensorId = cover.entity_id.replace('cover.', 'sensor.');
                                     const sensor = allEntities.find(e => e.entity_id === sensorId);
-
                                     return (
                                         <View key={cover.entity_id} style={styles.cardContainer}>
                                             <CoverCard
                                                 cover={cover}
                                                 sensor={sensor}
+                                                needsChange={checkNeedsChange(cover.entity_id)}
                                                 onUpdate={(id, domain, service, data) => {
                                                     if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
                                                 }}
@@ -525,7 +549,6 @@ export default function RoomDetailView({
                         </View>
                     )}
 
-                    {/* Climate Section */}
                     {climates.length > 0 && (
                         <View>
                             <View style={styles.divider} />
@@ -533,6 +556,7 @@ export default function RoomDetailView({
                                 <ClimateCard
                                     key={climate.entity_id}
                                     climate={climate}
+                                    needsChange={checkNeedsChange(climate.entity_id)}
                                     onUpdate={(id, domain, service, data) => {
                                         if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
                                     }}
@@ -541,19 +565,37 @@ export default function RoomDetailView({
                         </View>
                     )}
 
-                    {/* Media Section */}
                     {medias.length > 0 && (
                         <View style={{ marginBottom: 40 }}>
                             <View style={styles.divider} />
-                            {medias.map(media => (
-                                <MediaCard
-                                    key={media.entity_id}
-                                    player={media}
-                                    onUpdate={(id, domain, service, data) => {
-                                        if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
-                                    }}
-                                />
-                            ))}
+                            {medias
+                                .filter(m => {
+                                    const mapping = mediaMappings.find(map => map.entity_id === m.entity_id);
+                                    return !mapping || !mapping.parentId;
+                                })
+                                .map(media => {
+                                    const children = medias.filter(c => {
+                                        const mapping = mediaMappings.find(map => map.entity_id === c.entity_id);
+                                        return mapping && mapping.parentId === media.entity_id;
+                                    });
+
+                                    const mapping = mediaMappings.find(m => m.entity_id === media.entity_id);
+
+                                    return (
+                                        <MediaCard
+                                            key={media.entity_id}
+                                            player={media}
+                                            childPlayers={children}
+                                            mapping={mapping}
+                                            mediaMappings={mediaMappings}
+                                            needsChange={checkNeedsChange(media.entity_id)}
+                                            onUpdate={(id, domain, service, data) => {
+                                                if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
+                                            }}
+                                            adminUrl={adminUrl}
+                                        />
+                                    );
+                                })}
                         </View>
                     )}
                 </ScrollView>
@@ -565,7 +607,7 @@ export default function RoomDetailView({
                 light={selectedLight}
                 onUpdate={handleUpdate}
             />
-        </View>
+        </View >
     );
 }
 

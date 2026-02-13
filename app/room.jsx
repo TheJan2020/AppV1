@@ -1,4 +1,5 @@
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
+import * as SecureStore from 'expo-secure-store';
 import { View, Text, ActivityIndicator } from 'react-native';
 import { useState, useEffect, useRef } from 'react';
 import { HAService } from '../services/ha';
@@ -22,14 +23,58 @@ export default function RoomPage() {
     const [entities, setEntities] = useState([]);
     const [registryDevices, setRegistryDevices] = useState([]);
     const [registryEntities, setRegistryEntities] = useState([]);
+    const [lightMappings, setLightMappings] = useState([]);
     const [loading, setLoading] = useState(true);
 
     const service = useRef(null);
-    const haUrl = process.env.EXPO_PUBLIC_HA_URL;
-    const haToken = process.env.EXPO_PUBLIC_HA_TOKEN;
+    const [connectionConfig, setConnectionConfig] = useState({
+        url: '',
+        token: '',
+        loaded: false
+    });
 
     useEffect(() => {
-        service.current = new HAService(haUrl, haToken);
+        loadConnectionConfig();
+    }, []);
+
+    const loadConnectionConfig = async () => {
+        try {
+            // 1. Try active profile first
+            const activeProfileId = await SecureStore.getItemAsync('ha_active_profile_id');
+            const profilesJson = await SecureStore.getItemAsync('ha_profiles');
+
+            if (activeProfileId && profilesJson) {
+                const profiles = JSON.parse(profilesJson);
+                const activeProfile = profiles.find(p => p.id === activeProfileId);
+                if (activeProfile) {
+                    setConnectionConfig({
+                        url: activeProfile.haUrl,
+                        token: activeProfile.haToken,
+                        adminUrl: activeProfile.adminUrl || process.env.EXPO_PUBLIC_ADMIN_URL,
+                        loaded: true
+                    });
+                    return;
+                }
+            }
+
+            setConnectionConfig({
+                url: '',
+                token: '',
+                adminUrl: process.env.EXPO_PUBLIC_ADMIN_URL,
+                loaded: true
+            });
+        } catch (e) {
+            console.log('Error loading connection config:', e);
+            setConnectionConfig(prev => ({ ...prev, loaded: true }));
+        }
+    };
+
+    useEffect(() => {
+        if (!connectionConfig.loaded) return;
+        const { url, token } = connectionConfig;
+        if (!url || !token) return;
+
+        service.current = new HAService(url, token);
         service.current.connect();
 
         service.current.subscribe(data => {
@@ -58,8 +103,33 @@ export default function RoomPage() {
             }
         });
 
-        return () => service.current?.socket?.close();
-    }, []);
+        return () => {
+            if (service.current) {
+                if (service.current.disconnect) {
+                    service.current.disconnect();
+                } else {
+                    service.current.socket?.close();
+                }
+            }
+        };
+    }, [connectionConfig.loaded]);
+
+    // Fetch Light Mappings
+    useEffect(() => {
+        if (!connectionConfig.loaded || !connectionConfig.adminUrl) return;
+
+        const adminUrl = connectionConfig.adminUrl;
+        const lightsUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/monitored-entities?type=light` : `${adminUrl}/api/monitored-entities?type=light`);
+
+        fetch(lightsUrl)
+            .then(res => res.json())
+            .then(data => {
+                if (Array.isArray(data)) {
+                    setLightMappings(data);
+                }
+            })
+            .catch(e => console.log("[RoomPage] Error loading light mappings:", e));
+    }, [connectionConfig.loaded, connectionConfig.adminUrl]);
 
     const handleToggle = (domain, serviceName, data) => {
         service.current?.callService(domain, serviceName, data);
@@ -94,6 +164,8 @@ export default function RoomPage() {
                 onToggle={handleToggle}
                 onClose={() => router.back()}
                 isModal={false}
+                lightMappings={lightMappings}
+                adminUrl={connectionConfig.adminUrl}
             />
         </View>
     );

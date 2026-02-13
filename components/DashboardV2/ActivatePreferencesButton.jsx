@@ -3,10 +3,11 @@ import { useState, useEffect } from 'react';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing } from 'react-native-reanimated';
 import { Zap } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
-import * as SecureStore from 'expo-secure-store';
+import { getAdminUrl } from '../../utils/storage';
+import { checkPreferenceMatch } from '../../utils/preferenceHelpers';
 import * as Haptics from 'expo-haptics';
 
-export default function ActivatePreferencesButton({ roomName, onActivate }) {
+export default function ActivatePreferencesButton({ roomName, onActivate, onPreferencesLoaded }) {
     const [loading, setLoading] = useState(false);
     const [preferences, setPreferences] = useState([]);
     const [needsChange, setNeedsChange] = useState(0);
@@ -17,17 +18,17 @@ export default function ActivatePreferencesButton({ roomName, onActivate }) {
     const glowOpacity = useSharedValue(0.6);
 
     useEffect(() => {
-        // Pulse animation
-        glowScale.value = withRepeat(
-            withTiming(1.3, { duration: 2000, easing: Easing.inOut(Easing.ease) }),
-            -1,
-            true
-        );
-        glowOpacity.value = withRepeat(
-            withTiming(0.2, { duration: 2000, easing: Easing.inOut(Easing.ease) }),
-            -1,
-            true
-        );
+        // Pulse animation - Disabled for minimal look
+        // glowScale.value = withRepeat(
+        //     withTiming(1.3, { duration: 2000, easing: Easing.inOut(Easing.ease) }),
+        //     -1,
+        //     true
+        // );
+        // glowOpacity.value = withRepeat(
+        //     withTiming(0.2, { duration: 2000, easing: Easing.inOut(Easing.ease) }),
+        //     -1,
+        //     true
+        // );
     }, []);
 
     const glowStyle = useAnimatedStyle(() => ({
@@ -45,7 +46,7 @@ export default function ActivatePreferencesButton({ roomName, onActivate }) {
     const loadPreferences = async () => {
         try {
             setLoading(true);
-            const backendUrl = await SecureStore.getItemAsync('admin_url');
+            const backendUrl = await getAdminUrl();
             if (!backendUrl) return;
 
             const now = new Date();
@@ -61,8 +62,30 @@ export default function ActivatePreferencesButton({ roomName, onActivate }) {
                 const data = await response.json();
                 console.log('[ActivatePreferencesButton] API Response:', data);
                 if (data.success) {
-                    setPreferences(data.preferences || []);
-                    setNeedsChange(data.needs_change || 0);
+                    const rawPreferences = data.preferences || [];
+
+                    // Re-calculate 'needs_change' using our fuzzy logic
+                    // The backend sends 'needs_change' (boolean) on each entity, but it uses strict matching
+                    // We need to override it.
+                    const processedPreferences = rawPreferences.map(p => {
+                        // Check match. If it matches, then needs_change is FALSE.
+                        // If it doesn't match, needs_change is TRUE.
+                        // Note: checkPreferenceMatch returns TRUE if it MATCHES preference.
+                        const isMatch = checkPreferenceMatch(p);
+                        return {
+                            ...p,
+                            needs_change: !isMatch && p.has_preference
+                        };
+                    });
+
+                    const changesNeededCount = processedPreferences.filter(p => p.needs_change).length;
+
+                    setPreferences(processedPreferences);
+                    setNeedsChange(changesNeededCount);
+
+                    if (onPreferencesLoaded) {
+                        onPreferencesLoaded(processedPreferences);
+                    }
                 }
             } else {
                 console.error('[ActivatePreferencesButton] API error:', response.status);
@@ -159,27 +182,23 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     button: {
-        backgroundColor: Colors.primary,
+        backgroundColor: 'rgba(137, 71, 202, 0.1)', // Slight purple tint background
         borderRadius: 16,
         paddingVertical: 16,
         paddingHorizontal: 24,
         position: 'relative',
         overflow: 'visible',
-        elevation: 8,
-        shadowColor: Colors.primary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.4,
+        borderWidth: 1,
+        borderColor: '#8947ca', // Purple border
+        // Minimal glow
+        shadowColor: '#8947ca',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: 0.6,
         shadowRadius: 8,
+        elevation: 5,
     },
     glow: {
-        position: 'absolute',
-        top: -4,
-        left: -4,
-        right: -4,
-        bottom: -4,
-        backgroundColor: Colors.primary,
-        borderRadius: 20,
-        zIndex: -1,
+        display: 'none', // Remove the previous pulse animation element if we want just a static glow, or keep it subtle
     },
     buttonContent: {
         flexDirection: 'row',

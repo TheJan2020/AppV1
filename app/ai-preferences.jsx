@@ -3,7 +3,8 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ChevronLeft, ChevronDown, ChevronRight, Info, Zap, Check, X } from 'lucide-react-native';
-import * as SecureStore from 'expo-secure-store';
+import { getAdminUrl } from '../utils/storage';
+import { checkPreferenceMatch, formatPreferenceState } from '../utils/preferenceHelpers';
 import { Colors } from '../constants/Colors';
 
 export default function AIPreferencesScreen() {
@@ -22,7 +23,12 @@ export default function AIPreferencesScreen() {
     const loadPreferences = async () => {
         try {
             setLoading(true);
-            const url = await SecureStore.getItemAsync('admin_url');
+            const url = await getAdminUrl();
+            if (!url) {
+                console.error('[AI Preferences] Admin URL not found.');
+                setLoading(false);
+                return;
+            }
             setBackendUrl(url);
 
             const now = new Date();
@@ -44,7 +50,24 @@ export default function AIPreferencesScreen() {
                 // Sort entities within each area by domain (light, climate, media, etc.)
                 const sortedGrouped = {};
                 Object.keys(data.grouped).forEach(areaName => {
-                    sortedGrouped[areaName] = data.grouped[areaName].sort((a, b) => {
+                    // 1. Hide "No Area"
+                    if (areaName === 'No Area') return;
+
+                    const processedEntities = data.grouped[areaName].map(e => {
+                        // 2 & 4. Fuzzy Matching
+                        // We override the backend 'matches' property based on new logic
+                        const isFuzzyMatch = checkPreferenceMatch(e);
+
+                        return {
+                            ...e,
+                            matches: e.has_preference ? isFuzzyMatch : false,
+                            // 3. Format displayed values
+                            current_state: formatPreferenceState(e.current_state, e.entity_id),
+                            preferred_state: e.preferred_state ? formatPreferenceState(e.preferred_state, e.entity_id) : null
+                        };
+                    });
+
+                    sortedGrouped[areaName] = processedEntities.sort((a, b) => {
                         const domainA = a.entity_id.split('.')[0];
                         const domainB = b.entity_id.split('.')[0];
                         return domainA.localeCompare(domainB);
@@ -360,7 +383,43 @@ export default function AIPreferencesScreen() {
                             {selectedEntity.reasoning && (
                                 <View style={styles.reasoningContainer}>
                                     <Text style={styles.reasoningText}>
-                                        {JSON.stringify(JSON.parse(selectedEntity.reasoning), null, 2)}
+                                        {(() => {
+                                            try {
+                                                const reasoning = JSON.parse(selectedEntity.reasoning);
+
+                                                // Function to recursively round numbers
+                                                const roundNumbers = (obj) => {
+                                                    if (typeof obj === 'number') {
+                                                        return parseFloat(obj.toFixed(2));
+                                                    }
+                                                    if (typeof obj === 'string') {
+                                                        // Try to parse string numbers that are floats
+                                                        const floatVal = parseFloat(obj);
+                                                        // Check if valid number and looks like a decimal (avoids integers/IDs)
+                                                        if (!isNaN(floatVal) && obj.trim().match(/^-?\d*\.\d+$/)) {
+                                                            return parseFloat(floatVal.toFixed(2));
+                                                        }
+                                                        return obj;
+                                                    }
+                                                    if (obj === null || typeof obj !== 'object') {
+                                                        return obj;
+                                                    }
+                                                    if (Array.isArray(obj)) {
+                                                        return obj.map(roundNumbers);
+                                                    }
+                                                    const newObj = {};
+                                                    for (const key in obj) {
+                                                        newObj[key] = roundNumbers(obj[key]);
+                                                    }
+                                                    return newObj;
+                                                };
+
+                                                const rounded = roundNumbers(reasoning);
+                                                return JSON.stringify(rounded, null, 2);
+                                            } catch (e) {
+                                                return selectedEntity.reasoning;
+                                            }
+                                        })()}
                                     </Text>
                                 </View>
                             )}

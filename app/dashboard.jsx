@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect } from 'react';
+import * as SecureStore from 'expo-secure-store';
 import { View, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
 import { Colors } from '../constants/Colors';
 import { HAService } from '../services/ha';
@@ -33,7 +34,44 @@ export default function Dashboard() {
 
     const service = useRef(null);
 
-    const haUrl = process.env.EXPO_PUBLIC_HA_URL || 'http://homeassistant.local:8123';
+    const [connectionConfig, setConnectionConfig] = useState({
+        url: '',
+        token: '',
+        loaded: false
+    });
+
+    useEffect(() => {
+        loadConnectionConfig();
+    }, []);
+
+    const loadConnectionConfig = async () => {
+        try {
+            // 1. Try to load from Profiles first
+            const activeProfileId = await SecureStore.getItemAsync('ha_active_profile_id');
+            const profilesJson = await SecureStore.getItemAsync('ha_profiles');
+
+            if (activeProfileId && profilesJson) {
+                const profiles = JSON.parse(profilesJson);
+                const activeProfile = profiles.find(p => p.id === activeProfileId);
+
+                if (activeProfile) {
+                    console.log('[Dashboard] Loaded active profile:', activeProfile.name);
+                    setConnectionConfig({
+                        url: activeProfile.haUrl,
+                        token: activeProfile.haToken,
+                        loaded: true
+                    });
+                    return;
+                }
+            }
+
+            console.log('[Dashboard] No active profile found.');
+            setConnectionConfig(prev => ({ ...prev, loaded: true }));
+        } catch (e) {
+            console.log('Error loading connection config:', e);
+            setConnectionConfig(prev => ({ ...prev, loaded: true }));
+        }
+    };
     // ...
 
     const loadRegistries = async () => {
@@ -49,10 +87,13 @@ export default function Dashboard() {
             console.log('Error fetching registries', e);
         }
     };
-    const haToken = process.env.EXPO_PUBLIC_HA_TOKEN;
-
     useEffect(() => {
-        service.current = new HAService(haUrl, haToken);
+        if (!connectionConfig.loaded) return;
+
+        const { url, token } = connectionConfig;
+        if (!url || !token) return;
+
+        service.current = new HAService(url, token);
         service.current.connect();
 
         const unsubscribe = service.current.subscribe((data) => {
@@ -66,9 +107,15 @@ export default function Dashboard() {
 
         return () => {
             unsubscribe();
-            if (service.current.socket) service.current.socket.close();
+            if (service.current) {
+                if (service.current.disconnect) {
+                    service.current.disconnect();
+                } else {
+                    service.current.socket?.close();
+                }
+            }
         };
-    }, []);
+    }, [connectionConfig.loaded]);
 
     const loadStates = async () => {
         try {
@@ -211,14 +258,14 @@ export default function Dashboard() {
                             <CameraCard
                                 name="Lulu Bed"
                                 entityId="camera.lulubed"
-                                token={haToken}
-                                url={haUrl}
+                                token={connectionConfig.token}
+                                url={connectionConfig.url}
                             />
                             <CameraCard
                                 name="Lulu Playground"
                                 entityId="camera.luluplayground"
-                                token={haToken}
-                                url={haUrl}
+                                token={connectionConfig.token}
+                                url={connectionConfig.url}
                             />
                         </View>
                     </View>

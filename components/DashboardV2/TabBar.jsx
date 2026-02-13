@@ -1,5 +1,5 @@
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { Video, LayoutGrid, Home, Brain, Settings } from 'lucide-react-native';
+import { Video, LayoutGrid, Home, MessageSquare, Settings } from 'lucide-react-native';
 import { BlurView } from 'expo-blur';
 
 export default function TabBar({ activeTab, onTabPress }) {
@@ -7,7 +7,7 @@ export default function TabBar({ activeTab, onTabPress }) {
         { id: 'cctv', label: 'CCTV', icon: Video },
         { id: 'rooms', label: 'Rooms', icon: LayoutGrid },
         { id: 'home', label: 'Home', icon: Home },
-        { id: 'ai', label: 'A.I.', icon: Brain },
+        { id: 'ai', label: 'A.I.', icon: MessageSquare },
         { id: 'settings', label: 'Settings', icon: Settings },
     ];
 
