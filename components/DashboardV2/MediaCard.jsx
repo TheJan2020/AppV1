@@ -25,7 +25,7 @@ export default function MediaCard({ player, childPlayers = [], mapping, mediaMap
         volume_level: parentVolume
     } = attributes;
 
-    const isOn = state !== 'off' && state !== 'standby';
+    const isOn = state !== 'off' && state !== 'standby' && state !== 'unavailable';
     const isPlaying = ['playing', 'buffering', 'on'].includes(state) || childPlayers.some(c => ['playing', 'buffering', 'on'].includes(c.stateObj.state));
     const activeColor = '#8947ca';
 
