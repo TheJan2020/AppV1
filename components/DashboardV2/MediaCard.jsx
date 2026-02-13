@@ -120,6 +120,16 @@ export default function MediaCard({ player, childPlayers = [], mapping, mediaMap
             }
         }
 
+        if (service === 'turn_on') {
+            const mapping = mediaMappings.find(m => m.entity_id === entity.entity_id);
+            const turnOnBtn = mapping?.turnOnButton;
+            if (turnOnBtn && turnOnBtn.startsWith('button.')) {
+                // If a specific WoL button is configured, press it
+                onUpdate(turnOnBtn, 'button', 'press', {});
+                return;
+            }
+        }
+
         onUpdate(entity.entity_id, 'media_player', service, data);
     };
 
