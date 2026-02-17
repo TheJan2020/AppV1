@@ -1,10 +1,11 @@
 import { Alert } from 'react-native';
 
 export class FrigateService {
-    constructor(baseUrl, username, password) {
+    constructor(baseUrl, username, password, adminUrl) {
         this.baseUrl = baseUrl.replace(/\/$/, ''); // Remove trailing slash
         this.username = username;
         this.password = password;
+        this.adminUrl = adminUrl ? adminUrl.replace(/\/$/, '') : '';
         this.token = null;
         this.headers = {
             'Content-Type': 'application/json'
@@ -91,7 +92,7 @@ export class FrigateService {
     async getConfig() {
         try {
             // Use backend proxy
-            const proxyUrl = process.env.EXPO_PUBLIC_ADMIN_URL.replace(/\/$/, '') + '/api/frigate/config';
+            const proxyUrl = this.adminUrl + '/api/frigate/config';
             console.log('Frigate: Fetching config from proxy:', proxyUrl);
 
             const response = await fetch(proxyUrl, {
@@ -145,7 +146,7 @@ export class FrigateService {
             if (options.include_thumbnails === 0) params.append('include_thumbnails', 0); // Frigate defaults to 1
 
             // Use backend proxy
-            const proxyUrl = process.env.EXPO_PUBLIC_ADMIN_URL.replace(/\/$/, '') + `/api/frigate/events?${params.toString()}`;
+            const proxyUrl = this.adminUrl + `/api/frigate/events?${params.toString()}`;
             console.log('Frigate: Fetching events from proxy:', proxyUrl);
 
             const response = await fetch(proxyUrl);
@@ -160,25 +161,22 @@ export class FrigateService {
     getStreamUrl(cameraName) {
         // Use backend proxy instead of direct Frigate connection
         // This solves WebView authentication issues
-        const proxyUrl = process.env.EXPO_PUBLIC_ADMIN_URL.replace('/api/config', '');
-        return `${proxyUrl}/api/frigate/stream/${cameraName}?fps=5&height=720&bbox=1`;
+        return `${this.adminUrl}/api/frigate/stream/${cameraName}?fps=5&height=720&bbox=1`;
     }
 
     getSnapshotUrl(cameraName) {
         // Use backend proxy for snapshots too
-        const proxyUrl = process.env.EXPO_PUBLIC_ADMIN_URL.replace('/api/config', '');
-        return `${proxyUrl}/api/frigate/snapshot/${cameraName}`;
+        return `${this.adminUrl}/api/frigate/snapshot/${cameraName}`;
     }
 
     getAudioUrl(cameraName) {
         // Frigate audio stream endpoint - using backend proxy
-        const proxyUrl = process.env.EXPO_PUBLIC_ADMIN_URL.replace('/api/config', '');
-        return `${proxyUrl}/api/frigate/audio/${cameraName}`;
+        return `${this.adminUrl}/api/frigate/audio/${cameraName}`;
     }
 
     async getRecordingSummary(cameraName) {
         try {
-            const proxyUrl = process.env.EXPO_PUBLIC_ADMIN_URL.replace(/\/$/, '') + `/api/frigate/recordings/${cameraName}/summary`;
+            const proxyUrl = this.adminUrl + `/api/frigate/recordings/${cameraName}/summary`;
             const response = await fetch(proxyUrl);
             if (!response.ok) return [];
             return await response.json();
@@ -191,7 +189,7 @@ export class FrigateService {
 
     getVodUrl(cameraName, start, end) {
         // /api/frigate/vod/<camera>/start/<start>/end/<end>/index.m3u8
-        const proxyUrl = process.env.EXPO_PUBLIC_ADMIN_URL.replace(/\/$/, '') + '/api/frigate/vod';
+        const proxyUrl = this.adminUrl + '/api/frigate/vod';
         return `${proxyUrl}/${cameraName}/start/${start}/end/${end}/index.m3u8`;
     }
 

@@ -1,34 +1,99 @@
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { BlurView } from 'expo-blur';
-import { Power, Flame, Snowflake, Fan, ChevronUp, ChevronDown, Droplets, Wind, Zap } from 'lucide-react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
+import { Flame, Snowflake, Fan, Droplets, Wind, Zap, Minus, Plus, MoreVertical, Moon, Leaf, HeartPulse, AirVent, PowerOff, ChevronUp } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '../../constants/Colors';
+import { useState } from 'react';
+
+const getModeIcon = (mode, size, color) => {
+    switch (mode) {
+        case 'heat': return <Flame size={size} color={color} />;
+        case 'cool': return <Snowflake size={size} color={color} />;
+        case 'dry': return <Droplets size={size} color={color} />;
+        case 'fan_only': return <Fan size={size} color={color} />;
+        case 'auto': return <Zap size={size} color={color} />;
+        case 'heat_cool': return <Flame size={size} color={color} />;
+        case 'humid': return <Droplets size={size} color={color} />;
+        default: return <Text style={{ color, fontWeight: 'bold', fontSize: 12 }}>{mode.slice(0, 3).toUpperCase()}</Text>;
+    }
+};
+
+const getModeLabel = (mode) => {
+    switch (mode) {
+        case 'heat': return 'Heat';
+        case 'cool': return 'Cool';
+        case 'dry': return 'Dry';
+        case 'fan_only': return 'Fan';
+        case 'auto': return 'Auto';
+        case 'heat_cool': return 'Auto';
+        case 'humid': return 'Humid';
+        default: return mode.charAt(0).toUpperCase() + mode.slice(1).replace('_', ' ');
+    }
+};
+
+const getPresetIcon = (preset, size, color) => {
+    const lower = preset.toLowerCase();
+    if (lower.includes('silent') || lower.includes('sleep') || lower.includes('quiet')) return <Moon size={size} color={color} />;
+    if (lower.includes('eco') || lower.includes('energy')) return <Leaf size={size} color={color} />;
+    if (lower.includes('health') || lower.includes('comfort')) return <HeartPulse size={size} color={color} />;
+    if (lower.includes('wind') || lower.includes('breeze')) return <AirVent size={size} color={color} />;
+    if (lower.includes('boost') || lower.includes('turbo') || lower.includes('power')) return <Zap size={size} color={color} />;
+    return <Text style={{ color, fontWeight: 'bold', fontSize: 12 }}>{preset.slice(0, 3).toUpperCase()}</Text>;
+};
+
+const getFanIcon = (fanMode, size, color) => {
+    const lower = fanMode.toLowerCase();
+    if (lower === 'auto') return <Zap size={size} color={color} />;
+    if (lower === 'low' || lower === 'quiet' || lower === 'silent' || lower === 'sleep') return <Wind size={size} color={color} />;
+    if (lower === 'medium' || lower === 'mid' || lower === 'middle') return <AirVent size={size} color={color} />;
+    if (lower === 'high' || lower === 'strong' || lower === 'turbo') return <Fan size={size} color={color} />;
+    if (lower === 'diffuse') return <Droplets size={size} color={color} />;
+    return <Wind size={size} color={color} />;
+};
+
+const getFanLabel = (fanMode) => {
+    return fanMode.charAt(0).toUpperCase() + fanMode.slice(1).replace('_', ' ');
+};
+
+const getModeColor = (mode) => {
+    switch (mode) {
+        case 'heat': return '#FF7043';
+        case 'cool': return '#42A5F5';
+        case 'dry': return '#FFA726';
+        case 'fan_only': return '#66BB6A';
+        case 'auto': return '#AB47BC';
+        case 'heat_cool': return '#AB47BC';
+        case 'humid': return '#29B6F6';
+        default: return '#8947ca';
+    }
+};
 
 export default function ClimateCard({ climate, onUpdate, needsChange }) {
+    const [expanded, setExpanded] = useState(false);
+
     if (!climate) return null;
 
     const { attributes, state } = climate.stateObj;
-    const currentTemp = attributes.current_temperature;
     const targetTemp = attributes.temperature;
-    const humidity = attributes.humidity;
     const hvacMode = state;
     const hvacModes = attributes.hvac_modes || [];
     const fanModes = attributes.fan_modes || [];
     const currentFanMode = attributes.fan_mode;
+    const presetModes = (attributes.preset_modes || []).filter(p => p !== 'none');
+    const currentPreset = attributes.preset_mode;
 
-    // Check if ON (anything other than off)
     const isOn = hvacMode !== 'off';
-    const activeColor = '#8947ca';
-
-    // Filter out 'off' for the mode buttons list
     const availableModes = hvacModes.filter(mode => mode !== 'off');
+
+    const toggleExpanded = () => {
+        setExpanded(prev => !prev);
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    };
 
     const handlePower = () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         if (isOn) {
             onUpdate(climate.entity_id, 'climate', 'set_hvac_mode', { hvac_mode: 'off' });
         } else {
-            // Restore last mode logic
             const lastMode = attributes.last_on_operation;
             const targetMode = (lastMode && hvacModes.includes(lastMode) && lastMode !== 'off')
                 ? lastMode
@@ -42,15 +107,15 @@ export default function ClimateCard({ climate, onUpdate, needsChange }) {
         onUpdate(climate.entity_id, 'climate', 'set_hvac_mode', { hvac_mode: mode });
     };
 
-    const handleFanSpeed = () => {
+    const handleFanSelect = (fanMode) => {
         Haptics.selectionAsync();
-        if (!fanModes.length) return;
+        onUpdate(climate.entity_id, 'climate', 'set_fan_mode', { fan_mode: fanMode });
+    };
 
-        let currentIndex = fanModes.indexOf(currentFanMode);
-        let nextIndex = currentIndex + 1;
-        if (nextIndex >= fanModes.length) nextIndex = 0;
-
-        onUpdate(climate.entity_id, 'climate', 'set_fan_mode', { fan_mode: fanModes[nextIndex] });
+    const handlePresetSelect = (preset) => {
+        Haptics.selectionAsync();
+        const newPreset = currentPreset === preset ? 'none' : preset;
+        onUpdate(climate.entity_id, 'climate', 'set_preset_mode', { preset_mode: newPreset });
     };
 
     const handleTempChange = (delta) => {
@@ -60,229 +125,322 @@ export default function ClimateCard({ climate, onUpdate, needsChange }) {
         onUpdate(climate.entity_id, 'climate', 'set_temperature', { temperature: newTemp });
     };
 
-    const getModeIcon = (mode, isActive) => {
-        // Active = Purple, Inactive = Grey. No background fill.
-        const color = isActive ? activeColor : Colors.textDim;
-        const size = 20;
-        switch (mode) {
-            case 'heat': return <Flame size={size} color={color} />;
-            case 'cool': return <Snowflake size={size} color={color} />;
-            case 'dry': return <Droplets size={size} color={color} />;
-            case 'fan_only': return <Wind size={size} color={color} />;
-            case 'auto': return <Zap size={size} color={color} />;
-            default: return <Text style={{ color: color, fontWeight: 'bold', fontSize: 10 }}>{mode.slice(0, 2).toUpperCase()}</Text>;
-        }
-    };
-
-    const formatTemp = (t) => (t !== null && t !== undefined) ? `${t}°` : '--';
-
-    // Show Current Temp if known, else Target Temp
-    const displayTemp = currentTemp !== null ? currentTemp : targetTemp;
-    const isShowingTargetAsMain = currentTemp === null && targetTemp !== null;
+    const activeIcon = isOn ? getModeIcon(hvacMode, 28, '#fff') : <PowerOff size={28} color={Colors.textDim} />;
+    const modeRingColor = isOn ? getModeColor(hvacMode) : 'transparent';
 
     return (
         <View style={[
             styles.container,
             needsChange && { borderColor: '#8947ca', borderWidth: 2 }
         ]}>
-            {/* Left Side: Status */}
-            <View style={styles.leftSide}>
-                <View style={styles.tempRow}>
-                    <Text style={styles.currentTemp}>{formatTemp(displayTemp)}</Text>
-                    {isShowingTargetAsMain && <Text style={styles.label}>Set</Text>}
-                    {humidity && <Text style={styles.humidity}>{humidity}%</Text>}
-                </View>
-                <Text style={styles.roomName} numberOfLines={1}>{climate.displayName}</Text>
-
-                {/* Active Mode/Fan Details */}
-                <Text style={styles.statusText} numberOfLines={1}>
-                    {isOn ? hvacMode.toUpperCase().replace('_', ' ') : 'OFF'}
-                    {isOn && currentFanMode ? ` • ${currentFanMode.toUpperCase()}` : ''}
-                </Text>
-            </View>
-
-            {/* Right Side: Controls */}
-            {/* Using justifyContent flex-end to push to right, and flex to separate from left */}
-            <View style={styles.controlsArea}>
-
-                {/* 1. Power Button (Always visible) */}
+            {/* Top Row: Icon + Name/State + Temp Control */}
+            <View style={styles.topRow}>
                 <TouchableOpacity
-                    style={[styles.powerBtn, isOn && { backgroundColor: activeColor, borderColor: activeColor }]}
+                    style={[
+                        styles.iconCircle,
+                        isOn && { borderWidth: 2.5, borderColor: modeRingColor }
+                    ]}
                     onPress={handlePower}
                 >
-                    <Power size={20} color={isOn ? "#fff" : Colors.textDim} />
+                    {activeIcon}
                 </TouchableOpacity>
 
-                {isOn && (
-                    <>
-                        {/* 2. Middle Controls (Modes + Fan) */}
-                        <View style={styles.middleControls}>
-                            {/* Modes */}
-                            {availableModes.map((mode) => {
-                                const isModeActive = hvacMode === mode;
-                                return (
-                                    <TouchableOpacity
-                                        key={mode}
-                                        style={styles.modeBtn}
-                                        onPress={() => handleModeSelect(mode)}
-                                    >
-                                        {getModeIcon(mode, isModeActive)}
-                                    </TouchableOpacity>
-                                );
-                            })}
+                <View style={styles.nameArea}>
+                    <Text style={styles.name} numberOfLines={1}>{climate.displayName}</Text>
+                    <Text style={styles.state}>
+                        {isOn ? getModeLabel(hvacMode) : 'Off'}
+                    </Text>
+                </View>
 
-                            {/* Divider if we have Fan Modes */}
-                            {fanModes.length > 0 && <View style={styles.separator} />}
-
-                            {/* Fan Logic: Button to cycle active fan mode */}
-                            {fanModes.length > 0 && (
-                                <TouchableOpacity
-                                    style={styles.modeBtn}
-                                    onPress={handleFanSpeed}
-                                >
-                                    {/* Icon color highlights if fan_only, but fan speed is property of all modes usually. 
-                                        Let's just keep it dim unless specific condition, or always dim? 
-                                        User asked for curve color option, so lets make it purple if fan mode is set? 
-                                        No, just static icon for cycling is standard unless 'fan_only' mode. 
-                                    */}
-                                    <Fan size={20} color={Colors.textDim} />
-                                </TouchableOpacity>
-                            )}
-                        </View>
-
-                        {/* 3. Temp Control (Far Right) */}
-                        <View style={styles.tempControlPill}>
-                            <TouchableOpacity
-                                style={styles.tempBtn}
-                                onPress={() => handleTempChange(1)}
-                            >
-                                <ChevronUp size={20} color="#fff" />
-                            </TouchableOpacity>
-
-                            {/* Raw number only, no degree symbol as requested */}
-                            <Text style={styles.targetTemp}>{targetTemp}</Text>
-
-                            <TouchableOpacity
-                                style={styles.tempBtn}
-                                onPress={() => handleTempChange(-1)}
-                            >
-                                <ChevronDown size={20} color="#fff" />
-                            </TouchableOpacity>
-                        </View>
-                    </>
-                )}
+                <View style={styles.tempPill}>
+                    <TouchableOpacity style={styles.tempPillBtn} onPress={() => handleTempChange(-1)}>
+                        <Minus size={18} color="#fff" />
+                    </TouchableOpacity>
+                    <Text style={styles.tempText}>
+                        {targetTemp !== null && targetTemp !== undefined ? `${targetTemp}°` : '--'}
+                    </Text>
+                    <TouchableOpacity style={styles.tempPillBtn} onPress={() => handleTempChange(1)}>
+                        <Plus size={18} color="#fff" />
+                    </TouchableOpacity>
+                </View>
             </View>
+
+            {/* Bottom Row: Fan Speed Buttons + More */}
+            {isOn && (
+                <View style={styles.bottomRow}>
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.fanRow}
+                        style={styles.fanScroll}
+                    >
+                        {fanModes.map(fm => {
+                            const isActive = currentFanMode === fm;
+                            return (
+                                <TouchableOpacity
+                                    key={fm}
+                                    style={styles.fanItem}
+                                    onPress={() => handleFanSelect(fm)}
+                                >
+                                    <View style={[
+                                        styles.fanCircle,
+                                        isActive && styles.fanCircleActive
+                                    ]}>
+                                        {getFanIcon(fm, 22, isActive ? '#fff' : Colors.textDim)}
+                                    </View>
+                                    <Text style={[
+                                        styles.fanLabel,
+                                        isActive && styles.fanLabelActive
+                                    ]}>
+                                        {getFanLabel(fm)}
+                                    </Text>
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </ScrollView>
+
+                    <TouchableOpacity style={styles.moreBtn} onPress={toggleExpanded}>
+                        {expanded
+                            ? <ChevronUp size={22} color={Colors.textDim} />
+                            : <MoreVertical size={22} color={Colors.textDim} />
+                        }
+                    </TouchableOpacity>
+                </View>
+            )}
+
+            {/* Expanded Inline Section */}
+            {isOn && expanded && (
+                <View style={styles.expandedSection}>
+                    {/* Mode */}
+                    <View style={styles.expandedDivider} />
+                    <Text style={styles.expandedTitle}>Mode</Text>
+                    <View style={styles.expandedIconRow}>
+                        {availableModes.map(mode => {
+                            const isActive = hvacMode === mode;
+                            return (
+                                <TouchableOpacity
+                                    key={mode}
+                                    style={styles.expandedIconItem}
+                                    onPress={() => handleModeSelect(mode)}
+                                >
+                                    <View style={[
+                                        styles.expandedIconCircle,
+                                        isActive && styles.expandedIconCircleActive
+                                    ]}>
+                                        {getModeIcon(mode, 24, isActive ? '#000' : Colors.textDim)}
+                                    </View>
+                                    <Text style={[
+                                        styles.expandedIconLabel,
+                                        isActive && styles.expandedIconLabelActive
+                                    ]}>
+                                        {getModeLabel(mode)}
+                                    </Text>
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </View>
+
+                    {/* Custom Features */}
+                    {presetModes.length > 0 && (
+                        <>
+                            <View style={styles.expandedDivider} />
+                            <Text style={styles.expandedTitle}>Custom features</Text>
+                            <View style={styles.expandedIconRow}>
+                                {presetModes.map(preset => {
+                                    const isActive = currentPreset === preset;
+                                    return (
+                                        <TouchableOpacity
+                                            key={preset}
+                                            style={styles.expandedIconItem}
+                                            onPress={() => handlePresetSelect(preset)}
+                                        >
+                                            <View style={[
+                                                styles.expandedIconCircle,
+                                                isActive && styles.expandedIconCircleActive
+                                            ]}>
+                                                {getPresetIcon(preset, 24, isActive ? '#000' : Colors.textDim)}
+                                            </View>
+                                            <Text style={[
+                                                styles.expandedIconLabel,
+                                                isActive && styles.expandedIconLabelActive
+                                            ]}>
+                                                {preset.charAt(0).toUpperCase() + preset.slice(1)}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+                        </>
+                    )}
+
+                    {/* Close button */}
+                    <TouchableOpacity style={styles.collapseBtn} onPress={toggleExpanded}>
+                        <ChevronUp size={20} color={Colors.textDim} />
+                    </TouchableOpacity>
+                </View>
+            )}
         </View>
     );
 }
 
 const styles = StyleSheet.create({
+    // ── Main Card ──
     container: {
         width: '100%',
-        height: 110,
         backgroundColor: 'rgba(30, 30, 40, 0.95)',
         borderRadius: 24,
-        flexDirection: 'row',
-        paddingHorizontal: 20,
-        alignItems: 'center',
-        justifyContent: 'space-between', // Push Left/Right apart
+        padding: 18,
         marginTop: 10,
-        borderWidth: 0, // Default no border
+        overflow: 'hidden',
     },
-    leftSide: {
-        flex: 1, // Allow text to take space
-        justifyContent: 'center',
-        marginRight: 10, // Avoid touching controls
-    },
-    tempRow: {
+    topRow: {
         flexDirection: 'row',
-        alignItems: 'baseline',
-        gap: 8,
+        alignItems: 'center',
+        gap: 12,
     },
-    currentTemp: {
-        fontSize: 36,
-        fontWeight: '300',
+    iconCircle: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    nameArea: {
+        flex: 1,
+        justifyContent: 'center',
+    },
+    name: {
+        fontSize: 17,
+        fontWeight: '600',
         color: '#fff',
     },
-    label: {
-        fontSize: 12,
+    state: {
+        fontSize: 13,
         color: Colors.textDim,
-        alignSelf: 'flex-start',
-        marginTop: 6
-    },
-    humidity: {
-        fontSize: 14,
-        color: Colors.textDim,
-    },
-    roomName: {
-        fontSize: 14,
-        color: Colors.textDim,
-        marginTop: 4,
-    },
-    statusText: {
-        fontSize: 10,
-        color: 'rgba(255,255,255,0.4)',
         marginTop: 2,
-        fontWeight: 'bold',
-        letterSpacing: 1
     },
-    controlsArea: {
+    tempPill: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 8,
-        // Removes specific maxWidth to allow flex layout to handle overflow naturally or wrap if strictly needed,
-        // but here row is best.
-    },
-    powerBtn: {
-        width: 44,
+        backgroundColor: 'rgba(255,255,255,0.1)',
+        borderRadius: 22,
         height: 44,
-        borderRadius: 14,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(255,255,255,0.05)',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)'
-    },
-    middleControls: {
-        flexDirection: 'row',
-        backgroundColor: 'rgba(0,0,0,0.3)',
-        borderRadius: 14,
-        padding: 4,
+        paddingHorizontal: 4,
         gap: 2,
-        alignItems: 'center',
     },
-    modeBtn: {
+    tempPillBtn: {
         width: 36,
         height: 36,
-        borderRadius: 10,
+        borderRadius: 18,
         alignItems: 'center',
         justifyContent: 'center',
     },
-    separator: {
-        width: 1,
-        height: 20,
-        backgroundColor: 'rgba(255,255,255,0.1)',
-        marginHorizontal: 2
-    },
-    tempControlPill: {
-        width: 48,
-        backgroundColor: 'rgba(255,255,255,0.1)',
-        borderRadius: 24,
-        paddingVertical: 6,
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        height: 80, // Fixed height specifically for alignment
-    },
-    tempBtn: {
-        width: 48,
-        height: 28,
-        alignItems: 'center',
-        justifyContent: 'center', // Fixes arrow alignment
-    },
-    targetTemp: {
-        fontSize: 18,
+    tempText: {
+        fontSize: 20,
         fontWeight: 'bold',
         color: '#fff',
-        textAlign: 'center', // Ensures number is centered
-    }
+        minWidth: 44,
+        textAlign: 'center',
+    },
+
+    // ── Bottom Row (Fan Speeds + More) ──
+    bottomRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+        justifyContent: 'space-between',
+        marginTop: 16,
+    },
+    fanScroll: {
+        flex: 1,
+        marginRight: 4,
+    },
+    fanRow: {
+        flexDirection: 'row',
+        gap: 16,
+    },
+    fanItem: {
+        alignItems: 'center',
+        gap: 6,
+    },
+    fanCircle: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    fanCircleActive: {
+        backgroundColor: '#8947ca',
+    },
+    fanLabel: {
+        fontSize: 11,
+        color: Colors.textDim,
+        fontWeight: '500',
+    },
+    fanLabelActive: {
+        color: '#fff',
+    },
+    moreBtn: {
+        width: 40,
+        height: 40,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+
+    // ── Expanded Inline Section ──
+    expandedSection: {
+        marginTop: 4,
+    },
+    expandedDivider: {
+        height: 1,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        marginVertical: 16,
+    },
+    expandedTitle: {
+        fontSize: 16,
+        fontWeight: '700',
+        color: '#fff',
+        marginBottom: 12,
+    },
+    expandedIconRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 16,
+    },
+    expandedIconItem: {
+        alignItems: 'center',
+        gap: 6,
+    },
+    expandedIconCircle: {
+        width: 52,
+        height: 52,
+        borderRadius: 26,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    expandedIconCircleActive: {
+        backgroundColor: '#fff',
+    },
+    expandedIconLabel: {
+        fontSize: 11,
+        color: Colors.textDim,
+        fontWeight: '500',
+    },
+    expandedIconLabelActive: {
+        color: '#fff',
+        fontWeight: '600',
+    },
+    collapseBtn: {
+        alignSelf: 'center',
+        marginTop: 16,
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
 });

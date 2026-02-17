@@ -1,9 +1,9 @@
-import { View, Text, StyleSheet, TouchableOpacity, Image, ImageBackground, TextInput } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image, ImageBackground } from 'react-native';
 import { ArrowUp, ArrowDown, Pause, Blinds, Columns, ChevronUp, ChevronDown } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '../../constants/Colors';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing, withRepeat, runOnJS, useDerivedValue, useAnimatedProps } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming, Easing, withRepeat, runOnJS, useAnimatedReaction } from 'react-native-reanimated';
 import { useEffect, useState } from 'react';
 
 // Assets
@@ -96,35 +96,6 @@ export default function CoverCard({ cover, sensor, onUpdate, needsChange }) {
     const commitPosition = (newPos) => {
         handleAction('set_cover_position', { position: Math.round(newPos) });
     };
-
-    const panGesture = Gesture.Pan()
-        .onStart((e) => {
-            isDragging.value = true;
-            // Store the starting position to apply translation against
-            // We use a clean object for context if needed, but Reanimated context is passed as 2nd arg in useAnimatedGestureHandler
-            // BUT for Gesture.Pan() (new API), we don't have the context object explicitly passed to callbacks in the same way?
-            // Actually, we can just grab current value.
-            // But to use 'translationY' correctly, we need the snapshot of visualPos at start.
-            // We can attach it to the gesture handler context if we use the old API, but with new API:
-            // We can use a shared value or just a variable in the closure? 
-            // Better: use a shared value 'startPos'.
-        })
-        .onUpdate((e) => {
-            // We need the value at start of gesture. 
-            // Since onStart runs once, we can try to rely on 'translationY'.
-            // But we need 'startPos'.
-            // Let's implement a 'startPos' SharedValue specifically for the gesture logic.
-            // OR use 'changeY' safely?
-            // 'changeY' accumulation is prone to drift.
-
-            // Let's use the .onStart context pattern if possible, or just a shared value.
-        })
-    // Wait, the new Gesture API allows context in the callbacks?
-    // .onStart((event, context) => ...) is supported?
-    // documentation says: .onStart((e) => {})
-    // To carry state: use external SharedValues.
-
-    // Redoing Gesture Definition below with context simulation via SharedValue
 
     const dragStartPos = useSharedValue(0);
 
@@ -300,42 +271,23 @@ export default function CoverCard({ cover, sensor, onUpdate, needsChange }) {
 }
 
 // Simple Animated Text Component for % or Open/Closed
-const AnimatedTextInput = Animated.createAnimatedComponent(TextInput);
-
 function AnimatedText({ sharedValue }) {
-    const animatedProps = useAnimatedProps(() => {
-        const val = Math.round(sharedValue.value);
-        let text = `${val}%`;
-        if (val === 0) text = "Closed";
-        if (val >= 100) text = "Open";
-        return {
-            text: text, // This unfortunately doesn't work directly on TextInput 'text' prop on all platforms easily
-            // Actually 'text' prop is not standard for TextInput, it's 'value'. 
-        };
-    });
-
-    // Workaround: We use useAnimatedProps to set the 'text' property of the native view
-    // if using ReText from react-native-redash or similar.
-    // Since we want to stick to standard reanimated:
-    // We'll use a useDerivedValue with runOnJS to update a local state for the text, 
-    // heavily optimized?
-    // Or just use the native `value` prop?
-
-    // Better: use events. 
-    // Actually, Reanimated allows setting `text` on TextInput via animated props in newest versions.
-
-    // Let's try the simpler "runOnJS" approach for now to ensure it works without complex reanimated components.
-    // It might cause some JS thread traffic but it's just one number.
-
     const [text, setText] = useState("");
 
-    useDerivedValue(() => {
-        const val = Math.round(sharedValue.value);
-        let newText = `${val}%`;
-        if (val <= 0) newText = "Closed";
-        if (val >= 100) newText = "Open";
-        runOnJS(setText)(newText);
-    });
+    // useAnimatedReaction is the correct API for side effects from shared values.
+    // Unlike useDerivedValue, it properly handles cleanup on unmount.
+    useAnimatedReaction(
+        () => Math.round(sharedValue.value),
+        (val, prev) => {
+            if (val !== prev) {
+                let newText = `${val}%`;
+                if (val <= 0) newText = "Closed";
+                if (val >= 100) newText = "Open";
+                runOnJS(setText)(newText);
+            }
+        },
+        []
+    );
 
     return (
         <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>

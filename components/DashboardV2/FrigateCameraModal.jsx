@@ -9,9 +9,6 @@ import { Play, Calendar, Video as VideoIcon, Radio } from 'lucide-react-native';
 
 const { width, height } = Dimensions.get('window');
 
-// Get backend URL from environment variable (remove trailing slash to prevent double slashes)
-const BACKEND_URL = process.env.EXPO_PUBLIC_ADMIN_URL?.replace('/api/config', '').replace(/\/$/, '');
-
 const LiveStream = ({ service, cameraName, isMuted, onToggleMute }) => {
     const webViewRef = useRef(null);
 
@@ -345,7 +342,7 @@ export default function FrigateCameraModal({ visible, camera, service, initialVi
                                             ref={videoRef}
                                             key={selectedEvent.id} // Force remount on event change for clean state
                                             source={{
-                                                uri: `${BACKEND_URL}/api/frigate/events/${selectedEvent.id}/clip`
+                                                uri: `${service?.adminUrl}/api/frigate/events/${selectedEvent.id}/clip`
                                             }}
                                             style={styles.cameraFeed}
                                             useNativeControls
@@ -476,6 +473,7 @@ export default function FrigateCameraModal({ visible, camera, service, initialVi
                                             loadingMore={loadingMore}
                                             selectedEventId={selectedEvent?.id}
                                             listRef={scrollViewRef}
+                                            adminUrl={service?.adminUrl}
                                         />
                                     )}
                                 </View>

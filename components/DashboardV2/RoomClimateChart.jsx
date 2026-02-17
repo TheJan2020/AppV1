@@ -4,7 +4,7 @@ import { LineChart } from 'react-native-chart-kit';
 import { Colors } from '../../constants/Colors';
 import { Thermometer, Droplets } from 'lucide-react-native';
 
-export default function RoomClimateChart({ tempEntityId, humidityEntityId }) {
+export default function RoomClimateChart({ tempEntityId, humidityEntityId, adminUrl }) {
     const [chartData, setChartData] = useState(null);
     const [loading, setLoading] = useState(true);
     const [currentTemp, setCurrentTemp] = useState(null);
@@ -13,12 +13,12 @@ export default function RoomClimateChart({ tempEntityId, humidityEntityId }) {
     useEffect(() => {
         if (!tempEntityId && !humidityEntityId) return;
 
+        const controller = new AbortController();
+
         const fetchData = async () => {
             try {
-                // Fetch both
-                const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL;
                 if (!adminUrl) {
-                    console.error("RoomClimateChart: EXPO_PUBLIC_ADMIN_URL is missing");
+                    console.error("RoomClimateChart: adminUrl prop is missing");
                     setLoading(false);
                     return;
                 }
@@ -31,7 +31,7 @@ export default function RoomClimateChart({ tempEntityId, humidityEntityId }) {
                 if (ids.length === 0) return;
 
                 const url = `${baseUrl}api/history?mode=raw&entity_ids=${ids.join(',')}&limit=100`;
-                const res = await fetch(url);
+                const res = await fetch(url, { signal: controller.signal });
                 const json = await res.json();
 
                 if (Array.isArray(json)) {
@@ -104,21 +104,24 @@ export default function RoomClimateChart({ tempEntityId, humidityEntityId }) {
                         }
                     }
 
-                    if (datasets.length > 0) {
-                        setData({
+                    // Filter out any datasets with empty data arrays — LineChart crashes on empty data
+                    const validDatasets = datasets.filter(ds => ds.data && ds.data.length > 0);
+                    if (validDatasets.length > 0 && finalLabels.length > 0) {
+                        setChartData({
                             labels: finalLabels,
-                            datasets
+                            datasets: validDatasets
                         });
                     }
                 }
             } catch (e) {
-                console.log("Error fetching chart data", e);
+                if (e.name !== 'AbortError') console.log("Error fetching chart data", e);
             } finally {
                 setLoading(false);
             }
         };
 
         fetchData();
+        return () => controller.abort();
     }, [tempEntityId, humidityEntityId]);
 
     const displayData = chartData || null;

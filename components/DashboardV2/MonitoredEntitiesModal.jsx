@@ -4,14 +4,12 @@ import { X, Search, Database } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
 import { useState, useEffect } from 'react';
 
-export default function MonitoredEntitiesModal({ visible, onClose }) {
+export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
     const [entities, setEntities] = useState([]);
     const [filteredEntities, setFilteredEntities] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [loading, setLoading] = useState(true);
     const [changedEntities, setChangedEntities] = useState({}); // { entity_id: newStatus }
-
-    const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL;
 
     useEffect(() => {
         if (visible) {

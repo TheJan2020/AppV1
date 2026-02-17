@@ -4,6 +4,7 @@ import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
+import { getAdminUrl } from '../utils/storage';
 
 export default function HistoryPage() {
     const router = useRouter();
@@ -20,7 +21,11 @@ export default function HistoryPage() {
     const [user, setUser] = useState(null);
     const LIMIT = 50;
 
-    const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL;
+    const [adminUrl, setAdminUrl] = useState(null);
+
+    useEffect(() => {
+        getAdminUrl().then(url => setAdminUrl(url));
+    }, []);
 
     // 1. Fetch User (Once)
     useEffect(() => {

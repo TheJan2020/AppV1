@@ -41,8 +41,13 @@ const LiveCamera = ({ cam, service }) => {
     );
 };
 
-export default function CamerasList({ frigateCameras, service, onCameraPress }) {
+export default function CamerasList({ frigateCameras, service, onCameraPress, columns = 2 }) {
     if (!frigateCameras || frigateCameras.length === 0) return null;
+
+    // On tablets (columns > 2), show all cameras in equal-width grid
+    // On phones (columns <= 2), keep original layout: first 2 full-width, rest half-width
+    const isTabletGrid = columns > 2;
+    const tabletWidth = `${Math.floor(100 / columns) - 2}%`;
 
     return (
         <View style={styles.container}>
@@ -54,10 +59,12 @@ export default function CamerasList({ frigateCameras, service, onCameraPress }) 
                         onPress={() => onCameraPress && onCameraPress(cam)}
                         style={[
                             styles.gridItem,
-                            // First 2 cameras: full width (1 per row)
-                            index < 2 && styles.fullWidth,
-                            // Rest: 2 per row (50% width)
-                            index >= 2 && styles.halfWidth
+                            isTabletGrid
+                                ? { width: tabletWidth }
+                                : [
+                                    index < 2 && styles.fullWidth,
+                                    index >= 2 && styles.halfWidth
+                                ]
                         ]}
                     >
                         <LiveCamera cam={cam} service={service} />

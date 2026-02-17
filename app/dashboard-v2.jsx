@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState, useEffect, useMemo } from 'react';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
 
@@ -23,6 +23,8 @@ import DraggableRoomList from '../components/DashboardV2/DraggableRoomList';
 import CamerasList from '../components/DashboardV2/CamerasList';
 import HACamerasList from '../components/DashboardV2/HACamerasList';
 import TabBar from '../components/DashboardV2/TabBar';
+import TabletSidebar from '../components/DashboardV2/TabletSidebar';
+import useDeviceType from '../hooks/useDeviceType';
 import RoomSheet from '../components/DashboardV2/RoomSheet';
 import OpacitySettingsModal from '../components/DashboardV2/OpacitySettingsModal';
 import SlideAction from '../components/DashboardV2/SlideAction';
@@ -32,10 +34,13 @@ import { LockOpen } from 'lucide-react-native';
 
 import { FrigateService } from '../services/frigate';
 import * as SecureStore from 'expo-secure-store';
+import { startHeartbeat, stopHeartbeat, updateAppState } from '../services/heartbeat';
+import { getRoomEntities } from '../utils/roomHelpers';
 
 export default function DashboardV2() {
     const router = useRouter();
-    const { userName } = useLocalSearchParams();
+    const { userName, userId } = useLocalSearchParams();
+    const { isTablet, isLandscape, columns } = useDeviceType();
 
     // Config State
     const [connectionConfig, setConnectionConfig] = useState({
@@ -67,6 +72,7 @@ export default function DashboardV2() {
     const [autoRoomVisit, setAutoRoomVisit] = useState(true);
     const [autoRoomResume, setAutoRoomResume] = useState(true);
     const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
+    const [showPreferenceButton, setShowPreferenceButton] = useState(true);
 
 
     // Room Reordering State
@@ -85,6 +91,9 @@ export default function DashboardV2() {
         });
         SecureStore.getItemAsync('settings_show_voice_assistant').then(val => {
             if (val !== null) setShowVoiceAssistant(val === 'true');
+        });
+        SecureStore.getItemAsync('settings_show_preference_button').then(val => {
+            if (val !== null) setShowPreferenceButton(val === 'true');
         });
         // Load Room Order
         SecureStore.getItemAsync('room_reorder_config').then(val => {
@@ -143,21 +152,45 @@ export default function DashboardV2() {
     const [registryDevices, setRegistryDevices] = useState([]);
     const [registryEntities, setRegistryEntities] = useState([]);
     const [registryAreas, setRegistryAreas] = useState([]);
+    const [registryCategories, setRegistryCategories] = useState([]);
     const [registryFloors, setRegistryFloors] = useState([]);
     const [selectedFloor, setSelectedFloor] = useState(null);
     const [alertRules, setAlertRules] = useState([]);
     const [lightMappings, setLightMappings] = useState([]);
     const [mediaMappings, setMediaMappings] = useState([]);
+    const [allowedQuickScenes, setAllowedQuickScenes] = useState([]);
+    const [sensorMappings, setSensorMappings] = useState([]);
+
+    const mappingsAbortRef = useRef(null);
 
     const fetchMappings = () => {
         if (!connectionConfig.loaded || !connectionConfig.adminUrl) return;
+
+        // Abort any in-flight mapping requests
+        if (mappingsAbortRef.current) mappingsAbortRef.current.abort();
+        const controller = new AbortController();
+        mappingsAbortRef.current = controller;
+
         const adminUrl = connectionConfig.adminUrl;
         const baseUrl = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
 
-        // 1. Lights
+        // 1. Quick Scenes (New)
+        const qsUrl = `${baseUrl}api/quick-scenes?t=${Date.now()}`;
+        console.log('[Dashboard] Fetching Quick Scenes...');
+        fetch(qsUrl, { signal: controller.signal })
+            .then(res => res.json())
+            .then(data => {
+                if (Array.isArray(data)) {
+                    console.log('[Quick Scenes] Loaded:', data.length);
+                    setAllowedQuickScenes(data.map(s => s.entity_id));
+                }
+            })
+            .catch(e => { if (e.name !== 'AbortError') console.log("[Quick Scenes] Error:", e); });
+
+        // 2. Lights
         const lightsUrl = `${baseUrl}api/monitored-entities?type=light&t=${Date.now()}`;
         console.log('[Dashboard] Fetching light mappings...');
-        fetch(lightsUrl)
+        fetch(lightsUrl, { signal: controller.signal })
             .then(res => res.json())
             .then(data => {
                 if (Array.isArray(data)) {
@@ -165,12 +198,12 @@ export default function DashboardV2() {
                     setLightMappings(data);
                 }
             })
-            .catch(e => console.log("[Light Mappings] Error:", e));
+            .catch(e => { if (e.name !== 'AbortError') console.log("[Light Mappings] Error:", e); });
 
-        // 2. Media
+        // 3. Media
         const mediaUrl = `${baseUrl}api/monitored-entities?type=media_player&t=${Date.now()}`;
         console.log('[Dashboard] Fetching media mappings...');
-        fetch(mediaUrl)
+        fetch(mediaUrl, { signal: controller.signal })
             .then(res => res.json())
             .then(data => {
                 if (Array.isArray(data)) {
@@ -178,8 +211,35 @@ export default function DashboardV2() {
                     setMediaMappings(data);
                 }
             })
-            .catch(e => console.log("[Media Mappings] Error:", e));
+            .catch(e => { if (e.name !== 'AbortError') console.log("[Media Mappings] Error:", e); });
+
+        // 4. Sensors
+        const sensorUrl = `${baseUrl}api/sensors?t=${Date.now()}`;
+        console.log('[Dashboard] Fetching sensor mappings...');
+        fetch(sensorUrl, { signal: controller.signal })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success && Array.isArray(data.sensors)) {
+                    console.log(`[Sensor Mappings] Loaded: ${data.sensors.length}`);
+                    setSensorMappings(data.sensors);
+                }
+            })
+            .catch(e => { if (e.name !== 'AbortError') console.log("Sensor Mappings Error", e); });
     };
+
+    // ... (rest of useEffects)
+
+    const quickScenesData = useMemo(() => {
+        if (!allowedQuickScenes || allowedQuickScenes.length === 0) return [];
+
+        return allowedQuickScenes
+            .map(id => entities.find(e => e.entity_id === id))
+            .filter(e => e) // Filter out undefined if entity not found in HA
+            .map(e => ({
+                id: e.entity_id,
+                label: e.attributes?.friendly_name || e.entity_id,
+            }));
+    }, [entities, allowedQuickScenes]);
 
     useEffect(() => {
         fetchMappings();
@@ -206,29 +266,31 @@ export default function DashboardV2() {
         // ... (Admin Config Fetch remains) ...
         console.log('DEBUG: Fetching Admin Config from:', adminUrl);
 
+        const configAbort = new AbortController();
+
         if (adminUrl) {
             // Append /api/config if not present (assuming env var is base URL)
             const configUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/config` : `${adminUrl}/api/config`) + `?t=${Date.now()}`;
-            fetch(configUrl, { method: 'GET', headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } })
+            fetch(configUrl, { method: 'GET', headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }, signal: configAbort.signal })
                 .then(res => res.json())
                 .then(data => {
                     console.log('DEBUG: Fetched Admin Config Keys:', Object.keys(data));
                     setBadgeConfig(data);
                 })
-                .catch(err => console.log('DEBUG: Error loading admin config:', err));
+                .catch(err => { if (err.name !== 'AbortError') console.log('DEBUG: Error loading admin config:', err); });
 
             // Fetch Alert Rules
             const alertUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/alerts` : `${adminUrl}/api/alerts`) + `?t=${Date.now()}`;
-            fetch(alertUrl)
+            fetch(alertUrl, { signal: configAbort.signal })
                 .then(res => res.json())
                 .then(data => {
                     if (data.success) setAlertRules(data.rules);
                 })
-                .catch(e => console.log("Alert Rules Error", e));
+                .catch(e => { if (e.name !== 'AbortError') console.log("Alert Rules Error", e); });
 
             // Fetch Room Tracking Lookup
             const roomTrackingUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/room-tracking/lookup` : `${adminUrl}/api/room-tracking/lookup`);
-            fetch(roomTrackingUrl)
+            fetch(roomTrackingUrl, { signal: configAbort.signal })
                 .then(res => res.json())
                 .then(data => {
                     if (data.success) {
@@ -236,8 +298,19 @@ export default function DashboardV2() {
                         setRoomTrackingLookup(data.lookup);
                     }
                 })
-                .catch(e => console.log("[Room Tracking] Error loading lookup:", e));
+                .catch(e => { if (e.name !== 'AbortError') console.log("[Room Tracking] Error loading lookup:", e); });
 
+            // Fetch Sensor Mappings
+            const sensorUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/sensors` : `${adminUrl}/api/sensors`);
+            fetch(sensorUrl, { signal: configAbort.signal })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success) {
+                        console.log(`[Sensors] Loaded ${data.sensors.length} mappings`);
+                        setSensorMappings(data.sensors);
+                    }
+                })
+                .catch(e => { if (e.name !== 'AbortError') console.log("Sensor Mappings Error", e); });
 
         }
 
@@ -262,6 +335,10 @@ export default function DashboardV2() {
                     });
                     service.current.getEntityRegistry().then(regs => {
                         setRegistryEntities(regs || []);
+                    });
+                    service.current.getCategoryRegistry().then(cats => {
+                        console.log('[Dashboard] Loaded Categories:', cats ? cats.length : 0);
+                        setRegistryCategories(cats || []);
                     });
                     service.current.getAreaRegistry().then(areas => {
                         if (areas && areas.length > 0) {
@@ -295,12 +372,8 @@ export default function DashboardV2() {
             });
         }
 
-        // 3. Connect to Frigate
-        const frigateUrl = process.env.EXPO_PUBLIC_FRIGATE_URL || 'http://192.168.100.18:5000';
-        const frigateUser = process.env.EXPO_PUBLIC_FRIGATE_USER || null;
-        const frigatePass = process.env.EXPO_PUBLIC_FRIGATE_PASS || null;
-
-        frigateService.current = new FrigateService(frigateUrl, frigateUser, frigatePass);
+        // 3. Connect to Frigate (proxied through admin backend)
+        frigateService.current = new FrigateService('', null, null, connectionConfig.adminUrl);
 
         frigateService.current.getConfig().then(config => {
             if (config && config.cameras) {
@@ -315,6 +388,8 @@ export default function DashboardV2() {
         });
 
         return () => {
+            configAbort.abort();
+            if (mappingsAbortRef.current) mappingsAbortRef.current.abort();
             if (service.current) {
                 if (service.current.disconnect) {
                     service.current.disconnect();
@@ -363,12 +438,11 @@ export default function DashboardV2() {
                     if (type === 'lights') return e.entity_id.startsWith('light.') && e.state === 'on';
                     if (type === 'ac') return e.entity_id.startsWith('climate.') && e.state !== 'off' && e.state !== 'unavailable';
                     if (type === 'doors') {
-                        const isDoor = e.entity_id.startsWith('sensor.door_');
-                        if (isDoor) {
-                            const s = e.state.toLowerCase();
-                            const isActive = s === 'open' || s === 'on' || s === 'true' || s === '1';
-                            if (!isActive) console.log(`[Door Debug] Ignored ${e.entity_id} with state '${e.state}'`);
-                            return isActive;
+                        // Use explicit mapping only
+                        const mapping = sensorMappings.find(m => m.entity_id === e.entity_id);
+                        if (mapping && mapping.sensorType === 'door') {
+                            // in the modal, we want ALL doors, not just open ones
+                            return true;
                         }
                         return false;
                     }
@@ -392,7 +466,7 @@ export default function DashboardV2() {
         let title = '';
         if (activeBadgeType === 'lights') title = 'Active Lights';
         if (activeBadgeType === 'ac') title = 'Active ACs';
-        if (activeBadgeType === 'doors') title = 'Open Doors';
+        if (activeBadgeType === 'doors') title = 'All Doors';
 
         return {
             title,
@@ -418,22 +492,14 @@ export default function DashboardV2() {
     const activeACGrouped = getAllActiveDevices('ac');
     const acOn = activeACGrouped.reduce((sum, group) => sum + group.data.length, 0);
 
-    const activeDoorsGrouped = getAllActiveDevices('doors');
-    // Global scan for doors to ensure accuracy
+    // Count OPEN doors specifically for the badge number
     const doorsOpen = entities.filter(e => {
-        const isSensorDoor = e.entity_id.startsWith('sensor.door_');
-        const isBinaryDoor = e.entity_id.startsWith('binary_sensor.') && (
-            e.attributes?.device_class === 'door' ||
-            e.attributes?.device_class === 'garage' ||
-            e.attributes?.device_class === 'window' ||
-            e.attributes?.device_class === 'opening' ||
-            e.entity_id.includes('door')
-        );
-
-        if (!isSensorDoor && !isBinaryDoor) return false;
-
-        const s = e.state.toLowerCase();
-        return s === 'open' || s === 'on' || s === 'true' || s === '1';
+        const mapping = sensorMappings.find(m => m.entity_id === e.entity_id);
+        if (mapping && mapping.sensorType === 'door') {
+            const s = e.state.toLowerCase();
+            return s === 'open' || s === 'on' || s === 'true' || s === '1';
+        }
+        return false;
     }).length;
 
     // Power and Security still single entities for now
@@ -471,26 +537,22 @@ export default function DashboardV2() {
     // Refactored check logic for re-use
     // isResume: Boolean, true if triggered by App Resume
     const checkPresence = (isResume = false) => {
-        console.log('[Auto-Room] checkPresence called. isResume:', isResume, 'userName:', userName, 'roomsCount:', roomsWithCounts.length);
+        // console.log('[Auto-Room] checkPresence called. isResume:', isResume, 'userName:', userName, 'roomsCount:', roomsWithCounts.length);
 
         if (!roomsWithCounts.length || !userName) {
-            console.log('[Auto-Room] Early exit - no rooms or userName');
+            // console.log('[Auto-Room] Early exit - no rooms or userName');
             return;
         }
 
         // Check Settings
         const shouldRun = isResume ? autoRoomResume : autoRoomVisit;
-        console.log('[Auto-Room] Setting check:', isResume ? 'autoRoomResume' : 'autoRoomVisit', '=', shouldRun);
+        // console.log('[Auto-Room] Setting check:', isResume ? 'autoRoomResume' : 'autoRoomVisit', '=', shouldRun);
         if (!shouldRun) {
-            console.log('[Auto-Room] Feature disabled by settings');
             return;
         }
 
         // 1. Find User's Tracked Device Sensor
-        // Look for tracked device sensor that includes the username
-        // e.g., sensor.zeyad_iphone_room for userName "Zeyad"
         const safeUserName = userName.toLowerCase().replace(/ /g, '_');
-        console.log('[Auto-Room] Looking for sensor matching user:', safeUserName);
 
         // First try to find sensor with "room" in the name
         let tracker = entities.find(e =>
@@ -508,10 +570,7 @@ export default function DashboardV2() {
             );
         }
 
-        console.log('[Auto-Room] Tracker sensor:', tracker?.entity_id, 'state:', tracker?.state);
-
-        if (!tracker) {
-            console.log('[Auto-Room] Tracker sensor not found for user:', safeUserName);
+        if (!tracker || !tracker.state) {
             return;
         }
 
@@ -523,11 +582,10 @@ export default function DashboardV2() {
         }
         lastTrackerStateRef.current = currentState;
 
-        console.log('[Auto-Room] Current state:', currentState);
+        console.log('[Auto-Room] New Tracker State:', currentState);
 
         // Ignore generic states
         if (['home', 'not_home', 'unknown', 'unavailable', 'away', 'none'].includes(currentState)) {
-            console.log('[Auto-Room] State is generic, ignoring');
             if (lastActiveRoomRef.current) {
                 lastActiveRoomRef.current = null;
             }
@@ -552,12 +610,17 @@ export default function DashboardV2() {
         if (foundRoom) {
             // Trigger if room changed OR if we just forced a check (e.g. app resume) and want to show it
             if (lastActiveRoomRef.current !== foundRoom.area_id) {
-                console.log(`[Auto-Room] ✅ Opening room sheet: ${foundRoom.name}. Resume: ${isResume}`);
-                lastActiveRoomRef.current = foundRoom.area_id;
+                // Don't open if sheet is already visible and animating
+                if (roomSheetVisible && !isResume) {
+                    console.log('[Auto-Room] Sheet already visible, skipping');
+                } else {
+                    console.log(`[Auto-Room] ✅ Opening room sheet: ${foundRoom.name}. Resume: ${isResume}`);
+                    lastActiveRoomRef.current = foundRoom.area_id;
 
-                setSelectedRoom(foundRoom);
-                setRoomSheetVisible(true);
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                    setSelectedRoom(foundRoom);
+                    setRoomSheetVisible(true);
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                }
             } else {
                 console.log('[Auto-Room] Already in this room, not re-opening');
             }
@@ -593,6 +656,9 @@ export default function DashboardV2() {
                 fetchMappings();
             }
             appState.current = nextAppState;
+
+            // Update heartbeat app state
+            updateAppState(nextAppState === 'active' ? 'foreground' : 'background');
         });
 
         return () => {
@@ -600,6 +666,13 @@ export default function DashboardV2() {
         };
     }, [entities, roomsWithCounts, userName, autoRoomResume]);
 
+    // Heartbeat for user session tracking
+    useEffect(() => {
+        if (connectionConfig.loaded && connectionConfig.adminUrl && userId) {
+            startHeartbeat(connectionConfig.adminUrl, userId, userName);
+        }
+        return () => stopHeartbeat();
+    }, [connectionConfig.loaded, connectionConfig.adminUrl, userId, userName]);
 
     const callService = (domain, serviceName, serviceData) => {
         if (service.current) {
@@ -610,8 +683,12 @@ export default function DashboardV2() {
 
     const handleScenePress = (sceneId) => {
         console.log('Scene pressed:', sceneId);
-        // TODO: Implement actual scene activation via HAService
+        const domain = sceneId.split('.')[0];
+        callService(domain, 'turn_on', { entity_id: sceneId });
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     };
+
+
 
     const handleVoiceCommand = async (command) => {
         console.log('[Dashboard] Voice command:', command);
@@ -622,7 +699,7 @@ export default function DashboardV2() {
 
     const handleRoomPress = (room) => {
         if (activeTab === 'rooms') {
-            // Navigate to new Room Page
+            // Rooms tab: Navigate to room page
             router.push({
                 pathname: '/room',
                 params: {
@@ -632,7 +709,7 @@ export default function DashboardV2() {
                 }
             });
         } else {
-            // Show Modal Popup (Home tab)
+            // Home tab: Show Modal Popup
             setSelectedRoom(room);
             setRoomSheetVisible(true);
         }
@@ -680,7 +757,25 @@ export default function DashboardV2() {
 
         if (!sourceAreas || sourceAreas.length === 0) return [];
 
+        // Helper: Resolve the best display name for an area
+        // HA area registry confirmed returns proper friendly names (e.g. "Master Bedroom" for area_id "bedroom")
+        const resolveDisplayName = (areaId, currentName) => {
+            // 1. Check HA registry for the canonical friendly name
+            const regArea = registryAreas.find(ra => ra.area_id === areaId);
+            if (regArea?.name) return regArea.name;
+            // 2. Check config selected_areas for a user-defined friendly name
+            const configArea = badgeConfig?.selected_areas?.find(sa => sa.area_id === areaId);
+            if (configArea?.name) return configArea.name;
+            // 3. If currentName exists and differs from area_id, use it
+            if (currentName && currentName !== areaId) return currentName;
+            // 4. Last resort: format the area_id (replace underscores, title case)
+            return (areaId || '')
+                .replace(/_/g, ' ')
+                .replace(/\b\w/g, c => c.toUpperCase());
+        };
+
         const computedRooms = sourceAreas.map(area => {
+            // Restore areaRegEntries for device count and raw access
             const areaDevices = registryDevices.filter(d => d.area_id === area.area_id);
             const areaDeviceIds = areaDevices.map(d => d.id);
             const areaRegEntries = registryEntities.filter(re => {
@@ -689,47 +784,28 @@ export default function DashboardV2() {
                 return directMatch || deviceMatch;
             });
 
-            // Calculate active states
-            const activeLights = areaRegEntries.filter(re => {
-                if (!re.entity_id.startsWith('light.')) return false;
-                const stateObj = entities.find(e => e.entity_id === re.entity_id);
-                return stateObj && stateObj.state === 'on';
+            // Use the sophisticated helper with Sensor Mappings
+            const roomEntities = getRoomEntities(area, registryDevices, registryEntities, entities, sensorMappings);
+
+            // Active Counts using processed entities
+            const activeLights = roomEntities.lights.filter(l => l.stateObj.state === 'on').length;
+
+            const activeAC = roomEntities.climates.filter(c => {
+                const s = c.stateObj?.state;
+                return s && s !== 'off' && s !== 'unavailable';
             }).length;
 
-            const activeAC = areaRegEntries.filter(re => {
-                if (!re.entity_id.startsWith('climate.')) return false;
-                const stateObj = entities.find(e => e.entity_id === re.entity_id);
-                return stateObj && stateObj.state !== 'off' && stateObj.state !== 'unavailable';
+            const activeCovers = roomEntities.covers.filter(c => {
+                const s = c.stateObj?.state;
+                const pos = c.stateObj?.attributes?.current_position;
+                return s && (s === 'open' || (pos && pos > 0));
             }).length;
 
-            const activeCovers = areaRegEntries.filter(re => {
-                if (!re.entity_id.startsWith('cover.')) return false;
-                const stateObj = entities.find(e => e.entity_id === re.entity_id);
-                return stateObj && (stateObj.state === 'open' || (stateObj.attributes?.current_position && stateObj.attributes.current_position > 0));
-            }).length;
-
-            const activeDoors = areaRegEntries.filter(re => {
-                const stateObj = entities.find(e => e.entity_id === re.entity_id);
-                if (!stateObj) return false;
-
-                // Check sensor.door_* OR binary_sensor doors
-                const isSensorDoor = re.entity_id.startsWith('sensor.door_');
-                const isBinaryDoor = re.entity_id.startsWith('binary_sensor.') && (
-                    stateObj.attributes?.device_class === 'door' ||
-                    stateObj.attributes?.device_class === 'garage' ||
-                    stateObj.attributes?.device_class === 'window' ||
-                    stateObj.attributes?.device_class === 'opening' ||
-                    re.entity_id.includes('door')
-                );
-
-                if (isSensorDoor || isBinaryDoor) {
-                    const s = stateObj.state.toLowerCase();
-                    const isActive = s === 'open' || s === 'on' || s === 'true' || s === '1';
-                    // console.log(`[RoomCount Debug] ${re.entity_id} state='${stateObj.state}' isActive=${isActive}`);
-                    return isActive;
-                }
-
-                return false;
+            // Doors now respect sensorType from getRoomEntities
+            const activeDoors = roomEntities.doors.filter(d => {
+                const s = d.stateObj?.state?.toLowerCase();
+                if (!s) return false;
+                return s === 'open' || s === 'on' || s === 'true' || s === '1';
             }).length;
 
             const hasPresenceSensor = areaRegEntries.some(re =>
@@ -738,12 +814,14 @@ export default function DashboardV2() {
 
             return {
                 ...area,
+                name: resolveDisplayName(area.area_id, area.name),
                 deviceCount: areaRegEntries.length,
                 activeLights,
                 activeAC,
                 activeCovers,
                 activeDoors,
-                hasPresenceSensor
+                hasPresenceSensor,
+                _entities: roomEntities // Optional: cache if needed
             };
         });
 
@@ -763,19 +841,62 @@ export default function DashboardV2() {
         return computedRooms;
     };
 
-    const roomsWithCounts = getRoomsWithCounts();
+    const roomsWithCounts = useMemo(() => getRoomsWithCounts(), [
+        badgeConfig,
+        registryAreas,
+        registryDevices,
+        registryEntities,
+        entities,
+        sensorMappings,
+        savedRoomOrder
+    ]);
 
     const handleRoomReorder = (data) => {
-        // Optimistic update (although derived state helps)
-        const newOrder = data.map(r => r.area_id);
-        setSavedRoomOrder(newOrder);
-        SecureStore.setItemAsync('room_reorder_config', JSON.stringify(newOrder));
+        // IDs of the rooms in their new order
+        const reorderedIds = data.map(r => r.area_id);
+
+        // Update Saved Order
+        setSavedRoomOrder(prev => {
+            // Start with the existing full order or use the current list if none exists
+            const currentFullOrder = prev && prev.length > 0 ? [...prev] : registryAreas.map(a => a.area_id);
+
+            // Build a set of IDs from the reordered group for quick lookup
+            const reorderedSet = new Set(reorderedIds);
+
+            // Find the active indices in the full list that correspond to the items being reordered
+            // We only care about the relative position of the items that were actually visible/draggable
+            const indicesToUpdate = [];
+            currentFullOrder.forEach((id, index) => {
+                if (reorderedSet.has(id)) {
+                    indicesToUpdate.push(index);
+                }
+            });
+
+            // If mismatch (e.g. first time save), just use the reordered IDs + rest
+            if (indicesToUpdate.length !== reorderedIds.length) {
+                const others = currentFullOrder.filter(id => !reorderedSet.has(id));
+                const newOrder = [...reorderedIds, ...others];
+                SecureStore.setItemAsync('room_reorder_config', JSON.stringify(newOrder));
+                return newOrder;
+            }
+
+            // Place the new order into the found slots
+            const newOrder = [...currentFullOrder];
+            indicesToUpdate.forEach((originalIndex, i) => {
+                newOrder[originalIndex] = reorderedIds[i]; // reorderedIds is already in the new visual order
+            });
+
+            SecureStore.setItemAsync('room_reorder_config', JSON.stringify(newOrder));
+            return newOrder;
+        });
     };
+
+    const sidebarPadding = isLandscape ? { paddingLeft: 80 } : {};
 
     const renderContent = () => {
         if (activeTab === 'home') {
             return (
-                <ScrollView contentContainerStyle={styles.content}>
+                <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
                     <HeaderV2
                         weather={weather}
                         cityName={cityName}
@@ -795,9 +916,10 @@ export default function DashboardV2() {
                     <View style={styles.divider} />
 
                     {/* Person Status */}
-                    {showFamily && <PersonBadges entities={entities} alertRules={alertRules} />}
+                    {showFamily && <PersonBadges entities={entities} alertRules={alertRules} haUrl={connectionConfig.url} />}
 
                     <QuickScenes
+                        scenes={quickScenesData}
                         onScenePress={handleScenePress}
                     />
 
@@ -929,34 +1051,69 @@ export default function DashboardV2() {
 
 
                     {/* Dynamic Lock Sliders */}
-                    {entities.some(e => e.entity_id.startsWith('lock.')) && (
-                        <View style={styles.sliderRow}>
-                            {entities
-                                .filter(e => e.entity_id.startsWith('lock.'))
-                                .map(lock => {
-                                    const isUnlocked = lock.state === 'unlocked' || lock.state === 'open';
-                                    const name = lock.attributes.friendly_name || lock.entity_id;
+                    {entities.filter(e => {
+                        if (!e.entity_id.startsWith('lock.')) return false;
+                        const reg = registryEntities.find(re => re.entity_id === e.entity_id);
+                        if (!reg) return false;
 
-                                    return (
-                                        <View key={lock.entity_id} style={styles.sliderContainer}>
-                                            {isUnlocked ? (
-                                                <View style={[styles.statusCard, { backgroundColor: '#EF5350' }]}>
-                                                    <LockOpen size={24} color="#fff" />
-                                                    <Text style={styles.statusText}>Unlocked</Text>
-                                                </View>
-                                            ) : (
-                                                <SlideAction
-                                                    label={`Unlock ${name}`}
-                                                    icon={LockOpen}
-                                                    color="#8947ca"
-                                                    onSlide={() => callService('lock', 'unlock', { entity_id: lock.entity_id })}
-                                                />
-                                            )}
-                                        </View>
-                                    );
-                                })}
-                        </View>
-                    )}
+                        // Only show locks that belong to rooms we are actually displaying
+                        const activeRoomIds = roomsWithCounts.map(r => r.area_id);
+
+                        let areaId = reg.area_id;
+                        if (!areaId && reg.device_id) {
+                            const dev = registryDevices.find(d => d.id === reg.device_id);
+                            areaId = dev?.area_id;
+                        }
+
+                        return areaId && activeRoomIds.includes(areaId);
+                    }).length > 0 && (
+                            <View style={styles.sliderRow}>
+                                {entities
+                                    .filter(e => {
+                                        if (!e.entity_id.startsWith('lock.')) return false;
+                                        const reg = registryEntities.find(re => re.entity_id === e.entity_id);
+                                        if (!reg) return false;
+
+                                        const activeRoomIds = roomsWithCounts.map(r => r.area_id);
+
+                                        let areaId = reg.area_id;
+                                        if (!areaId && reg.device_id) {
+                                            const dev = registryDevices.find(d => d.id === reg.device_id);
+                                            areaId = dev?.area_id;
+                                        }
+
+                                        return areaId && activeRoomIds.includes(areaId);
+                                    })
+                                    .map(lock => {
+                                        const isUnlocked = lock.state === 'unlocked' || lock.state === 'open';
+                                        const name = lock.attributes.friendly_name || lock.entity_id;
+
+                                        return (
+                                            <View key={lock.entity_id} style={styles.sliderContainer}>
+                                                {isUnlocked ? (
+                                                    <TouchableOpacity
+                                                        style={[styles.statusCard, { backgroundColor: '#FF7043' }]}
+                                                        onPress={() => {
+                                                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                                                            callService('lock', 'lock', { entity_id: lock.entity_id });
+                                                        }}
+                                                    >
+                                                        <LockOpen size={24} color="#fff" />
+                                                        <Text style={styles.statusText}>Unlocked</Text>
+                                                    </TouchableOpacity>
+                                                ) : (
+                                                    <SlideAction
+                                                        label={`Unlock ${name}`}
+                                                        icon={LockOpen}
+                                                        color="#8947ca"
+                                                        onSlide={() => callService('lock', 'unlock', { entity_id: lock.entity_id })}
+                                                    />
+                                                )}
+                                            </View>
+                                        );
+                                    })}
+                            </View>
+                        )}
 
                     <RoomsList
                         rooms={roomsWithCounts}
@@ -966,20 +1123,24 @@ export default function DashboardV2() {
                         overlayOpacity={cardOpacity}
                         overlayColor={cardColor}
                         onSettingsPress={() => setSettingsModalVisible(true)}
+                        layout={isTablet ? 'grid' : 'horizontal'}
+                        columns={columns}
+                        haUrl={connectionConfig.url}
+                        haToken={connectionConfig.token}
+                        sensorMappings={sensorMappings}
                     />
 
 
-                    {/* Standard HA Cameras for Home Tab */}
-                    <HACamerasList
+                    {/* TEMPORARILY DISABLED — testing if cameras cause crash */}
+                    {/* <HACamerasList
                         cameras={entities.filter(e => e.entity_id.startsWith('camera.'))}
                         allEntities={entities}
                         haUrl={connectionConfig.url}
                         haToken={connectionConfig.token}
                         onCameraPress={(cam) => {
-                            // Can add a modal for HA cameras here later if needed
                             console.log('HA Camera Pressed:', cam.entity_id);
                         }}
-                    />
+                    /> */}
                 </ScrollView>
             );
         }
@@ -993,13 +1154,12 @@ export default function DashboardV2() {
                 if (availableFloors.length === 0) return true;
                 if (!selectedFloor) return true;
 
-                // Allow matching by direct floor_id or alias if needed, but registry uses floor_id
                 const areaFloorId = area ? (area.floor_id || area.floor) : null;
                 return areaFloorId === selectedFloor;
             });
 
-            return (
-                <View style={[styles.content, { paddingHorizontal: 20, marginTop: 60, paddingBottom: 100, flex: 1 }]}>
+            const roomsContent = (
+                <>
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                         <Text style={styles.sectionTitle}>Rooms</Text>
                         <TouchableOpacity onPress={() => setIsReorderMode(!isReorderMode)}>
@@ -1020,7 +1180,6 @@ export default function DashboardV2() {
                         </View>
                     ) : (
                         <>
-                            {/* Floor Selector - Hide in reorder mode to avoid confusion */}
                             {availableFloors.length > 0 && (
                                 <View style={{ flexDirection: 'row', marginBottom: 20, gap: 10 }}>
                                     {availableFloors.map(floor => (
@@ -1054,22 +1213,33 @@ export default function DashboardV2() {
                                 overlayColor={cardColor}
                                 onSettingsPress={() => setSettingsModalVisible(true)}
                                 layout="grid"
+                                columns={columns}
+                                haUrl={connectionConfig.url}
+                                haToken={connectionConfig.token}
+                                sensorMappings={sensorMappings}
                             />
                         </>
                     )}
+                </>
+            );
+
+            return (
+                <View style={[styles.content, { paddingHorizontal: 20, marginTop: 60, paddingBottom: 100, flex: 1 }, isLandscape && sidebarPadding]}>
+                    {roomsContent}
                 </View>
             );
         }
 
         if (activeTab === 'cctv') {
             return (
-                <ScrollView contentContainerStyle={styles.content}>
+                <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
                     <View style={{ marginTop: 60 }}>
                         <Text style={styles.sectionTitle}>Security Cameras</Text>
                         <CamerasList
                             frigateCameras={frigateCameras}
                             service={frigateService.current}
                             onCameraPress={handleFrigateCameraPress}
+                            columns={columns}
                         />
                     </View>
                 </ScrollView>
@@ -1078,39 +1248,46 @@ export default function DashboardV2() {
 
         if (activeTab === 'ai') {
             return (
-                <BrainView
-                    entities={entities}
-                    callService={callService}
-                    registryDevices={registryDevices}
-                    registryEntities={registryEntities}
-                    registryAreas={registryAreas}
-                    onExit={() => setActiveTab('home')}
-                    haUrl={connectionConfig.url}
-                    haToken={connectionConfig.token}
-                />
+                <View style={[{ flex: 1 }, isLandscape && sidebarPadding]}>
+                    <BrainView
+                        entities={entities}
+                        callService={callService}
+                        registryDevices={registryDevices}
+                        registryEntities={registryEntities}
+                        registryAreas={registryAreas}
+                        onExit={() => setActiveTab('home')}
+                        haUrl={connectionConfig.url}
+                        haToken={connectionConfig.token}
+                    />
+                </View>
             );
         }
 
         if (activeTab === 'settings') {
             return (
-                <SettingsView
-                    areas={(badgeConfig?.selected_areas && badgeConfig.selected_areas.length > 0) ? badgeConfig.selected_areas : registryAreas}
-                    entities={entities}
-                    registryDevices={registryDevices}
-                    registryEntities={registryEntities}
-                    showFamily={showFamily}
-                    autoRoomVisit={autoRoomVisit}
-                    autoRoomResume={autoRoomResume}
-                    showVoiceAssistant={showVoiceAssistant}
-                    onSettingChange={(key, val) => {
-                        if (key === 'showFamily') setShowFamily(val);
-                        if (key === 'autoRoomVisit') setAutoRoomVisit(val);
-                        if (key === 'autoRoomResume') setAutoRoomResume(val);
-                        if (key === 'showVoiceAssistant') setShowVoiceAssistant(val);
-                    }}
-                    onPlayMedia={() => setShowYoutubeLauncher(true)}
-                    onNetwork={() => setShowNetworkModal(true)}
-                />
+                <View style={[{ flex: 1 }, isLandscape && sidebarPadding]}>
+                    <SettingsView
+                        areas={(badgeConfig?.selected_areas && badgeConfig.selected_areas.length > 0) ? badgeConfig.selected_areas : registryAreas}
+                        entities={entities}
+                        registryDevices={registryDevices}
+                        registryEntities={registryEntities}
+                        showFamily={showFamily}
+                        autoRoomVisit={autoRoomVisit}
+                        autoRoomResume={autoRoomResume}
+                        showVoiceAssistant={showVoiceAssistant}
+                        showPreferenceButton={showPreferenceButton}
+                        adminUrl={connectionConfig.adminUrl}
+                        onSettingChange={(key, val) => {
+                            if (key === 'showFamily') setShowFamily(val);
+                            if (key === 'autoRoomVisit') setAutoRoomVisit(val);
+                            if (key === 'autoRoomResume') setAutoRoomResume(val);
+                            if (key === 'showVoiceAssistant') setShowVoiceAssistant(val);
+                            if (key === 'showPreferenceButton') setShowPreferenceButton(val);
+                        }}
+                        onPlayMedia={() => setShowYoutubeLauncher(true)}
+                        onNetwork={() => setShowNetworkModal(true)}
+                    />
+                </View>
             );
         }
 
@@ -1126,81 +1303,108 @@ export default function DashboardV2() {
             />
             <StatusBar style="light" />
 
-            <SecurityControlModal
-                visible={securityModalVisible}
-                onClose={() => setSecurityModalVisible(false)}
-                entity={entities.find(e => e.entity_id.startsWith('alarm_control_panel.'))}
-                onCallService={callService}
-            />
+            {securityModalVisible && (
+                <SecurityControlModal
+                    visible={securityModalVisible}
+                    onClose={() => setSecurityModalVisible(false)}
+                    entity={entities.find(e => e.entity_id.startsWith('alarm_control_panel.'))}
+                    onCallService={callService}
+                />
+            )}
 
-            <ActiveDevicesModal
-                visible={modalVisible}
-                title={modalTitle}
-                devices={modalDevices}
-                onClose={() => {
-                    setModalVisible(false);
-                    setActiveBadgeType(null);
-                }}
-                onToggle={callService}
-            />
+            {modalVisible && (
+                <ActiveDevicesModal
+                    visible={modalVisible}
+                    title={modalTitle}
+                    devices={modalDevices}
+                    onClose={() => {
+                        setModalVisible(false);
+                        setActiveBadgeType(null);
+                    }}
+                    onToggle={callService}
+                />
+            )}
 
-            <FrigateCameraModal
-                visible={showFrigateModal}
-                camera={selectedFrigateCamera}
-                service={frigateService.current}
-                initialView={frigateInitialView}
-                onClose={() => setShowFrigateModal(false)}
-            />
+            {showFrigateModal && (
+                <FrigateCameraModal
+                    visible={showFrigateModal}
+                    camera={selectedFrigateCamera}
+                    service={frigateService.current}
+                    initialView={frigateInitialView}
+                    onClose={() => setShowFrigateModal(false)}
+                />
+            )}
 
-            <YouTubeLauncherModal
-                visible={showYoutubeLauncher}
-                onClose={() => setShowYoutubeLauncher(false)}
-                mediaPlayers={entities.filter(e => e.entity_id.startsWith('media_player.'))}
-                callService={callService}
-            />
+            {showYoutubeLauncher && (
+                <YouTubeLauncherModal
+                    visible={showYoutubeLauncher}
+                    onClose={() => setShowYoutubeLauncher(false)}
+                    mediaPlayers={entities.filter(e => e.entity_id.startsWith('media_player.'))}
+                    callService={callService}
+                />
+            )}
 
-            <AppleTVRemoteModal
-                visible={showAppleTVRemote}
-                onClose={() => setShowAppleTVRemote(false)}
-                remoteEntityId="remote.living_room"
-                callService={callService}
-            />
+            {showAppleTVRemote && (
+                <AppleTVRemoteModal
+                    visible={showAppleTVRemote}
+                    onClose={() => setShowAppleTVRemote(false)}
+                    remoteEntityId="remote.living_room"
+                    callService={callService}
+                />
+            )}
 
-            <NetworkModal
-                visible={showNetworkModal}
-                onClose={() => setShowNetworkModal(false)}
-                config={badgeConfig}
-                entities={entities}
-                onToggle={callService}
-            />
+            {showNetworkModal && (
+                <NetworkModal
+                    visible={showNetworkModal}
+                    onClose={() => setShowNetworkModal(false)}
+                    config={badgeConfig}
+                    entities={entities}
+                    onToggle={callService}
+                />
+            )}
 
             {renderContent()}
 
-            {activeTab !== 'ai' && (
-                <TabBar activeTab={activeTab} onTabPress={handleTabPress} />
+            {isLandscape ? (
+                <TabletSidebar activeTab={activeTab} onTabPress={handleTabPress} />
+            ) : (
+                activeTab !== 'ai' && (
+                    <TabBar activeTab={activeTab} onTabPress={handleTabPress} />
+                )
             )}
 
-            <RoomSheet
-                visible={roomSheetVisible}
-                onClose={() => setRoomSheetVisible(false)}
-                room={selectedRoom}
-                registryDevices={registryDevices}
-                registryEntities={registryEntities}
-                allEntities={entities}
-                onToggle={callService}
-                lightMappings={lightMappings}
-                mediaMappings={mediaMappings}
-                adminUrl={connectionConfig.adminUrl}
-            />
+            {roomSheetVisible && selectedRoom && (
+                <RoomSheet
+                    visible={roomSheetVisible}
+                    onClose={() => {
+                        setRoomSheetVisible(false);
+                        setSelectedRoom(null);
+                    }}
+                    room={selectedRoom}
+                    registryDevices={registryDevices}
+                    registryEntities={registryEntities}
+                    allEntities={entities}
+                    onToggle={callService}
+                    lightMappings={lightMappings}
+                    mediaMappings={mediaMappings}
+                    adminUrl={connectionConfig.adminUrl}
+                    haUrl={connectionConfig.url}
+                    haToken={connectionConfig.token}
+                    showPreferenceButton={showPreferenceButton}
+                    sensorMappings={sensorMappings}
+                />
+            )}
 
-            <OpacitySettingsModal
-                visible={settingsModalVisible}
-                onClose={() => setSettingsModalVisible(false)}
-                currentOpacity={cardOpacity}
-                setOpacity={setCardOpacity}
-                currentColor={cardColor}
-                setColor={setCardColor}
-            />
+            {settingsModalVisible && (
+                <OpacitySettingsModal
+                    visible={settingsModalVisible}
+                    onClose={() => setSettingsModalVisible(false)}
+                    currentOpacity={cardOpacity}
+                    setOpacity={setCardOpacity}
+                    currentColor={cardColor}
+                    setColor={setCardColor}
+                />
+            )}
         </View >
     );
 }
@@ -1240,11 +1444,13 @@ const styles = StyleSheet.create({
     },
     sliderRow: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
         marginBottom: 20,
         gap: 12
     },
     sliderContainer: {
-        flex: 1
+        width: '48%',
+        flexGrow: 1
     },
     statusCard: {
         height: 56,

@@ -2,9 +2,8 @@ import React from 'react';
 import { View, Text, StyleSheet, Image, ScrollView, TouchableOpacity } from 'react-native';
 import { Bell } from 'lucide-react-native';
 
-const HA_URL = process.env.EXPO_PUBLIC_HA_URL?.replace(/\/$/, '');
-
-export default function PersonBadges({ entities, alertRules }) {
+export default function PersonBadges({ entities, alertRules, haUrl }) {
+    const HA_URL = haUrl?.replace(/\/$/, '') || '';
     if (!entities) return null;
 
     const people = entities.filter(e => e.entity_id.startsWith('person.'));

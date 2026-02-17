@@ -1,27 +1,13 @@
-import React, { useEffect, useState } from 'react';
-import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity } from 'react-native';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, AppState } from 'react-native';
 
-const HACamera = ({ camera, allEntities, haUrl, haToken }) => {
-    const [timestamp, setTimestamp] = useState(Date.now());
-
-    useEffect(() => {
-        // Auto-refresh snapshot every 3 seconds if it's not a stream
-        const interval = setInterval(() => {
-            setTimestamp(Date.now());
-        }, 3000);
-        return () => clearInterval(interval);
-    }, []);
-
+const HACamera = ({ camera, allEntities, haUrl, haToken, timestamp }) => {
     if (!camera.attributes || !camera.attributes.entity_picture) return null;
 
     const imageUrl = `${haUrl}${camera.attributes.entity_picture}&t=${timestamp}`;
 
-    // Motion Detection Logic
-    // Assumption: camera.lulu -> binary_sensor.lulu
     const cameraName = camera.entity_id.replace('camera.', '');
-    const motionEntityId = `binary_sensor.${cameraName}`; // e.g. binary_sensor.lulu
-    // Alternative: Try to find binary_sensor with same friendy name or check device registry if available
-    // But user specified strictly: camera.name -> binary_sensor.name
+    const motionEntityId = `binary_sensor.${cameraName}`;
 
     const motionSensor = allEntities ? allEntities.find(e => e.entity_id === motionEntityId) : null;
     const isMotionDetected = motionSensor && motionSensor.state === 'on';
@@ -34,7 +20,8 @@ const HACamera = ({ camera, allEntities, haUrl, haToken }) => {
                         uri: imageUrl,
                         headers: {
                             Authorization: `Bearer ${haToken}`
-                        }
+                        },
+                        cache: 'reload'
                     }}
                     style={styles.cameraImage}
                     resizeMode="cover"
@@ -60,6 +47,47 @@ const HACamera = ({ camera, allEntities, haUrl, haToken }) => {
 };
 
 export default function HACamerasList({ cameras, allEntities, haUrl, haToken, onCameraPress }) {
+    // Per-camera timestamps — only ONE camera refreshes per tick (round-robin)
+    const [timestamps, setTimestamps] = useState({});
+    const appStateRef = useRef(AppState.currentState);
+    const currentIndexRef = useRef(0);
+
+    const refreshNextCamera = useCallback(() => {
+        if (!cameras || cameras.length === 0) return;
+        if (appStateRef.current !== 'active') return;
+
+        const idx = currentIndexRef.current % cameras.length;
+        const entityId = cameras[idx].entity_id;
+        currentIndexRef.current = idx + 1;
+
+        setTimestamps(prev => ({ ...prev, [entityId]: Date.now() }));
+    }, [cameras]);
+
+    useEffect(() => {
+        if (!cameras || cameras.length === 0) return;
+
+        // Initialize all cameras with same timestamp on first mount
+        const now = Date.now();
+        const initial = {};
+        cameras.forEach(c => { initial[c.entity_id] = now; });
+        setTimestamps(initial);
+        currentIndexRef.current = 0;
+
+        // Refresh ONE camera every 3s (round-robin)
+        // With N cameras, each camera refreshes every N*3 seconds
+        // This ensures only 1 HTTP request at a time instead of N simultaneous
+        const interval = setInterval(refreshNextCamera, 3000);
+
+        const subscription = AppState.addEventListener('change', nextState => {
+            appStateRef.current = nextState;
+        });
+
+        return () => {
+            clearInterval(interval);
+            subscription.remove();
+        };
+    }, [cameras?.length, refreshNextCamera]);
+
     if (!cameras || cameras.length === 0) return null;
 
     return (
@@ -79,6 +107,7 @@ export default function HACamerasList({ cameras, allEntities, haUrl, haToken, on
                             allEntities={allEntities}
                             haUrl={haUrl}
                             haToken={haToken}
+                            timestamp={timestamps[cam.entity_id] || 0}
                         />
                     </TouchableOpacity>
                 ))}

@@ -1,15 +1,12 @@
-import { View, Text, StyleSheet, TouchableOpacity, Image, Modal, ScrollView, Dimensions } from 'react-native';
-import { BlurView } from 'expo-blur';
-import { Tv, Speaker, Play, Pause, Power, Volume2, VolumeX, List, Monitor, Smartphone, ChevronRight, SkipBack, SkipForward, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Circle } from 'lucide-react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
+import { Tv, Speaker, Play, Pause, Power, Volume2, VolumeX, List, Monitor, Smartphone, ChevronRight, SkipBack, SkipForward, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Circle, Gamepad2 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '../../constants/Colors';
 import { useState, useEffect, useRef } from 'react';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, withSequence } from 'react-native-reanimated';
 import { SvgUri } from 'react-native-svg';
 
-const HA_URL = process.env.EXPO_PUBLIC_HA_URL || 'http://homeassistant.local:8123';
-
-export default function MediaCard({ player, childPlayers = [], mapping, mediaMappings = [], onUpdate, needsChange, adminUrl }) {
+export default function MediaCard({ player, childPlayers = [], mapping, mediaMappings = [], onUpdate, needsChange, adminUrl, haUrl, haToken, onShowSourceOverlay, onShowVolumeOverlay }) {
     if (!player) return null;
 
     const { attributes, state } = player.stateObj;
@@ -63,19 +60,17 @@ export default function MediaCard({ player, childPlayers = [], mapping, mediaMap
     // If activeChild has a custom icon, use it. Else use parent icon.
     // We assume mappings might have icon paths in future, but for now relying on child entity definition
     const activeChildMapping = activeChild ? mediaMappings.find(m => m.entity_id === activeChild.entity_id) : null;
-    const activeIconUrl = activeChildMapping?.mediaType?.icon_path
+    const activeIconUrl = (activeChildMapping?.mediaType?.icon_path && adminUrl)
         ? `${adminUrl}${activeChildMapping.mediaType.icon_path}`
         : null;
 
     // Thumbnail
     const entityPicture = targetAttributes.entity_picture || parentPicture;
     const thumbUrl = entityPicture ? {
-        uri: `${HA_URL}${entityPicture}`,
-        headers: { Authorization: `Bearer ${process.env.EXPO_PUBLIC_HA_TOKEN}` }
+        uri: `${haUrl}${entityPicture}`,
+        headers: { Authorization: `Bearer ${haToken}` }
     } : null;
 
-    const [showSources, setShowSources] = useState(false);
-    const [showVolume, setShowVolume] = useState(false);
     const [showRemote, setShowRemote] = useState(false);
 
     // Animation for Icon
@@ -135,7 +130,6 @@ export default function MediaCard({ player, childPlayers = [], mapping, mediaMap
 
     const handleSourceSelect = (selectedSource) => {
         handleAction(player, 'select_source', { source: selectedSource });
-        setShowSources(false);
     };
 
     const handleVolumeChange = (val, entity) => {
@@ -202,9 +196,12 @@ export default function MediaCard({ player, childPlayers = [], mapping, mediaMap
                             <Image source={thumbUrl} style={styles.thumbnail} resizeMode="cover" />
                         ) : (
                             <Animated.View style={animatedIconStyle}>
-                                {device_class === 'tv' ?
-                                    <Tv size={24} color={isPlaying ? activeColor : (isOn ? "#fff" : Colors.textDim)} /> :
-                                    <Speaker size={24} color={isPlaying ? activeColor : (isOn ? "#fff" : Colors.textDim)} />
+                                {mapping?.mediaType?.type === 'game_console' || targetAttributes.device_class === 'game_console' ?
+                                    <Gamepad2 size={24} color={isPlaying ? activeColor : (isOn ? "#fff" : Colors.textDim)} /> :
+                                    (device_class === 'tv' || mapping?.mediaType?.type === 'tv' ?
+                                        <Tv size={24} color={isPlaying ? activeColor : (isOn ? "#fff" : Colors.textDim)} /> :
+                                        <Speaker size={24} color={isPlaying ? activeColor : (isOn ? "#fff" : Colors.textDim)} />
+                                    )
                                 }
                             </Animated.View>
                         )
@@ -265,7 +262,12 @@ export default function MediaCard({ player, childPlayers = [], mapping, mediaMap
                             <TouchableOpacity style={styles.muteSmallBtn} onPress={toggleMute}>
                                 {parentMuted ? <VolumeX size={18} color={Colors.textDim} /> : <Volume2 size={18} color={Colors.textDim} />}
                             </TouchableOpacity>
-                            <TouchableOpacity style={styles.volBtn} onPress={() => setShowVolume(true)}>
+                            <TouchableOpacity style={styles.volBtn} onPress={() => onShowVolumeOverlay?.({
+                                player,
+                                parentVolume,
+                                activeChild,
+                                onVolumeChange: handleVolumeChange,
+                            })}>
                                 <Text style={styles.volText}>
                                     {parentVolume !== undefined ? `${Math.round(parentVolume * 100)}%` : '--'}
                                 </Text>
@@ -297,8 +299,15 @@ export default function MediaCard({ player, childPlayers = [], mapping, mediaMap
                             <Smartphone size={18} color="#fff" />
                         </TouchableOpacity>
 
-                        {source_list && (
-                            <TouchableOpacity style={styles.sourceBtn} onPress={() => setShowSources(true)}>
+                        {source_list && onShowSourceOverlay && (
+                            <TouchableOpacity style={styles.sourceBtn} onPress={() => onShowSourceOverlay({
+                                player,
+                                sourceList: source_list,
+                                currentSource: source,
+                                childPlayers,
+                                mediaMappings,
+                                onSelect: handleSourceSelect,
+                            })}>
                                 <List size={18} color="#fff" />
                             </TouchableOpacity>
                         )}
@@ -324,63 +333,6 @@ export default function MediaCard({ player, childPlayers = [], mapping, mediaMap
                 </View>
             )}
 
-
-            {/* Modals */}
-            <Modal visible={showSources} transparent={true} animationType="fade" onRequestClose={() => setShowSources(false)}>
-                <BlurView intensity={20} style={styles.modalOverlay}>
-                    <TouchableOpacity style={styles.modalBg} onPress={() => setShowSources(false)} />
-                    <View style={styles.modalContent}>
-                        <Text style={styles.modalTitle}>Select Source</Text>
-                        <ScrollView style={{ maxHeight: 300 }}>
-                            {source_list?.map((s) => (
-                                <TouchableOpacity key={s} style={[styles.sourceItem, source === s && styles.sourceActive]} onPress={() => handleSourceSelect(s)}>
-                                    <Text style={[styles.sourceItemText, source === s && { color: activeColor }]}>{s}</Text>
-                                    {/* Show connected child name if mapped */}
-                                    {childPlayers.find(c => {
-                                        const m = mediaMappings.find(map => map.entity_id === c.entity_id);
-                                        return m && m.parentSource === s;
-                                    }) && (
-                                            <Text style={{ color: '#888', fontSize: 12 }}> • {childPlayers.find(c => {
-                                                const m = mediaMappings.find(map => map.entity_id === c.entity_id);
-                                                return m && m.parentSource === s;
-                                            }).displayName}</Text>
-                                        )}
-                                    {source === s && <View style={styles.activeDot} />}
-                                </TouchableOpacity>
-                            ))}
-                        </ScrollView>
-                    </View>
-                </BlurView>
-            </Modal>
-
-            <Modal visible={showVolume} transparent={true} animationType="fade" onRequestClose={() => setShowVolume(false)}>
-                <BlurView intensity={30} style={styles.modalOverlay}>
-                    <TouchableOpacity style={styles.modalBg} onPress={() => setShowVolume(false)} />
-                    <View style={styles.volumeModalContent}>
-                        <Text style={styles.modalTitle}>Volume Control</Text>
-                        {/* Parent Volume */}
-                        <Text style={styles.volumeLabel}>{player.displayName}</Text>
-                        <View style={styles.sliderContainer}>
-                            <View style={styles.sliderTrack}><View style={[styles.sliderFill, { width: `${(parentVolume || 0) * 100}%` }]} /></View>
-                            <TouchableOpacity style={styles.sliderTouchLeft} onPress={() => handleVolumeChange(Math.max(0, (parentVolume || 0) - 0.05), player)} />
-                            <TouchableOpacity style={styles.sliderTouchRight} onPress={() => handleVolumeChange(Math.min(1, (parentVolume || 0) + 0.05), player)} />
-                        </View>
-
-                        {/* Child Volume if active and supported */}
-                        {activeChild && activeChild.stateObj.attributes.volume_level !== undefined && (
-                            <>
-                                <Text style={[styles.volumeLabel, { marginTop: 20 }]}>{activeChild.displayName}</Text>
-                                <View style={styles.sliderContainer}>
-                                    <View style={styles.sliderTrack}><View style={[styles.sliderFill, { width: `${(activeChild.stateObj.attributes.volume_level || 0) * 100}%` }]} /></View>
-                                    <TouchableOpacity style={styles.sliderTouchLeft} onPress={() => handleVolumeChange(Math.max(0, (activeChild.stateObj.attributes.volume_level || 0) - 0.05), activeChild)} />
-                                    <TouchableOpacity style={styles.sliderTouchRight} onPress={() => handleVolumeChange(Math.min(1, (activeChild.stateObj.attributes.volume_level || 0) + 0.05), activeChild)} />
-                                </View>
-                            </>
-                        )}
-                        <TouchableOpacity style={styles.closeBtn} onPress={() => setShowVolume(false)}><Text style={styles.closeText}>Done</Text></TouchableOpacity>
-                    </View>
-                </BlurView>
-            </Modal>
 
         </View>
     );
@@ -447,24 +399,6 @@ const styles = StyleSheet.create({
     dpadCenter: { position: 'absolute', top: 46, left: 46, width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
     remoteHint: { color: Colors.textDim, fontSize: 12, marginTop: 10 },
 
-    // Modals
-    modalOverlay: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 },
-    modalBg: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.6)' },
-    modalContent: { width: '80%', backgroundColor: '#1E1E24', borderRadius: 24, padding: 24, maxHeight: '60%' },
-    volumeModalContent: { width: '85%', backgroundColor: '#1E1E24', borderRadius: 30, padding: 30, alignItems: 'center' },
-    modalTitle: { color: '#fff', fontSize: 18, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
-
-    sourceItem: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: 'rgba(255,255,255,0.05)' },
-    sourceActive: { backgroundColor: 'rgba(137, 71, 202, 0.1)', marginHorizontal: -10, paddingHorizontal: 10, borderRadius: 12, borderBottomWidth: 0 },
-    sourceItemText: { color: '#ccc', fontSize: 16 },
-    activeDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#8947ca' },
-
-    volumeLabel: { color: '#fff', marginBottom: 10, alignSelf: 'flex-start', fontSize: 14, fontWeight: '600' },
-    sliderContainer: { width: '100%', height: 40, justifyContent: 'center', position: 'relative', marginBottom: 8 },
-    sliderTrack: { width: '100%', height: 12, borderRadius: 6, backgroundColor: 'rgba(255,255,255,0.1)', overflow: 'hidden' },
-    sliderFill: { height: '100%', backgroundColor: '#8947ca' },
-    sliderTouchLeft: { position: 'absolute', top: 0, bottom: 0, left: 0, width: '50%' },
-    sliderTouchRight: { position: 'absolute', top: 0, bottom: 0, right: 0, width: '50%' },
     closeBtn: { marginTop: 20 },
     closeText: { color: Colors.textDim, fontSize: 16 }
 });

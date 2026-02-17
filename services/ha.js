@@ -1,3 +1,5 @@
+import { AppState } from 'react-native';
+
 export class HAService {
     constructor(url, token) {
         const cleanUrl = url.replace(/\/$/, '');
@@ -9,30 +11,69 @@ export class HAService {
         this.listeners = new Set();
         this.authenticated = false;
         this.reconnectTimer = null;
+        this.reconnectAttempts = 0;
+        this.maxReconnectAttempts = 5;
+        this.appState = AppState.currentState;
+        this.appStateSubscription = AppState.addEventListener('change', (nextState) => {
+            const wasBg = this.appState !== 'active';
+            this.appState = nextState;
+            if (wasBg && nextState === 'active') {
+                // Returning to foreground — reconnect if disconnected
+                if (!this.socket && !this.reconnectTimer) {
+                    this.reconnectAttempts = 0;
+                    this.connect();
+                }
+            } else if (nextState !== 'active') {
+                // Going to background — stop reconnection attempts
+                if (this.reconnectTimer) {
+                    clearTimeout(this.reconnectTimer);
+                    this.reconnectTimer = null;
+                }
+            }
+        });
         HAService.instances.add(this);
     }
 
     connect() {
         if (this.socket) return;
 
+        // Don't reconnect if app is backgrounded
+        if (this.appState !== 'active') return;
+
         console.log('Connecting to', this.url);
         this.socket = new WebSocket(this.url);
 
         this.socket.onopen = () => {
             console.log('Socket Connected');
+            this.reconnectAttempts = 0; // Reset on successful connection
         };
 
         this.socket.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-            this.handleMessage(data);
+            try {
+                const data = JSON.parse(event.data);
+                this.handleMessage(data);
+            } catch (e) {
+                console.log('[HAService] Failed to parse WebSocket message:', e.message);
+            }
         };
 
         this.socket.onclose = () => {
             console.log('Socket Closed');
             this.authenticated = false;
             this.socket = null;
-            // Reconnect logic usually goes here
-            this.reconnectTimer = setTimeout(() => this.connect(), 5000);
+
+            // Only reconnect if app is active and under max retries
+            if (this.appState === 'active' && this.reconnectAttempts < this.maxReconnectAttempts) {
+                const delay = Math.min(5000 * Math.pow(2, this.reconnectAttempts), 60000); // 5s, 10s, 20s, 40s, 60s
+                this.reconnectAttempts++;
+                console.log(`[HAService] Reconnecting in ${delay / 1000}s (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+                this.reconnectTimer = setTimeout(() => {
+                    this.reconnectTimer = null;
+                    this.connect();
+                }, delay);
+            } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+                console.log('[HAService] Max reconnection attempts reached. Will retry on foreground.');
+            }
         };
 
         this.socket.onerror = (e) => {
@@ -45,6 +86,12 @@ export class HAService {
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
+        }
+
+        // Remove AppState listener
+        if (this.appStateSubscription) {
+            this.appStateSubscription.remove();
+            this.appStateSubscription = null;
         }
 
         if (this.socket) {
@@ -121,6 +168,12 @@ export class HAService {
     async getPersonRegistry() {
         return this.sendMessage({
             type: 'config/person/list',
+        });
+    }
+
+    async getCategoryRegistry() {
+        return this.sendMessage({
+            type: 'config/category_registry/list',
         });
     }
 

@@ -412,7 +412,7 @@ export default function Login() {
 
                 router.replace({
                     pathname: route,
-                    params: { userName: selectedUser.name }
+                    params: { userName: selectedUser.name, userId: selectedUser.user_id || '' }
                 });
             } else {
                 Alert.alert('Login Failed', 'Invalid password or could not verify user.');
@@ -458,7 +458,7 @@ export default function Login() {
 
                         router.replace({
                             pathname: '/dashboard-v2',
-                            params: { userName: userObj.name }
+                            params: { userName: userObj.name, userId: userObj.user_id || '' }
                         });
                     } else {
                         Alert.alert('Error', 'Saved credentials are no longer valid.');
@@ -750,8 +750,9 @@ export default function Login() {
 
                                     {faceIdEnabled && isBiometricSupported && (
                                         <TouchableOpacity
-                                            style={[styles.bioButton]}
+                                            style={[styles.bioButton, { opacity: username ? 1 : 0.5 }]}
                                             onPress={handleBiometricLogin}
+                                            disabled={!username}
                                         >
                                             <Fingerprint size={28} color={Colors.primary} />
                                             <Text style={styles.bioText}>Use FaceID</Text>
@@ -833,9 +834,9 @@ export default function Login() {
                     {/* Sticky Footer for Login Button */}
                     <View style={{ paddingTop: 10, paddingBottom: 20, backgroundColor: Colors.background }}>
                         <TouchableOpacity
-                            style={[styles.button, { backgroundColor: '#8947ca', opacity: isLoggingIn ? 0.7 : 1, marginTop: 0 }]}
+                            style={[styles.button, { backgroundColor: '#8947ca', opacity: (isLoggingIn || !username) ? 0.7 : 1, marginTop: 0 }]}
                             onPress={() => handleLogin('/dashboard-v2')}
-                            disabled={isLoggingIn}
+                            disabled={isLoggingIn || !username}
                         >
                             {isLoggingIn ? (
                                 <ActivityIndicator color="#fff" />

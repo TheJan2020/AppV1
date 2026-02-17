@@ -35,11 +35,8 @@ export default function AutomationsPage() {
                         return;
                     }
                 }
-                // Fallback to env vars if no profile
-                setConnectionConfig({
-                    url: process.env.EXPO_PUBLIC_HA_URL,
-                    token: process.env.EXPO_PUBLIC_HA_TOKEN
-                });
+                // No active profile found
+                setConnectionConfig(null);
             } catch (e) {
                 console.error("Error loading config", e);
                 setLoading(false);

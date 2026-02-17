@@ -5,7 +5,7 @@ import { Colors } from '../../constants/Colors';
 import { useState, useEffect } from 'react';
 import { AIService } from '../../services/ai';
 
-export default function MyPreferencesModal({ visible, onClose }) {
+export default function MyPreferencesModal({ visible, onClose, adminUrl }) {
     const [loading, setLoading] = useState(false);
     const [analyzing, setAnalyzing] = useState(false);
     const [data, setData] = useState([]); // [{ name: "Living Room", entities: [...] }]
@@ -16,8 +16,6 @@ export default function MyPreferencesModal({ visible, onClose }) {
     // Detailed View State
     const [detailModalVisible, setDetailModalVisible] = useState(false);
     const [selectedEntity, setSelectedEntity] = useState(null);
-
-    const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL;
 
     // Helper: Get Domain
     const getDomain = (entityId) => entityId.split('.')[0];

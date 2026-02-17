@@ -4,19 +4,27 @@ import { useRouter, Stack } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ChevronLeft, Lightbulb, ToggleLeft, Activity, Eye, Thermometer, Play, Lock, Video, Box } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
+import { getAdminUrl } from '../utils/storage';
 
 export default function EntityHistoryPicker() {
     const router = useRouter();
     const [loading, setLoading] = useState(true);
     const [homeStats, setHomeStats] = useState(null);
-    const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL;
+    const [adminUrl, setAdminUrl] = useState(null);
 
     useEffect(() => {
-        if (!adminUrl) {
-            console.error("EntityHistoryPicker: EXPO_PUBLIC_ADMIN_URL is missing");
-            setLoading(false);
-            return;
-        }
+        getAdminUrl().then(url => {
+            if (!url) {
+                console.error("EntityHistoryPicker: Admin URL not found in profile");
+                setLoading(false);
+                return;
+            }
+            setAdminUrl(url);
+        });
+    }, []);
+
+    useEffect(() => {
+        if (!adminUrl) return;
 
         const fetchStats = async () => {
             const now = new Date();

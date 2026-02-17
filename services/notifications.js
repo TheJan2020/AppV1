@@ -2,12 +2,7 @@ import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
-
-const BACKEND_URL = process.env.EXPO_PUBLIC_ADMIN_URL?.replace(/\/$/, '');
-
-if (!BACKEND_URL) {
-    console.error('[Push] EXPO_PUBLIC_ADMIN_URL is not defined in .env');
-}
+import { getAdminUrl } from '../utils/storage';
 
 // Configure how notifications behave when the app is in foreground
 Notifications.setNotificationHandler({
@@ -57,7 +52,12 @@ export async function registerForPushNotificationsAsync() {
             console.log('[Push] Notification Token:', token);
 
             // Send to backend
-            await registerTokenWithBackend(token);
+            const backendUrl = await getAdminUrl();
+            if (!backendUrl) {
+                console.error('[Push] Admin URL not found in profile. Cannot register token.');
+                return token;
+            }
+            await registerTokenWithBackend(token, backendUrl);
         } catch (e) {
             console.error('[Push] Error getting token:', e);
             if (e.message.includes('projectId')) {
@@ -71,10 +71,10 @@ export async function registerForPushNotificationsAsync() {
     return token;
 }
 
-async function registerTokenWithBackend(token) {
+async function registerTokenWithBackend(token, backendUrl) {
     try {
         const deviceName = Device.modelName || 'Unknown Device';
-        const response = await fetch(`${BACKEND_URL}/api/notifications/register`, {
+        const response = await fetch(`${backendUrl}/api/notifications/register`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

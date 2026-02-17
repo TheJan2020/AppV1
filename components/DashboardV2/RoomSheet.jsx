@@ -1,6 +1,7 @@
 import { View, StyleSheet, Modal, TouchableOpacity } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { Colors } from '../../constants/Colors';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import RoomDetailView from './RoomDetailView';
 import { getRoomEntities } from '../../utils/roomHelpers';
 
@@ -14,11 +15,15 @@ export default function RoomSheet({
     onToggle,
     lightMappings = [],
     mediaMappings = [],
-    adminUrl
+    adminUrl,
+    haUrl,
+    haToken,
+    showPreferenceButton = true,
+    sensorMappings = []
 }) {
     if (!room) return null;
 
-    const { lights, fans, climates, covers, medias, cameras, sensors, doors } = getRoomEntities(room, registryDevices, registryEntities, allEntities);
+    const { lights, fans, climates, covers, medias, cameras, sensors, doors, switches, automations, scripts } = getRoomEntities(room, registryDevices, registryEntities, allEntities, sensorMappings);
 
     return (
         <Modal
@@ -29,7 +34,7 @@ export default function RoomSheet({
         >
             <View style={styles.overlay}>
                 <TouchableOpacity style={styles.backdrop} onPress={onClose} activeOpacity={1} />
-                <View style={styles.sheetContainer}>
+                <GestureHandlerRootView style={styles.sheetContainer}>
                     <RoomDetailView
                         room={room}
                         lights={lights}
@@ -40,6 +45,9 @@ export default function RoomSheet({
                         cameras={cameras}
                         sensors={sensors}
                         doors={doors}
+                        switches={switches}
+                        automations={automations}
+                        scripts={scripts}
                         allEntities={allEntities}
                         onToggle={onToggle}
                         onClose={onClose}
@@ -47,8 +55,11 @@ export default function RoomSheet({
                         lightMappings={lightMappings}
                         mediaMappings={mediaMappings}
                         adminUrl={adminUrl}
+                        haUrl={haUrl}
+                        haToken={haToken}
+                        showPreferenceButton={showPreferenceButton}
                     />
-                </View>
+                </GestureHandlerRootView>
             </View>
         </Modal>
     );

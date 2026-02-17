@@ -1,14 +1,23 @@
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { LogOut, LogIn, Users, Power, Youtube, Wifi, History, BarChart2 } from 'lucide-react-native';
+import { Zap } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
 
-export default function QuickScenes({ onScenePress, onPlayMediaPress, onRemotePress, onNetworkPress, onHistoryPress, onStatisticsPress }) {
-    const scenes = [
-        { id: 'leaving_home', label: 'Leaving Home', icon: LogOut, color: '#8947ca' },
-        { id: 'arriving_home', label: 'Arriving Home', icon: LogIn, color: '#8947ca' },
-        { id: 'guests_mode', label: 'Guests Mode', icon: Users, color: '#8947ca' },
-        { id: 'all_off', label: 'All Off', icon: Power, color: '#8947ca' },
-    ];
+export default function QuickScenes({
+    scenes = [],
+    onScenePress
+}) {
+    const GenericIcon = Zap;
+
+    if (!scenes || scenes.length === 0) {
+        return (
+            <View style={styles.container}>
+                <Text style={styles.title}>Quick Scenes</Text>
+                <View style={styles.emptyContainer}>
+                    <Text style={styles.emptyText}>(No Quick Actions Found)</Text>
+                </View>
+            </View>
+        );
+    }
 
     return (
         <View style={styles.container}>
@@ -18,24 +27,12 @@ export default function QuickScenes({ onScenePress, onPlayMediaPress, onRemotePr
                     <TouchableOpacity
                         key={scene.id}
                         style={styles.card}
-                        onPress={() => {
-                            if (scene.isSpecial && scene.action === 'playMedia' && onPlayMediaPress) {
-                                onPlayMediaPress();
-                            } else if (scene.isSpecial && scene.action === 'network' && onNetworkPress) {
-                                onNetworkPress();
-                            } else if (scene.isSpecial && scene.action === 'history' && onHistoryPress) {
-                                onHistoryPress();
-                            } else if (scene.isSpecial && scene.action === 'statistics' && onStatisticsPress) {
-                                onStatisticsPress();
-                            } else if (onScenePress) {
-                                onScenePress(scene.id);
-                            }
-                        }}
+                        onPress={() => onScenePress && onScenePress(scene.id)}
                     >
-                        <View style={[styles.iconContainer, { backgroundColor: `${scene.color}20` }]}>
-                            <scene.icon size={20} color={scene.color} />
+                        <View style={[styles.iconContainer, { backgroundColor: 'rgba(137, 71, 202, 0.2)' }]}>
+                            <GenericIcon size={20} color="#8947ca" />
                         </View>
-                        <Text style={styles.label}>{scene.label}</Text>
+                        <Text style={styles.label} numberOfLines={1}>{scene.label}</Text>
                     </TouchableOpacity>
                 ))}
             </View>
@@ -79,5 +76,18 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 13, // Reduced from 14
         fontWeight: '400', // Reduced weight
+        flex: 1,
+    },
+    emptyContainer: {
+        padding: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(255, 255, 255, 0.05)',
+        borderRadius: 12,
+    },
+    emptyText: {
+        color: 'rgba(255, 255, 255, 0.4)',
+        fontSize: 14,
+        fontStyle: 'italic',
     }
 });

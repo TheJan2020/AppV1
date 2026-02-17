@@ -5,6 +5,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { ChevronLeft, Smartphone, PieChart as PieIcon, Calendar, X, Lightbulb, ToggleLeft, Activity, Eye, Thermometer, Play, Lock, Video, Box, Speaker, Plus, Minus } from 'lucide-react-native';
 import { PieChart, LineChart } from 'react-native-chart-kit';
 import AnalogClockPresence from '../components/AnalogClockPresence';
+import { getAdminUrl } from '../utils/storage';
 
 const screenWidth = Dimensions.get('window').width;
 
@@ -28,7 +29,11 @@ export default function StatisticsPage() {
         }));
     };
 
-    const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL;
+    const [adminUrl, setAdminUrl] = useState(null);
+
+    useEffect(() => {
+        getAdminUrl().then(url => setAdminUrl(url));
+    }, []);
 
     // View State (Shared)
     const [viewMode, setViewMode] = useState('daily');

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, FlatList, TextInput, Alert, ActivityIndicator, Switch } from 'react-native';
 import { Colors } from '../../constants/Colors';
-import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles } from 'lucide-react-native';
+import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles, Monitor, LayoutGrid } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { AIService } from '../../services/ai';
 import * as SecureStore from 'expo-secure-store';
@@ -21,7 +21,9 @@ export default function SettingsView({
     showFamily, // Prop from parent
     autoRoomVisit, // Prop from parent
     autoRoomResume, // Prop from parent
-    showVoiceAssistant // Prop from parent
+    showVoiceAssistant, // Prop from parent
+    showPreferenceButton, // Prop from parent
+    adminUrl // From SecureStore profile
 }) {
     const [activeTab, setActiveTab] = useState('general');
     const [selectedArea, setSelectedArea] = useState(null);
@@ -47,6 +49,7 @@ export default function SettingsView({
         if (key === 'autoRoomVisit') storeKey = 'settings_auto_room_visit';
         if (key === 'autoRoomResume') storeKey = 'settings_auto_room_resume';
         if (key === 'showVoiceAssistant') storeKey = 'settings_show_voice_assistant';
+        if (key === 'showPreferenceButton') storeKey = 'settings_show_preference_button';
 
         if (storeKey) {
             await SecureStore.setItemAsync(storeKey, val.toString());
@@ -424,6 +427,25 @@ export default function SettingsView({
                         thumbColor={showVoiceAssistant ? '#fff' : '#f4f3f4'}
                     />
                 </View>
+
+                {/* Show Preference Button Toggle */}
+                <View style={styles.listItem}>
+                    <View style={styles.itemInfo}>
+                        <View style={styles.iconContainer}>
+                            <Heart size={20} color={Colors.text} />
+                        </View>
+                        <View>
+                            <Text style={styles.itemName}>Show Preference Button</Text>
+                            <Text style={styles.itemSub}>Show activate preferences in room view</Text>
+                        </View>
+                    </View>
+                    <Switch
+                        value={showPreferenceButton}
+                        onValueChange={(val) => handleToggleSetting('showPreferenceButton', val)}
+                        trackColor={{ false: '#767577', true: Colors.primary }}
+                        thumbColor={showPreferenceButton ? '#fff' : '#f4f3f4'}
+                    />
+                </View>
             </View>
 
             <View style={styles.section}>
@@ -602,6 +624,29 @@ export default function SettingsView({
                     </View>
                     <ChevronRight size={20} color={Colors.textDim} />
                 </TouchableOpacity>
+
+                <TouchableOpacity style={styles.listItem} onPress={() => router.push('/dashboard-v3')}>
+                    <View style={styles.itemInfo}>
+                        <View style={[styles.iconContainer, { backgroundColor: 'rgba(137,71,202,0.2)' }]}>
+                            <LayoutGrid size={20} color="#8947ca" />
+                        </View>
+                        <View>
+                            <Text style={styles.itemName}>Go to V3</Text>
+                            <Text style={styles.itemSub}>Tablet widget dashboard</Text>
+                        </View>
+                    </View>
+                    <ChevronRight size={20} color={Colors.textDim} />
+                </TouchableOpacity>
+
+                <TouchableOpacity style={styles.listItem} onPress={() => router.push('/tv-lab')}>
+                    <View style={styles.itemInfo}>
+                        <View style={styles.iconContainer}>
+                            <Monitor size={20} color={Colors.text} />
+                        </View>
+                        <Text style={styles.itemName}>Test TV</Text>
+                    </View>
+                    <ChevronRight size={20} color={Colors.textDim} />
+                </TouchableOpacity>
             </View>
         </ScrollView >
     );
@@ -624,14 +669,14 @@ export default function SettingsView({
                 style={styles.testPushBtn}
                 onPress={async () => {
                     try {
-                        const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL?.replace(/\/$/, '');
                         if (!adminUrl) {
-                            Alert.alert('Configuration Error', 'EXPO_PUBLIC_ADMIN_URL is missing in .env');
+                            Alert.alert('Configuration Error', 'Admin URL is not configured in your profile.');
                             return;
                         }
+                        const cleanAdminUrl = adminUrl.replace(/\/$/, '');
 
                         const loading = Alert.alert('Sending...', 'Triggering test notification...', [], { cancelable: false });
-                        const response = await fetch(`${adminUrl}/api/notifications/send`, {
+                        const response = await fetch(`${cleanAdminUrl}/api/notifications/send`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({
@@ -720,18 +765,22 @@ export default function SettingsView({
             <MonitoredEntitiesModal
                 visible={monitoredModalVisible}
                 onClose={() => setMonitoredModalVisible(false)}
+                adminUrl={adminUrl}
             />
             <AlertEntitiesModal
                 visible={alertModalVisible}
                 onClose={() => setAlertModalVisible(false)}
+                adminUrl={adminUrl}
             />
             <MyPreferencesModal
                 visible={preferencesModalVisible}
                 onClose={() => setPreferencesModalVisible(false)}
+                adminUrl={adminUrl}
             />
             <PreferencedEntitiesModal
                 visible={preferencedEntitiesModalVisible}
                 onClose={() => setPreferencedEntitiesModalVisible(false)}
+                adminUrl={adminUrl}
             />
         </View >
     );

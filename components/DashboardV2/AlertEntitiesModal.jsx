@@ -5,13 +5,11 @@ import { Colors } from '../../constants/Colors';
 import { useState, useEffect } from 'react';
 import AddAlertModal from './AddAlertModal';
 
-export default function AlertEntitiesModal({ visible, onClose }) {
+export default function AlertEntitiesModal({ visible, onClose, adminUrl }) {
     const [rules, setRules] = useState([]);
     const [loading, setLoading] = useState(true);
     const [addModalVisible, setAddModalVisible] = useState(false);
     const [editingRule, setEditingRule] = useState(null);
-
-    const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL;
 
     useEffect(() => {
         if (visible) {
@@ -132,6 +130,7 @@ export default function AlertEntitiesModal({ visible, onClose }) {
                 visible={addModalVisible}
                 onClose={() => setAddModalVisible(false)}
                 initialRule={editingRule}
+                adminUrl={adminUrl}
                 onSuccess={() => {
                     setAddModalVisible(false);
                     fetchRules();

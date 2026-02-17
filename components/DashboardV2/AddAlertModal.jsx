@@ -4,7 +4,7 @@ import { X, ArrowRight, Check, Search, Save } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
 import { useState, useEffect } from 'react';
 
-export default function AddAlertModal({ visible, onClose, onSuccess, initialRule = null }) {
+export default function AddAlertModal({ visible, onClose, onSuccess, initialRule = null, adminUrl }) {
     const [step, setStep] = useState(1);
     const [entities, setEntities] = useState([]);
     const [filteredEntities, setFilteredEntities] = useState([]);
@@ -16,7 +16,6 @@ export default function AddAlertModal({ visible, onClose, onSuccess, initialRule
     const [threshold, setThreshold] = useState('0');
     const [repeatMinutes, setRepeatMinutes] = useState('0');
 
-    const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL;
     const isEditing = !!initialRule;
 
     useEffect(() => {

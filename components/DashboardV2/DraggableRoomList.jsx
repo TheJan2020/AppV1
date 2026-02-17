@@ -6,7 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 // Helper function (same as in RoomsList, should ideally be shared)
 const getIconForRoom = (name) => {
-    const lower = name.toLowerCase();
+    const lower = (name || '').toLowerCase();
     if (lower.includes('living')) return Sofa;
     if (lower.includes('bed')) return Bed;
     if (lower.includes('bath')) return Bath;
@@ -15,12 +15,20 @@ const getIconForRoom = (name) => {
     return Lamp;
 };
 
-export default function DraggableRoomList({ rooms, onOrderChange, registryEntities = [], allEntities = [] }) {
-    const haUrl = process.env.EXPO_PUBLIC_HA_URL;
+// Convert area_id-style names (e.g. "living_room") to proper display names ("Living Room")
+const formatRoomName = (name) => {
+    if (!name) return '';
+    if (name.includes(' ')) return name;
+    return name
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, c => c.toUpperCase());
+};
 
+export default function DraggableRoomList({ rooms, onOrderChange, registryEntities = [], allEntities = [] }) {
     const renderItem = ({ item, drag, isActive }) => {
         const room = item;
-        const Icon = getIconForRoom(room.name);
+        const displayName = formatRoomName(room.name);
+        const Icon = getIconForRoom(displayName);
 
         return (
             <ScaleDecorator>
@@ -36,7 +44,7 @@ export default function DraggableRoomList({ rooms, onOrderChange, registryEntiti
                         <Icon size={24} color="#fff" />
                     </View>
 
-                    <Text style={styles.roomName}>{room.name}</Text>
+                    <Text style={styles.roomName}>{displayName}</Text>
 
                     {/* Drag Handle Indicator */}
                     <View style={styles.dragHandle}>

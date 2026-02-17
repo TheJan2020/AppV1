@@ -1,19 +1,22 @@
-import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView } from 'react-native';
-import { BlurView } from 'expo-blur';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
 import { X, Check } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
-import { LinearGradient } from 'expo-linear-gradient';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import * as Haptics from 'expo-haptics';
 
-export default function LightControlModal({ visible, onClose, light, onUpdate }) {
-    if (!light) return null;
-
+export default function LightControlModal({ visible, onClose, light, colorCapability, onUpdate }) {
     const [activeTab, setActiveTab] = useState('temp'); // 'temp' | 'color'
 
-    // Helper: Check capabilities
-    const supportsColor = light.stateObj.attributes.supported_color_modes?.some(m => ['rgb', 'rgbw', 'rgbww', 'hs', 'xy'].includes(m));
-    const supportsTemp = light.stateObj.attributes.supported_color_modes?.some(m => ['color_temp'].includes(m)) || supportsColor; // RGB often simulates temp
+    // Reset tab when a new light is selected
+    useEffect(() => {
+        if (light) setActiveTab('temp');
+    }, [light?.entity_id]);
+
+    if (!visible || !light) return null;
+
+    // Determine capabilities from admin-assigned colorCapability
+    const supportsColor = colorCapability === 'rgb';
+    const supportsTemp = colorCapability === 'cct' || colorCapability === 'rgb';
 
     const handleColorSelect = (rgb) => {
         Haptics.selectionAsync();
@@ -25,18 +28,17 @@ export default function LightControlModal({ visible, onClose, light, onUpdate })
         onUpdate(light.entity_id, { kelvin: kelvin });
     };
 
-    // Common presets
     const colors = [
-        { r: 255, g: 255, b: 255 }, // White
-        { r: 255, g: 0, b: 0 },     // Red
-        { r: 0, g: 255, b: 0 },     // Green
-        { r: 0, g: 0, b: 255 },     // Blue
-        { r: 255, g: 255, b: 0 },   // Yellow
-        { r: 0, g: 255, b: 255 },   // Cyan
-        { r: 255, g: 0, b: 255 },   // Magenta
-        { r: 255, g: 165, b: 0 },   // Orange
-        { r: 128, g: 0, b: 128 },   // Purple
-        { r: 255, g: 192, b: 203 }, // Pink
+        { r: 255, g: 255, b: 255 },
+        { r: 255, g: 0, b: 0 },
+        { r: 0, g: 255, b: 0 },
+        { r: 0, g: 0, b: 255 },
+        { r: 255, g: 255, b: 0 },
+        { r: 0, g: 255, b: 255 },
+        { r: 255, g: 0, b: 255 },
+        { r: 255, g: 165, b: 0 },
+        { r: 128, g: 0, b: 128 },
+        { r: 255, g: 192, b: 203 },
     ];
 
     const temps = [
@@ -47,83 +49,78 @@ export default function LightControlModal({ visible, onClose, light, onUpdate })
     ];
 
     return (
-        <Modal
-            animationType="fade"
-            transparent={true}
-            visible={visible}
-            onRequestClose={onClose}
-        >
-            <TouchableOpacity style={styles.backdrop} onPress={onClose} activeOpacity={1}>
-                <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
+        <View style={styles.overlay}>
+            <TouchableOpacity style={styles.backdrop} onPress={onClose} activeOpacity={1} />
 
-                <TouchableOpacity activeOpacity={1} style={styles.modalContent}>
-                    <View style={styles.header}>
-                        <Text style={styles.title}>{light.displayName}</Text>
-                        <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-                            <X size={24} color="#fff" />
+            <View style={styles.modalContent}>
+                <View style={styles.header}>
+                    <Text style={styles.title}>{light.displayName}</Text>
+                    <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
+                        <X size={24} color="#fff" />
+                    </TouchableOpacity>
+                </View>
+
+                <View style={styles.tabs}>
+                    {supportsTemp && (
+                        <TouchableOpacity
+                            style={[styles.tab, activeTab === 'temp' && styles.activeTab]}
+                            onPress={() => setActiveTab('temp')}
+                        >
+                            <Text style={[styles.tabText, activeTab === 'temp' && styles.activeTabText]}>Temperature</Text>
                         </TouchableOpacity>
-                    </View>
+                    )}
+                    {supportsColor && (
+                        <TouchableOpacity
+                            style={[styles.tab, activeTab === 'color' && styles.activeTab]}
+                            onPress={() => setActiveTab('color')}
+                        >
+                            <Text style={[styles.tabText, activeTab === 'color' && styles.activeTabText]}>Color</Text>
+                        </TouchableOpacity>
+                    )}
+                </View>
 
-                    {/* Tabs */}
-                    <View style={styles.tabs}>
-                        {supportsTemp && (
-                            <TouchableOpacity
-                                style={[styles.tab, activeTab === 'temp' && styles.activeTab]}
-                                onPress={() => setActiveTab('temp')}
-                            >
-                                <Text style={[styles.tabText, activeTab === 'temp' && styles.activeTabText]}>Temperature</Text>
-                            </TouchableOpacity>
-                        )}
-                        {supportsColor && (
-                            <TouchableOpacity
-                                style={[styles.tab, activeTab === 'color' && styles.activeTab]}
-                                onPress={() => setActiveTab('color')}
-                            >
-                                <Text style={[styles.tabText, activeTab === 'color' && styles.activeTabText]}>Color</Text>
-                            </TouchableOpacity>
-                        )}
-                    </View>
+                <View style={styles.body}>
+                    {activeTab === 'temp' && (
+                        <View style={styles.tempGrid}>
+                            {temps.map((t) => (
+                                <TouchableOpacity
+                                    key={t.k}
+                                    style={[styles.tempOption, { backgroundColor: t.color }]}
+                                    onPress={() => handleTempSelect(t.k)}
+                                >
+                                    <Text style={styles.tempText}>{t.label}</Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                    )}
 
-                    <View style={styles.body}>
-                        {activeTab === 'temp' && (
-                            <View style={styles.tempGrid}>
-                                {temps.map((t) => (
-                                    <TouchableOpacity
-                                        key={t.k}
-                                        style={[styles.tempOption, { backgroundColor: t.color }]}
-                                        onPress={() => handleTempSelect(t.k)}
-                                    >
-                                        <Text style={styles.tempText}>{t.label}</Text>
-                                    </TouchableOpacity>
-                                ))}
-                            </View>
-                        )}
-
-                        {activeTab === 'color' && (
-                            <View style={styles.colorGrid}>
-                                {colors.map((c, i) => (
-                                    <TouchableOpacity
-                                        key={i}
-                                        style={[styles.colorOption, { backgroundColor: `rgb(${c.r},${c.g},${c.b})` }]}
-                                        onPress={() => handleColorSelect([c.r, c.g, c.b])}
-                                    />
-                                ))}
-                            </View>
-                        )}
-                    </View>
-
-                </TouchableOpacity>
-            </TouchableOpacity>
-        </Modal>
+                    {activeTab === 'color' && (
+                        <View style={styles.colorGrid}>
+                            {colors.map((c, i) => (
+                                <TouchableOpacity
+                                    key={i}
+                                    style={[styles.colorOption, { backgroundColor: `rgb(${c.r},${c.g},${c.b})` }]}
+                                    onPress={() => handleColorSelect([c.r, c.g, c.b])}
+                                />
+                            ))}
+                        </View>
+                    )}
+                </View>
+            </View>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
-    backdrop: {
-        flex: 1,
+    overlay: {
+        ...StyleSheet.absoluteFillObject,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.5)',
+        zIndex: 100,
+    },
+    backdrop: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.7)',
     },
     modalContent: {
         width: '85%',

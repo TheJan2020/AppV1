@@ -5,13 +5,24 @@ import { LinearGradient } from 'expo-linear-gradient';
 // ... (getIconForRoom helper remains same)
 // ... (getIconForRoom helper remains same)
 const getIconForRoom = (name) => {
-    const lower = name.toLowerCase();
+    const lower = (name || '').toLowerCase();
     if (lower.includes('living')) return Sofa;
     if (lower.includes('bed')) return Bed;
     if (lower.includes('bath')) return Bath;
     if (lower.includes('kitchen') || lower.includes('dining')) return Utensils;
     if (lower.includes('office') || lower.includes('study')) return Monitor;
     return Lamp; // Default
+};
+
+// Convert area_id-style names (e.g. "living_room") to proper display names ("Living Room")
+const formatRoomName = (name) => {
+    if (!name) return '';
+    // If already has spaces, it's a proper name — return as-is
+    if (name.includes(' ')) return name;
+    // Otherwise treat as slug: replace underscores with spaces and title-case each word
+    return name
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, c => c.toUpperCase());
 };
 
 
@@ -22,9 +33,17 @@ export default function RoomsList({
     overlayOpacity = 0.4,
     onSettingsPress,
     layout = 'horizontal', // 'horizontal' | 'grid',
+    columns = 2,
     registryEntities = [],
-    allEntities = []
+    allEntities = [],
+    haUrl,
+    haToken,
+    sensorMappings = []
 }) {
+    const gridCardWidth = `${Math.floor(96 / columns)}%`;
+    // Increased by 10%
+    const horizontalCardWidth = columns > 2 ? 211 : 157;
+
     if (!rooms || rooms.length === 0) {
         if (layout === 'grid') {
             return (
@@ -36,10 +55,11 @@ export default function RoomsList({
         return null;
     }
 
-    const haUrl = process.env.EXPO_PUBLIC_HA_URL;
+    const safeSensorMappings = Array.isArray(sensorMappings) ? sensorMappings : [];
 
     const renderCard = (room, index) => {
-        const Icon = getIconForRoom(room.name);
+        const displayName = formatRoomName(room.name);
+        const Icon = getIconForRoom(displayName);
         const imageUrl = room.picture ? `${haUrl}${room.picture}` : null;
 
         const hasActiveDevices = (room.activeLights > 0 || room.activeAC > 0 || room.activeCovers > 0 || room.activeDoors > 0);
@@ -48,11 +68,15 @@ export default function RoomsList({
         const roomRegItems = registryEntities.filter(r => r.area_id === room.area_id);
         const roomSensors = roomRegItems
             .filter(r => r.entity_id.startsWith('sensor.'))
-            .map(r => allEntities.find(e => e.entity_id === r.entity_id))
-            .filter(Boolean);
+            .map(r => {
+                const entity = allEntities.find(e => e.entity_id === r.entity_id);
+                const mapping = safeSensorMappings.find(m => m.entity_id === r.entity_id);
+                return { ...entity, sensorType: mapping?.sensorType };
+            })
+            .filter(e => e && e.entity_id);
 
-        const temps = roomSensors.filter(s => s.entity_id.includes('temperature') && !s.entity_id.includes('battery') && !isNaN(parseFloat(s.state)));
-        const humiditys = roomSensors.filter(s => s.entity_id.includes('humidity') && !s.entity_id.includes('battery') && !isNaN(parseFloat(s.state)));
+        const temps = roomSensors.filter(s => s.sensorType === 'temperature');
+        const humiditys = roomSensors.filter(s => s.sensorType === 'humidity');
 
         const avgTemp = temps.length > 0
             ? (temps.reduce((sum, s) => sum + parseFloat(s.state), 0) / temps.length).toFixed(1)
@@ -65,14 +89,18 @@ export default function RoomsList({
         return (
             <TouchableOpacity
                 key={room.area_id}
-                style={[styles.card, layout === 'grid' && styles.gridCard]}
+                style={[
+                    styles.card,
+                    layout === 'horizontal' && { width: horizontalCardWidth },
+                    layout === 'grid' && { width: gridCardWidth, marginBottom: 4 }
+                ]}
                 onPress={() => onRoomPress && onRoomPress(room)}
             >
                 {imageUrl ? (
                     <ImageBackground
                         source={{
                             uri: imageUrl,
-                            headers: { Authorization: `Bearer ${process.env.EXPO_PUBLIC_HA_TOKEN}` }
+                            headers: { Authorization: `Bearer ${haToken}` }
                         }}
                         style={styles.backgroundImage}
                         resizeMode="cover"
@@ -101,7 +129,7 @@ export default function RoomsList({
                 )}
 
                 <View style={[styles.textContainer, { flexDirection: 'row', alignItems: 'center' }]}>
-                    <Text style={styles.roomName} numberOfLines={1}>{room.name}</Text>
+                    <Text style={styles.roomName} numberOfLines={1}>{displayName}</Text>
                     {room.hasPresenceSensor && (
                         <Satellite size={14} color="#4cd137" style={{ marginLeft: 6 }} />
                     )}
@@ -200,8 +228,9 @@ const styles = StyleSheet.create({
         paddingRight: 20,
     },
     card: {
-        width: 150,
-        height: 96,
+        width: 112, // default, overridden dynamically
+        aspectRatio: 8 / 5,
+        alignSelf: 'flex-start',
         borderRadius: 16,
         overflow: 'hidden',
         backgroundColor: '#2a2a2a',

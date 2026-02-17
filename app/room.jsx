@@ -24,6 +24,7 @@ export default function RoomPage() {
     const [registryDevices, setRegistryDevices] = useState([]);
     const [registryEntities, setRegistryEntities] = useState([]);
     const [lightMappings, setLightMappings] = useState([]);
+    const [showPreferenceButton, setShowPreferenceButton] = useState(true);
     const [loading, setLoading] = useState(true);
 
     const service = useRef(null);
@@ -35,6 +36,9 @@ export default function RoomPage() {
 
     useEffect(() => {
         loadConnectionConfig();
+        SecureStore.getItemAsync('settings_show_preference_button').then(val => {
+            if (val !== null) setShowPreferenceButton(val === 'true');
+        });
     }, []);
 
     const loadConnectionConfig = async () => {
@@ -50,7 +54,7 @@ export default function RoomPage() {
                     setConnectionConfig({
                         url: activeProfile.haUrl,
                         token: activeProfile.haToken,
-                        adminUrl: activeProfile.adminUrl || process.env.EXPO_PUBLIC_ADMIN_URL,
+                        adminUrl: activeProfile.adminUrl || '',
                         loaded: true
                     });
                     return;
@@ -60,7 +64,7 @@ export default function RoomPage() {
             setConnectionConfig({
                 url: '',
                 token: '',
-                adminUrl: process.env.EXPO_PUBLIC_ADMIN_URL,
+                adminUrl: '',
                 loaded: true
             });
         } catch (e) {
@@ -144,7 +148,7 @@ export default function RoomPage() {
     }
 
     const room = { area_id, name, picture };
-    const { lights, fans, climates, covers, medias, cameras, sensors, doors } = getRoomEntities(room, registryDevices, registryEntities, entities);
+    const { lights, fans, climates, covers, medias, cameras, sensors, doors, switches, automations, scripts } = getRoomEntities(room, registryDevices, registryEntities, entities);
 
     return (
         <View style={{ flex: 1, backgroundColor: '#000' }}>
@@ -160,12 +164,18 @@ export default function RoomPage() {
                 cameras={cameras}
                 sensors={sensors}
                 doors={doors}
+                switches={switches}
+                automations={automations}
+                scripts={scripts}
                 allEntities={entities}
                 onToggle={handleToggle}
                 onClose={() => router.back()}
                 isModal={false}
                 lightMappings={lightMappings}
                 adminUrl={connectionConfig.adminUrl}
+                haUrl={connectionConfig.url}
+                haToken={connectionConfig.token}
+                showPreferenceButton={showPreferenceButton}
             />
         </View>
     );

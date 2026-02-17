@@ -4,6 +4,7 @@ import { Stack, useRouter } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ChevronLeft, Calendar, Lightbulb, Thermometer, Tv, Activity, ArrowRight } from 'lucide-react-native';
 import { BarChart, LineChart } from 'react-native-chart-kit';
+import { getAdminUrl } from '../utils/storage';
 
 const screenWidth = Dimensions.get('window').width;
 
@@ -14,7 +15,11 @@ export default function InsightsPage() {
     const [period, setPeriod] = useState('day'); // 'day' | 'week' | 'month' (Mapped to backend period)
     const [selectedDate, setSelectedDate] = useState(new Date());
 
-    const adminUrl = process.env.EXPO_PUBLIC_ADMIN_URL;
+    const [adminUrl, setAdminUrl] = useState(null);
+
+    useEffect(() => {
+        getAdminUrl().then(url => setAdminUrl(url));
+    }, []);
 
     // Helper: Get Start/End/BackendPeriod based on UI selection
     const getQuery = () => {

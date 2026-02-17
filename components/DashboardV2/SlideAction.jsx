@@ -4,7 +4,6 @@ import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, {
     useSharedValue,
     useAnimatedStyle,
-    useAnimatedProps,
     withSpring,
     withTiming,
     withRepeat,
@@ -16,13 +15,9 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import { ChevronRight, Check } from 'lucide-react-native';
 
-import { Svg, Text as SvgText, Defs, LinearGradient, Stop } from 'react-native-svg';
-
 const BUTTON_SIZE = 48;
 const PADDING = 4;
 const CONTAINER_HEIGHT = BUTTON_SIZE + 2 * PADDING;
-
-const AnimatedLinearGradient = Animated.createAnimatedComponent(LinearGradient);
 
 export default function SlideAction({
     label,
@@ -121,22 +116,19 @@ export default function SlideAction({
         };
     });
 
-    const shimmerProgress = useSharedValue(-1);
+    const shimmerProgress = useSharedValue(0);
 
     useEffect(() => {
         shimmerProgress.value = withRepeat(
-            withTiming(2, { duration: 3000, easing: Easing.linear }), // Slower, linear sweep
+            withTiming(1, { duration: 2000, easing: Easing.inOut(Easing.ease) }),
             -1,
-            false
+            true
         );
     }, []);
 
-    const gradientProps = useAnimatedProps(() => {
-        return {
-            x1: `${shimmerProgress.value * 100}%`,
-            x2: `${(shimmerProgress.value + 1) * 100}%`
-        };
-    });
+    const shimmerStyle = useAnimatedStyle(() => ({
+        opacity: interpolate(shimmerProgress.value, [0, 0.5, 1], [0.5, 1, 0.5], Extrapolation.CLAMP),
+    }));
 
     return (
         <View
@@ -146,37 +138,11 @@ export default function SlideAction({
             {/* Background Track */}
             <View style={styles.track} />
 
-            {/* Progress Fill (Optional) */}
-            {/* <Animated.View style={[styles.fill, { backgroundColor: color }, fillStyle]} /> */}
-
             {/* Label with Shimmer */}
             <Animated.View pointerEvents="none" style={[styles.labelContainer, textStyle]}>
-                <Svg height="100%" width="100%">
-                    <Defs>
-                        <AnimatedLinearGradient
-                            id="textGradient"
-                            y1="0"
-                            y2="0"
-                            animatedProps={gradientProps}
-                        >
-                            <Stop offset="0" stopColor="white" stopOpacity="0.8" />
-                            <Stop offset="0.5" stopColor="#8947ca" stopOpacity="1" />
-                            <Stop offset="1" stopColor="white" stopOpacity="0.8" />
-                        </AnimatedLinearGradient>
-                    </Defs>
-                    <SvgText
-                        fill="url(#textGradient)"
-                        fontSize="13"
-                        fontWeight="500"
-                        x="50%"
-                        y="50%"
-                        textAnchor="middle"
-                        alignmentBaseline="middle"
-                        letterSpacing="0.5"
-                    >
-                        {label}
-                    </SvgText>
-                </Svg>
+                <Animated.Text style={[styles.label, shimmerStyle]}>
+                    {label}
+                </Animated.Text>
             </Animated.View>
 
             {/* Slider Button */}
