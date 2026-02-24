@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, memo } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Keyboard } from 'react-native';
 import { Colors } from '../../constants/Colors';
 import { Send, Bot, User as UserIcon, Mic, Volume2, VolumeX } from 'lucide-react-native';
@@ -44,7 +44,7 @@ async function fetchCameraSnapshot(entityId, haUrl, haToken) {
     }
 }
 
-export default function BrainView({ entities = [], callService, registryDevices = [], registryEntities = [], registryAreas = [], onExit, haUrl, haToken }) {
+function BrainView({ entities = [], callService, registryDevices = [], registryEntities = [], registryAreas = [], onExit, haUrl, haToken }) {
     const [message, setMessage] = useState('');
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -603,3 +603,5 @@ const styles = StyleSheet.create({
         fontWeight: '500'
     }
 });
+
+export default memo(BrainView);

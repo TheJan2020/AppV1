@@ -1,9 +1,9 @@
-import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
+import { useRef, useState, useEffect, useMemo } from 'react';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator, InteractionManager } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import HeaderV2 from '../components/DashboardV2/HeaderV2';
@@ -37,7 +37,7 @@ import * as SecureStore from 'expo-secure-store';
 import { startHeartbeat, stopHeartbeat, updateAppState } from '../services/heartbeat';
 import { getRoomEntities } from '../utils/roomHelpers';
 
-export default function DashboardV2() {
+export default function DashboardV2Tablet() {
     const router = useRouter();
     const { userName, userId } = useLocalSearchParams();
     const { isTablet, isLandscape, columns } = useDeviceType();
@@ -54,15 +54,18 @@ export default function DashboardV2() {
     const frigateService = useRef(null); // Frigate Service Ref
 
     const [entities, setEntities] = useState([]);
-    // Batch state_changed updates — instead of copying the 500+ entity array on every single
-    // WebSocket event (5-20/sec), we collect updates and flush once per 500ms.
-    // This reduces array allocations from ~600/min to ~120/min, preventing OOM on iPhone.
-    const pendingEntityUpdates = useRef([]);
-    const entityFlushTimer = useRef(null);
     const [cityName, setCityName] = useState('Home');
     const [badgeConfig, setBadgeConfig] = useState(null);
     const [currentFloor, setCurrentFloor] = useState(null);
-    const [activeTab, setActiveTab] = useState('home');
+    const [activeTab, setActiveTab] = useState('tablet');
+    const [isReady, setIsReady] = useState(false);
+
+    useEffect(() => {
+        const task = InteractionManager.runAfterInteractions(() => {
+            setIsReady(true);
+        });
+        return () => task.cancel();
+    }, []);
     const [frigateCameras, setFrigateCameras] = useState([]); // Frigate State
     const [selectedFrigateCamera, setSelectedFrigateCamera] = useState(null);
     const [showFrigateModal, setShowFrigateModal] = useState(false);
@@ -83,12 +86,6 @@ export default function DashboardV2() {
     // Room Reordering State
     const [savedRoomOrder, setSavedRoomOrder] = useState([]);
     const [isReorderMode, setIsReorderMode] = useState(false);
-    const [aiTabVisited, setAiTabVisited] = useState(false);
-
-    // Track when AI tab is first visited (keeps it mounted after)
-    useEffect(() => {
-        if (activeTab === 'ai' && !aiTabVisited) setAiTabVisited(true);
-    }, [activeTab]);
 
     useEffect(() => {
         SecureStore.getItemAsync('settings_show_family').then(val => {
@@ -155,12 +152,12 @@ export default function DashboardV2() {
         }
     };
 
-    const handleFrigateCameraPress = useCallback((camera, mode = 'live') => {
+    const handleFrigateCameraPress = (camera, mode = 'live') => {
         console.log('[Dashboard] Camera pressed:', camera?.name, 'Mode:', mode);
         setSelectedFrigateCamera(camera);
         setFrigateInitialView(mode);
         setShowFrigateModal(true);
-    }, []);
+    };
 
     // Registry Data
     const [registryDevices, setRegistryDevices] = useState([]);
@@ -399,28 +396,15 @@ export default function DashboardV2() {
                     const newEvent = data.event.data.new_state;
                     if (!newEvent) return; // Ignore deletions or null states
 
-                    // Batch updates — collect into pending array, flush every 500ms
-                    pendingEntityUpdates.current.push(newEvent);
-                    if (!entityFlushTimer.current) {
-                        entityFlushTimer.current = setTimeout(() => {
-                            const updates = pendingEntityUpdates.current;
-                            pendingEntityUpdates.current = [];
-                            entityFlushTimer.current = null;
-
-                            setEntities(prev => {
-                                const newEntities = [...prev];
-                                for (const update of updates) {
-                                    const index = newEntities.findIndex(e => e.entity_id === update.entity_id);
-                                    if (index !== -1) {
-                                        newEntities[index] = update;
-                                    } else {
-                                        newEntities.push(update);
-                                    }
-                                }
-                                return newEntities;
-                            });
-                        }, 500);
-                    }
+                    setEntities(prev => {
+                        const index = prev.findIndex(e => e.entity_id === newEvent.entity_id);
+                        if (index !== -1) {
+                            const newEntities = [...prev];
+                            newEntities[index] = newEvent;
+                            return newEntities;
+                        }
+                        return [...prev, newEvent];
+                    });
                 }
             });
         }
@@ -443,12 +427,6 @@ export default function DashboardV2() {
         return () => {
             configAbort.abort();
             if (mappingsAbortRef.current) mappingsAbortRef.current.abort();
-            // Clear batched entity update timer
-            if (entityFlushTimer.current) {
-                clearTimeout(entityFlushTimer.current);
-                entityFlushTimer.current = null;
-            }
-            pendingEntityUpdates.current = [];
             if (service.current) {
                 if (service.current.disconnect) {
                     service.current.disconnect();
@@ -459,7 +437,7 @@ export default function DashboardV2() {
         };
     }, [connectionConfig.loaded]);
 
-    const weather = useMemo(() => entities.find(e => e.entity_id.startsWith('weather.')), [entities]);
+    const weather = entities.find(e => e.entity_id.startsWith('weather.'));
 
     // Active Devices Modal State
     const [modalVisible, setModalVisible] = useState(false);
@@ -477,12 +455,13 @@ export default function DashboardV2() {
     const [settingsModalVisible, setSettingsModalVisible] = useState(false);
 
     // Derived Logic for Badges
-    const getAllActiveDevices = useCallback((type) => {
+    const getAllActiveDevices = (type) => {
         if (!registryAreas.length) return [];
 
         const grouped = [];
 
         registryAreas.forEach(area => {
+            // Find all entities associated with this area (directly or via device)
             const areaDevices = registryDevices.filter(d => d.area_id === area.area_id);
             const areaDeviceIds = areaDevices.map(d => d.id);
 
@@ -496,71 +475,87 @@ export default function DashboardV2() {
                     if (type === 'lights') return e.entity_id.startsWith('light.') && e.state === 'on';
                     if (type === 'ac') return e.entity_id.startsWith('climate.') && e.state !== 'off' && e.state !== 'unavailable';
                     if (type === 'doors') {
+                        // Use explicit mapping only
                         const mapping = sensorMappings.find(m => m.entity_id === e.entity_id);
-                        if (mapping && mapping.sensorType === 'door') return true;
+                        if (mapping && mapping.sensorType === 'door') {
+                            // in the modal, we want ALL doors, not just open ones
+                            return true;
+                        }
                         return false;
                     }
                     return false;
                 });
 
             if (activeInRoom.length > 0) {
-                grouped.push({ title: area.name, data: activeInRoom });
+                grouped.push({
+                    title: area.name,
+                    data: activeInRoom
+                });
             }
         });
 
         return grouped;
-    }, [registryAreas, registryDevices, registryEntities, entities, sensorMappings]);
+    };
 
-    const { title: modalTitle, devices: modalDevices } = useMemo(() => {
+    const getModalData = () => {
         if (!activeBadgeType) return { title: '', devices: [] };
+
         let title = '';
         if (activeBadgeType === 'lights') title = 'Active Lights';
         if (activeBadgeType === 'ac') title = 'Active ACs';
         if (activeBadgeType === 'doors') title = 'All Doors';
-        return { title, devices: getAllActiveDevices(activeBadgeType) };
-    }, [activeBadgeType, getAllActiveDevices]);
 
-    const handleBadgePress = useCallback((type) => {
+        return {
+            title,
+            devices: getAllActiveDevices(activeBadgeType)
+        };
+    };
+
+    const { title: modalTitle, devices: modalDevices } = getModalData();
+
+    const handleBadgePress = (type) => {
         if (type === 'security') {
             setSecurityModalVisible(true);
         } else {
             setActiveBadgeType(type);
             setModalVisible(true);
         }
-    }, []);
+    };
 
-    // Calculate Counts from Grouped Data (memoized — these are O(n*m) operations)
-    const activeLightsGrouped = useMemo(() => getAllActiveDevices('lights'), [getAllActiveDevices]);
+    // Calculate Counts from Grouped Data
+    const activeLightsGrouped = getAllActiveDevices('lights');
     const lightsOn = activeLightsGrouped.reduce((sum, group) => sum + group.data.length, 0);
 
-    const activeACGrouped = useMemo(() => getAllActiveDevices('ac'), [getAllActiveDevices]);
+    const activeACGrouped = getAllActiveDevices('ac');
     const acOn = activeACGrouped.reduce((sum, group) => sum + group.data.length, 0);
 
-    const doorsOpen = useMemo(() => entities.filter(e => {
+    // Count OPEN doors specifically for the badge number
+    const doorsOpen = entities.filter(e => {
         const mapping = sensorMappings.find(m => m.entity_id === e.entity_id);
         if (mapping && mapping.sensorType === 'door') {
             const s = e.state.toLowerCase();
             return s === 'open' || s === 'on' || s === 'true' || s === '1';
         }
         return false;
-    }).length, [entities, sensorMappings]);
+    }).length;
 
-    const { power, securityState } = useMemo(() => {
-        let pw = null;
-        let sec = 'Unknown';
-        if (badgeConfig) {
-            const pEntity = entities.find(e => e.entity_id === badgeConfig.power_entity);
-            pw = pEntity ? pEntity.state : '--';
-            const sEntity = entities.find(e => e.entity_id === badgeConfig.security_entity);
-            sec = sEntity ? sEntity.state : 'Unknown';
-        } else {
-            const pEntity = entities.find(e => e.entity_id.includes('power'));
-            pw = pEntity ? pEntity.state : null;
-            const sEntity = entities.find(e => e.entity_id.startsWith('alarm_control_panel.'));
-            sec = sEntity ? sEntity.state : 'Unknown';
+    // Power and Security still single entities for now
+    let power = null;
+    let securityState = 'Unknown';
+    if (badgeConfig) {
+        const pEntity = entities.find(e => e.entity_id === badgeConfig.power_entity);
+        power = pEntity ? pEntity.state : '--';
+        const sEntity = entities.find(e => e.entity_id === badgeConfig.security_entity);
+        securityState = sEntity ? sEntity.state : 'Unknown';
+    } else {
+        const pEntity = entities.find(e => e.entity_id.includes('power'));
+        power = pEntity ? pEntity.state : null;
+        const sEntity = entities.find(e => e.entity_id.startsWith('alarm_control_panel.'));
+        securityState = sEntity ? sEntity.state : 'Unknown';
+        if (sEntity) {
+            console.log('[Security Debug] Entity:', sEntity.entity_id, 'Attributes:', JSON.stringify(sEntity.attributes, null, 2));
         }
-        return { power: pw, securityState: sec };
-    }, [entities, badgeConfig]);
+    }
 
     // Default floor selection
     useEffect(() => {
@@ -570,28 +565,40 @@ export default function DashboardV2() {
     }, []);
 
     // -------------------------------------------------------------------------
-    // -------------------------------------------------------------------------
     // Auto-Room Presentation (User Tracker -> Espresense Match)
-    // Optimized: cache tracker entity_id, derive state cheaply, only react to
-    // tracker state changes instead of every entity update.
     // -------------------------------------------------------------------------
     const lastActiveRoomRef = useRef(null);
     const lastTrackerStateRef = useRef(null);
     const appState = useRef(AppState.currentState);
-    const trackerEntityIdRef = useRef(null);
 
-    // Find tracker entity_id once (stable — doesn't change after initial discovery)
-    const trackerEntityId = useMemo(() => {
-        if (!userName || entities.length === 0) return trackerEntityIdRef.current;
-        // Return cached value if already found
-        if (trackerEntityIdRef.current) return trackerEntityIdRef.current;
+    // Refactored check logic for re-use
+    // isResume: Boolean, true if triggered by App Resume
+    const checkPresence = (isResume = false) => {
+        // console.log('[Auto-Room] checkPresence called. isResume:', isResume, 'userName:', userName, 'roomsCount:', roomsWithCounts.length);
 
+        if (!roomsWithCounts.length || !userName) {
+            // console.log('[Auto-Room] Early exit - no rooms or userName');
+            return;
+        }
+
+        // Check Settings
+        const shouldRun = isResume ? autoRoomResume : autoRoomVisit;
+        // console.log('[Auto-Room] Setting check:', isResume ? 'autoRoomResume' : 'autoRoomVisit', '=', shouldRun);
+        if (!shouldRun) {
+            return;
+        }
+
+        // 1. Find User's Tracked Device Sensor
         const safeUserName = userName.toLowerCase().replace(/ /g, '_');
+
+        // First try to find sensor with "room" in the name
         let tracker = entities.find(e =>
             e.entity_id.includes(safeUserName) &&
             e.entity_id.includes('room') &&
             !e.entity_id.includes('geocoded')
         );
+
+        // Fallback to any location sensor (but not geocoded)
         if (!tracker) {
             tracker = entities.find(e =>
                 e.entity_id.includes(safeUserName) &&
@@ -599,80 +606,102 @@ export default function DashboardV2() {
                 !e.entity_id.includes('geocoded')
             );
         }
-        if (tracker) trackerEntityIdRef.current = tracker.entity_id;
-        return trackerEntityIdRef.current;
-    }, [userName, entities.length > 0]);
 
-    // Derive tracker state cheaply — single direct lookup instead of two .includes() scans
-    const trackerState = useMemo(() => {
-        if (!trackerEntityId) return null;
-        const entity = entities.find(e => e.entity_id === trackerEntityId);
-        return entity?.state?.toLowerCase() || null;
-    }, [entities, trackerEntityId]);
-
-    // Presence navigation logic — only runs when trackerState actually changes
-    const navigateToPresenceRoom = useCallback((isResume = false) => {
-        if (!roomsWithCounts.length || !userName) return;
-        const shouldRun = isResume ? autoRoomResume : autoRoomVisit;
-        if (!shouldRun) return;
-        if (!trackerState) return;
-
-        if (!isResume && lastTrackerStateRef.current === trackerState) return;
-        lastTrackerStateRef.current = trackerState;
-
-        // Ignore generic states
-        if (['home', 'not_home', 'unknown', 'unavailable', 'away', 'none'].includes(trackerState)) {
-            if (lastActiveRoomRef.current) lastActiveRoomRef.current = null;
+        if (!tracker || !tracker.state) {
             return;
         }
 
-        const mappedAreaId = roomTrackingLookup[trackerState];
-        let foundRoom = mappedAreaId ? roomsWithCounts.find(r => r.area_id === mappedAreaId) : null;
+        const currentState = tracker.state.toLowerCase();
+
+        // Optimization: Prevent infinite loops if state hasn't changed
+        if (!isResume && lastTrackerStateRef.current === currentState) {
+            return;
+        }
+        lastTrackerStateRef.current = currentState;
+
+        console.log('[Auto-Room] New Tracker State:', currentState);
+
+        // Ignore generic states
+        if (['home', 'not_home', 'unknown', 'unavailable', 'away', 'none'].includes(currentState)) {
+            if (lastActiveRoomRef.current) {
+                lastActiveRoomRef.current = null;
+            }
+            return;
+        }
+
+        // 2. Find Room using Lookup Map from Backend
+        console.log('[Auto-Room] Using lookup map for state:', currentState);
+
+        // Direct lookup from database mapping
+        const mappedAreaId = roomTrackingLookup[currentState];
+        console.log('[Auto-Room] Mapped area_id:', mappedAreaId);
+
+        let foundRoom = null;
+        if (mappedAreaId) {
+            foundRoom = roomsWithCounts.find(r => r.area_id === mappedAreaId);
+            console.log('[Auto-Room] ✓ Found room via lookup:', foundRoom?.name);
+        } else {
+            console.log('[Auto-Room] ✗ No mapping found for state:', currentState);
+        }
 
         if (foundRoom) {
+            // Trigger if room changed OR if we just forced a check (e.g. app resume) and want to show it
             if (lastActiveRoomRef.current !== foundRoom.area_id) {
+                // Don't open if sheet is already visible and animating
                 if (roomSheetVisible && !isResume) {
-                    // Sheet already visible, skip
+                    console.log('[Auto-Room] Sheet already visible, skipping');
                 } else {
-                    console.log(`[Auto-Room] Opening room: ${foundRoom.name}`);
+                    console.log(`[Auto-Room] ✅ Opening room sheet: ${foundRoom.name}. Resume: ${isResume}`);
                     lastActiveRoomRef.current = foundRoom.area_id;
+
                     setSelectedRoom(foundRoom);
                     setRoomSheetVisible(true);
                     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
                 }
+            } else {
+                console.log('[Auto-Room] Already in this room, not re-opening');
             }
         } else {
-            if (lastActiveRoomRef.current !== null) lastActiveRoomRef.current = null;
+            console.log('[Auto-Room] ❌ No room found for state:', currentState);
+            console.log('[Auto-Room] Available lookup states:', Object.keys(roomTrackingLookup).join(', '));
+            if (lastActiveRoomRef.current !== null) {
+                lastActiveRoomRef.current = null;
+            }
         }
-    }, [trackerState, roomsWithCounts, userName, autoRoomVisit, autoRoomResume, roomTrackingLookup, roomSheetVisible]);
+    };
 
-    // Run check only when tracker state changes (not every entity update)
+    // Run check on Entity Change
     useEffect(() => {
-        navigateToPresenceRoom(false);
-    }, [trackerState, navigateToPresenceRoom]);
+        checkPresence(false);
+    }, [entities, roomsWithCounts, userName, autoRoomVisit]); // Check whenever relevant data updates
 
-    // App resume listener — set up ONCE, uses refs for latest values
-    const navigateToPresenceRoomRef = useRef(navigateToPresenceRoom);
-    navigateToPresenceRoomRef.current = navigateToPresenceRoom;
-
+    // Run check on App Resume
     useEffect(() => {
         const subscription = AppState.addEventListener('change', nextAppState => {
             if (
                 appState.current.match(/inactive|background/) &&
                 nextAppState === 'active'
             ) {
-                // Re-check presence on resume
-                lastActiveRoomRef.current = null;
-                navigateToPresenceRoomRef.current(true);
-                // Refresh config
+                if (autoRoomResume) {
+                    console.log('[Dashboard] App Resumed: Re-checking Presence...');
+                    // Reset ref to force re-open if user is still in the same room
+                    lastActiveRoomRef.current = null;
+                    checkPresence(true);
+                }
+
+                // Always refresh config on resume
                 fetchMappings();
             }
             appState.current = nextAppState;
+
+            // Update heartbeat app state
             updateAppState(nextAppState === 'active' ? 'foreground' : 'background');
         });
 
-        return () => { subscription.remove(); };
-    }, []); // Empty deps — listener set up once, reads latest via refs
+        return () => {
+            subscription.remove();
+        };
+    }, [entities, roomsWithCounts, userName, autoRoomResume]);
 
     // Heartbeat for user session tracking
     useEffect(() => {
@@ -682,19 +711,19 @@ export default function DashboardV2() {
         return () => stopHeartbeat();
     }, [connectionConfig.loaded, connectionConfig.adminUrl, userId, userName]);
 
-    const callService = useCallback((domain, serviceName, serviceData) => {
+    const callService = (domain, serviceName, serviceData) => {
         if (service.current) {
             return service.current.callService(domain, serviceName, serviceData);
         }
         return Promise.reject(new Error("Home Assistant service not connected"));
-    }, []);
+    };
 
-    const handleScenePress = useCallback((sceneId) => {
+    const handleScenePress = (sceneId) => {
         console.log('Scene pressed:', sceneId);
         const domain = sceneId.split('.')[0];
         callService(domain, 'turn_on', { entity_id: sceneId });
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    }, [callService]);
+    };
 
 
 
@@ -705,8 +734,9 @@ export default function DashboardV2() {
         }
     };
 
-    const handleRoomPress = useCallback((room) => {
+    const handleRoomPress = (room) => {
         if (activeTab === 'rooms') {
+            // Rooms tab: Navigate to room page
             router.push({
                 pathname: '/room',
                 params: {
@@ -716,12 +746,14 @@ export default function DashboardV2() {
                 }
             });
         } else {
+            // Home tab: Show Modal Popup
             setSelectedRoom(room);
             setRoomSheetVisible(true);
         }
-    }, [activeTab]);
+    };
 
-    const handleHeaderRoomPress = useCallback(() => {
+    const handleHeaderRoomPress = () => {
+        // Find the current user's person entity
         const personEntity = entities.find(e =>
             e.entity_id.startsWith('person.') &&
             (e.attributes?.friendly_name?.toLowerCase() === userName?.toLowerCase() ||
@@ -729,8 +761,13 @@ export default function DashboardV2() {
         );
 
         const currentLocation = personEntity?.state;
-        if (!currentLocation || currentLocation === 'home' || currentLocation === 'not_home') return;
 
+        // If at home or no location, don't open sheet
+        if (!currentLocation || currentLocation === 'home' || currentLocation === 'not_home') {
+            return;
+        }
+
+        // Find the room that matches the current location
         const currentRoom = registryAreas.find(area =>
             area.name?.toLowerCase() === currentLocation.toLowerCase() ||
             area.area_id?.toLowerCase() === currentLocation.toLowerCase()
@@ -741,30 +778,17 @@ export default function DashboardV2() {
             setRoomSheetVisible(true);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         }
-    }, [entities, userName, registryAreas]);
+    };
 
 
 
-    const handleTabPress = useCallback((tabId) => {
-        if (tabId === 'tablet') {
-            router.push('/dashboard-v2-tablet');
+    const handleTabPress = (tabId) => {
+        if (tabId === 'home') {
+            router.push('/dashboard-v2');
         } else {
             setActiveTab(tabId);
         }
-    }, []);
-
-    const handleSettingChange = useCallback((key, val) => {
-        if (key === 'showFamily') setShowFamily(val);
-        if (key === 'autoRoomVisit') setAutoRoomVisit(val);
-        if (key === 'autoRoomResume') setAutoRoomResume(val);
-        if (key === 'showVoiceAssistant') setShowVoiceAssistant(val);
-        if (key === 'showPreferenceButton') setShowPreferenceButton(val);
-    }, []);
-
-    const handlePlayMedia = useCallback(() => setShowYoutubeLauncher(true), []);
-    const handleNetworkPress = useCallback(() => setShowNetworkModal(true), []);
-    const handleAiExit = useCallback(() => setActiveTab('home'), []);
-    const handleOpenOpacitySettings = useCallback(() => setSettingsModalVisible(true), []);
+    };
 
     const getRoomsWithCounts = () => {
         // Fallback to registryAreas if badgeConfig is missing or has no selected_areas
@@ -911,40 +935,420 @@ export default function DashboardV2() {
 
     const sidebarPadding = isLandscape ? { paddingLeft: 80 } : {};
 
-    const LoadingSpinner = () => (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <ActivityIndicator size="large" color="#8947ca" />
-        </View>
-    );
+    const renderContent = () => {
+        if (activeTab === 'home' || activeTab === 'tablet') {
+            return (
+                <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
+                    <HeaderV2
+                        weather={weather}
+                        cityName={cityName}
+                        userName={userName}
+                        entities={entities}
+                        config={badgeConfig}
+                        onRoomPress={handleHeaderRoomPress}
+                    />
+                    <StatusBadges
+                        securityState={securityState}
+                        lightsOn={lightsOn}
+                        acOn={acOn}
+                        doorsOpen={doorsOpen}
+                        power={power}
+                        onPress={handleBadgePress}
+                    />
+                    <View style={styles.divider} />
 
-    const availableFloors = useMemo(() =>
-        registryFloors.sort((a, b) => (a.level || 0) - (b.level || 0)),
-        [registryFloors]
-    );
+                    {/* Person Status */}
+                    {showFamily && <PersonBadges entities={entities} alertRules={alertRules} haUrl={connectionConfig.url} />}
 
-    const filteredRooms = useMemo(() =>
-        roomsWithCounts.filter(room => {
-            const area = registryAreas.find(a => a.area_id === room.area_id);
-            if (availableFloors.length === 0) return true;
-            if (!selectedFloor) return true;
-            const areaFloorId = area ? (area.floor_id || area.floor) : null;
-            return areaFloorId === selectedFloor;
-        }),
-        [roomsWithCounts, registryAreas, availableFloors, selectedFloor]
-    );
+                    <QuickScenes
+                        scenes={quickScenesData}
+                        onScenePress={handleScenePress}
+                    />
 
-    const homeLocks = useMemo(() => entities.filter(e => {
-        if (!e.entity_id.startsWith('lock.')) return false;
-        const reg = registryEntities.find(re => re.entity_id === e.entity_id);
-        if (!reg) return false;
-        const activeRoomIds = roomsWithCounts.map(r => r.area_id);
-        let areaId = reg.area_id;
-        if (!areaId && reg.device_id) {
-            const dev = registryDevices.find(d => d.id === reg.device_id);
-            areaId = dev?.area_id;
+                    {/* Voice Conversation */}
+                    {showVoiceAssistant && <VoiceConversation
+                        onCommand={handleVoiceCommand}
+                        context={{
+                            userName: userName,
+                            time: new Date().toLocaleTimeString(),
+                            rooms: roomsWithCounts.map(room => ({
+                                name: room.name,
+                                area_id: room.area_id,
+                                lights: registryEntities
+                                    .filter(re => {
+                                        const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
+                                        const areaDeviceIds = areaDevices.map(d => d.id);
+                                        return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
+                                            && re.entity_id.startsWith('light.');
+                                    })
+                                    .map(re => {
+                                        const entity = entities.find(e => e.entity_id === re.entity_id);
+                                        return {
+                                            entity_id: re.entity_id,
+                                            friendly_name: entity?.attributes?.friendly_name || re.entity_id,
+                                            state: entity?.state || 'unknown'
+                                        };
+                                    }),
+                                climate: registryEntities
+                                    .filter(re => {
+                                        const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
+                                        const areaDeviceIds = areaDevices.map(d => d.id);
+                                        return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
+                                            && re.entity_id.startsWith('climate.');
+                                    })
+                                    .map(re => {
+                                        const entity = entities.find(e => e.entity_id === re.entity_id);
+                                        return {
+                                            entity_id: re.entity_id,
+                                            friendly_name: entity?.attributes?.friendly_name || re.entity_id,
+                                            state: entity?.state || 'unknown',
+                                            temperature: entity?.attributes?.current_temperature,
+                                            target_temp: entity?.attributes?.temperature
+                                        };
+                                    }),
+                                covers: registryEntities
+                                    .filter(re => {
+                                        const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
+                                        const areaDeviceIds = areaDevices.map(d => d.id);
+                                        return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
+                                            && re.entity_id.startsWith('cover.');
+                                    })
+                                    .map(re => {
+                                        const entity = entities.find(e => e.entity_id === re.entity_id);
+                                        return {
+                                            entity_id: re.entity_id,
+                                            friendly_name: entity?.attributes?.friendly_name || re.entity_id,
+                                            state: entity?.state || 'unknown',
+                                            current_position: entity?.attributes?.current_position
+                                        };
+                                    }),
+                                media: registryEntities
+                                    .filter(re => {
+                                        const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
+                                        const areaDeviceIds = areaDevices.map(d => d.id);
+                                        return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
+                                            && re.entity_id.startsWith('media_player.');
+                                    })
+                                    .map(re => {
+                                        const entity = entities.find(e => e.entity_id === re.entity_id);
+                                        return {
+                                            entity_id: re.entity_id,
+                                            friendly_name: entity?.attributes?.friendly_name || re.entity_id,
+                                            state: entity?.state || 'unknown'
+                                        };
+                                    }),
+                                switches: registryEntities
+                                    .filter(re => {
+                                        const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
+                                        const areaDeviceIds = areaDevices.map(d => d.id);
+                                        return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
+                                            && re.entity_id.startsWith('switch.');
+                                    })
+                                    .map(re => {
+                                        const entity = entities.find(e => e.entity_id === re.entity_id);
+                                        return {
+                                            entity_id: re.entity_id,
+                                            friendly_name: entity?.attributes?.friendly_name || re.entity_id,
+                                            state: entity?.state || 'unknown'
+                                        };
+                                    }),
+                                sensors: registryEntities
+                                    .filter(re => {
+                                        const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
+                                        const areaDeviceIds = areaDevices.map(d => d.id);
+                                        return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
+                                            && re.entity_id.startsWith('sensor.')
+                                            && !re.entity_id.includes('signal_strength')
+                                            && !re.entity_id.includes('battery');
+                                    })
+                                    .map(re => {
+                                        const entity = entities.find(e => e.entity_id === re.entity_id);
+                                        return {
+                                            entity_id: re.entity_id,
+                                            friendly_name: entity?.attributes?.friendly_name || re.entity_id,
+                                            state: entity?.state || 'unknown',
+                                            unit: entity?.attributes?.unit_of_measurement
+                                        };
+                                    }),
+                                binary_sensors: registryEntities
+                                    .filter(re => {
+                                        const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
+                                        const areaDeviceIds = areaDevices.map(d => d.id);
+                                        return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
+                                            && re.entity_id.startsWith('binary_sensor.');
+                                    })
+                                    .map(re => {
+                                        const entity = entities.find(e => e.entity_id === re.entity_id);
+                                        return {
+                                            entity_id: re.entity_id,
+                                            friendly_name: entity?.attributes?.friendly_name || re.entity_id,
+                                            state: entity?.state || 'unknown',
+                                            device_class: entity?.attributes?.device_class
+                                        };
+                                    })
+                            }))
+                        }}
+                    />}
+
+
+
+                    {/* Dynamic Lock Sliders */}
+                    {entities.filter(e => {
+                        if (!e.entity_id.startsWith('lock.')) return false;
+                        const reg = registryEntities.find(re => re.entity_id === e.entity_id);
+                        if (!reg) return false;
+
+                        // Only show locks that belong to rooms we are actually displaying
+                        const activeRoomIds = roomsWithCounts.map(r => r.area_id);
+
+                        let areaId = reg.area_id;
+                        if (!areaId && reg.device_id) {
+                            const dev = registryDevices.find(d => d.id === reg.device_id);
+                            areaId = dev?.area_id;
+                        }
+
+                        return areaId && activeRoomIds.includes(areaId);
+                    }).length > 0 && (
+                            <View style={styles.sliderRow}>
+                                {entities
+                                    .filter(e => {
+                                        if (!e.entity_id.startsWith('lock.')) return false;
+                                        const reg = registryEntities.find(re => re.entity_id === e.entity_id);
+                                        if (!reg) return false;
+
+                                        const activeRoomIds = roomsWithCounts.map(r => r.area_id);
+
+                                        let areaId = reg.area_id;
+                                        if (!areaId && reg.device_id) {
+                                            const dev = registryDevices.find(d => d.id === reg.device_id);
+                                            areaId = dev?.area_id;
+                                        }
+
+                                        return areaId && activeRoomIds.includes(areaId);
+                                    })
+                                    .map(lock => {
+                                        const isUnlocked = lock.state === 'unlocked' || lock.state === 'open';
+                                        const name = lock.attributes.friendly_name || lock.entity_id;
+
+                                        return (
+                                            <View key={lock.entity_id} style={styles.sliderContainer}>
+                                                {isUnlocked ? (
+                                                    <TouchableOpacity
+                                                        style={[styles.statusCard, { backgroundColor: '#FF7043' }]}
+                                                        onPress={() => {
+                                                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                                                            callService('lock', 'lock', { entity_id: lock.entity_id });
+                                                        }}
+                                                    >
+                                                        <LockOpen size={24} color="#fff" />
+                                                        <Text style={styles.statusText}>Unlocked</Text>
+                                                    </TouchableOpacity>
+                                                ) : (
+                                                    <SlideAction
+                                                        label={`Unlock ${name}`}
+                                                        icon={LockOpen}
+                                                        color="#8947ca"
+                                                        onSlide={() => callService('lock', 'unlock', { entity_id: lock.entity_id })}
+                                                    />
+                                                )}
+                                            </View>
+                                        );
+                                    })}
+                            </View>
+                        )}
+
+                    <RoomsList
+                        rooms={roomsWithCounts}
+                        registryEntities={registryEntities}
+                        allEntities={entities}
+                        onRoomPress={handleRoomPress}
+                        overlayOpacity={cardOpacity}
+                        overlayColor={cardColor}
+                        onSettingsPress={() => setSettingsModalVisible(true)}
+                        layout={isTablet ? 'grid' : 'horizontal'}
+                        columns={columns}
+                        haUrl={connectionConfig.url}
+                        haToken={connectionConfig.token}
+                        sensorMappings={sensorMappings}
+                    />
+
+
+                    {/* TEMPORARILY DISABLED — testing if cameras cause crash */}
+                    {/* <HACamerasList
+                        cameras={entities.filter(e => e.entity_id.startsWith('camera.'))}
+                        allEntities={entities}
+                        haUrl={connectionConfig.url}
+                        haToken={connectionConfig.token}
+                        onCameraPress={(cam) => {
+                            console.log('HA Camera Pressed:', cam.entity_id);
+                        }}
+                    /> */}
+                </ScrollView>
+            );
         }
-        return areaId && activeRoomIds.includes(areaId);
-    }), [entities, registryEntities, registryDevices, roomsWithCounts]);
+
+        if (activeTab === 'rooms') {
+            const availableFloors = registryFloors.sort((a, b) => (a.level || 0) - (b.level || 0));
+
+            // Filter rooms by matching area's floor_id to the selected floor's floor_id
+            const filteredRooms = roomsWithCounts.filter(room => {
+                const area = registryAreas.find(a => a.area_id === room.area_id);
+                if (availableFloors.length === 0) return true;
+                if (!selectedFloor) return true;
+
+                const areaFloorId = area ? (area.floor_id || area.floor) : null;
+                return areaFloorId === selectedFloor;
+            });
+
+            const roomsContent = (
+                <>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                        <Text style={styles.sectionTitle}>Rooms</Text>
+                        <TouchableOpacity onPress={() => setIsReorderMode(!isReorderMode)}>
+                            <Text style={{ color: '#8947ca', fontWeight: 'bold', fontSize: 16 }}>
+                                {isReorderMode ? 'Done' : 'Edit'}
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    {isReorderMode ? (
+                        <View style={{ flex: 1, height: '100%' }}>
+                            <DraggableRoomList
+                                rooms={filteredRooms}
+                                registryEntities={registryEntities}
+                                allEntities={entities}
+                                onOrderChange={handleRoomReorder}
+                            />
+                        </View>
+                    ) : (
+                        <>
+                            {availableFloors.length > 0 && (
+                                <View style={{ flexDirection: 'row', marginBottom: 20, gap: 10 }}>
+                                    {availableFloors.map(floor => (
+                                        <TouchableOpacity
+                                            key={floor.floor_id}
+                                            onPress={() => setSelectedFloor(floor.floor_id)}
+                                            style={{
+                                                paddingVertical: 8,
+                                                paddingHorizontal: 16,
+                                                backgroundColor: selectedFloor === floor.floor_id ? '#8947ca' : 'rgba(255,255,255,0.1)',
+                                                borderRadius: 20
+                                            }}
+                                        >
+                                            <Text style={{
+                                                color: selectedFloor === floor.floor_id ? 'white' : 'rgba(255,255,255,0.6)',
+                                                fontWeight: '600'
+                                            }}>
+                                                {floor.name ? floor.name.toUpperCase() : floor.floor_id.toUpperCase()}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+                            )}
+
+                            <RoomsList
+                                rooms={filteredRooms}
+                                registryEntities={registryEntities}
+                                allEntities={entities}
+                                onRoomPress={handleRoomPress}
+                                overlayOpacity={cardOpacity}
+                                overlayColor={cardColor}
+                                onSettingsPress={() => setSettingsModalVisible(true)}
+                                layout="grid"
+                                columns={columns}
+                                haUrl={connectionConfig.url}
+                                haToken={connectionConfig.token}
+                                sensorMappings={sensorMappings}
+                            />
+                        </>
+                    )}
+                </>
+            );
+
+            return (
+                <View style={[styles.content, { paddingHorizontal: 20, marginTop: 60, paddingBottom: 100, flex: 1 }, isLandscape && sidebarPadding]}>
+                    {roomsContent}
+                </View>
+            );
+        }
+
+        if (activeTab === 'cctv') {
+            return (
+                <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
+                    <View style={{ marginTop: 60 }}>
+                        <Text style={styles.sectionTitle}>Security Cameras</Text>
+                        <CamerasList
+                            frigateCameras={frigateCameras}
+                            service={frigateService.current}
+                            onCameraPress={handleFrigateCameraPress}
+                            columns={columns}
+                        />
+                    </View>
+                </ScrollView>
+            );
+        }
+
+        if (activeTab === 'ai') {
+            return (
+                <View style={[{ flex: 1 }, isLandscape && sidebarPadding]}>
+                    <BrainView
+                        entities={entities}
+                        callService={callService}
+                        registryDevices={registryDevices}
+                        registryEntities={registryEntities}
+                        registryAreas={registryAreas}
+                        onExit={() => setActiveTab('home')}
+                        haUrl={connectionConfig.url}
+                        haToken={connectionConfig.token}
+                    />
+                </View>
+            );
+        }
+
+        if (activeTab === 'settings') {
+            return (
+                <View style={[{ flex: 1 }, isLandscape && sidebarPadding]}>
+                    <SettingsView
+                        areas={(badgeConfig?.selected_areas && badgeConfig.selected_areas.length > 0) ? badgeConfig.selected_areas : registryAreas}
+                        entities={entities}
+                        registryDevices={registryDevices}
+                        registryEntities={registryEntities}
+                        showFamily={showFamily}
+                        autoRoomVisit={autoRoomVisit}
+                        autoRoomResume={autoRoomResume}
+                        showVoiceAssistant={showVoiceAssistant}
+                        showPreferenceButton={showPreferenceButton}
+                        adminUrl={connectionConfig.adminUrl}
+                        onSettingChange={(key, val) => {
+                            if (key === 'showFamily') setShowFamily(val);
+                            if (key === 'autoRoomVisit') setAutoRoomVisit(val);
+                            if (key === 'autoRoomResume') setAutoRoomResume(val);
+                            if (key === 'showVoiceAssistant') setShowVoiceAssistant(val);
+                            if (key === 'showPreferenceButton') setShowPreferenceButton(val);
+                        }}
+                        onPlayMedia={() => setShowYoutubeLauncher(true)}
+                        onNetwork={() => setShowNetworkModal(true)}
+                    />
+                </View>
+            );
+        }
+
+        return null;
+    };
+
+    if (!isReady) {
+        return (
+            <View style={styles.container}>
+                <LinearGradient
+                    colors={['#1a1b2e', '#16161e', '#000000']}
+                    style={styles.background}
+                />
+                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+                    <ActivityIndicator size="large" color="#8947ca" />
+                </View>
+            </View>
+        );
+    }
 
     return (
         <View style={styles.container}>
@@ -1015,331 +1419,7 @@ export default function DashboardV2() {
                 />
             )}
 
-            {/* ===== HOME TAB ===== */}
-            <View style={[{ flex: 1 }, activeTab !== 'home' && { display: 'none' }]}>
-                {entities.length === 0 ? <LoadingSpinner /> : (
-                    <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
-                        <HeaderV2
-                            weather={weather}
-                            cityName={cityName}
-                            userName={userName}
-                            entities={entities}
-                            config={badgeConfig}
-                            onRoomPress={handleHeaderRoomPress}
-                        />
-                        <StatusBadges
-                            securityState={securityState}
-                            lightsOn={lightsOn}
-                            acOn={acOn}
-                            doorsOpen={doorsOpen}
-                            power={power}
-                            onPress={handleBadgePress}
-                        />
-                        <View style={styles.divider} />
-
-                        {showFamily && <PersonBadges entities={entities} alertRules={alertRules} haUrl={connectionConfig.url} />}
-
-                        <QuickScenes
-                            scenes={quickScenesData}
-                            onScenePress={handleScenePress}
-                        />
-
-                        {showVoiceAssistant && <VoiceConversation
-                            onCommand={handleVoiceCommand}
-                            context={{
-                                userName: userName,
-                                time: new Date().toLocaleTimeString(),
-                                rooms: roomsWithCounts.map(room => ({
-                                    name: room.name,
-                                    area_id: room.area_id,
-                                    lights: registryEntities
-                                        .filter(re => {
-                                            const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
-                                            const areaDeviceIds = areaDevices.map(d => d.id);
-                                            return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
-                                                && re.entity_id.startsWith('light.');
-                                        })
-                                        .map(re => {
-                                            const entity = entities.find(e => e.entity_id === re.entity_id);
-                                            return {
-                                                entity_id: re.entity_id,
-                                                friendly_name: entity?.attributes?.friendly_name || re.entity_id,
-                                                state: entity?.state || 'unknown'
-                                            };
-                                        }),
-                                    climate: registryEntities
-                                        .filter(re => {
-                                            const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
-                                            const areaDeviceIds = areaDevices.map(d => d.id);
-                                            return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
-                                                && re.entity_id.startsWith('climate.');
-                                        })
-                                        .map(re => {
-                                            const entity = entities.find(e => e.entity_id === re.entity_id);
-                                            return {
-                                                entity_id: re.entity_id,
-                                                friendly_name: entity?.attributes?.friendly_name || re.entity_id,
-                                                state: entity?.state || 'unknown',
-                                                temperature: entity?.attributes?.current_temperature,
-                                                target_temp: entity?.attributes?.temperature
-                                            };
-                                        }),
-                                    covers: registryEntities
-                                        .filter(re => {
-                                            const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
-                                            const areaDeviceIds = areaDevices.map(d => d.id);
-                                            return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
-                                                && re.entity_id.startsWith('cover.');
-                                        })
-                                        .map(re => {
-                                            const entity = entities.find(e => e.entity_id === re.entity_id);
-                                            return {
-                                                entity_id: re.entity_id,
-                                                friendly_name: entity?.attributes?.friendly_name || re.entity_id,
-                                                state: entity?.state || 'unknown',
-                                                current_position: entity?.attributes?.current_position
-                                            };
-                                        }),
-                                    media: registryEntities
-                                        .filter(re => {
-                                            const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
-                                            const areaDeviceIds = areaDevices.map(d => d.id);
-                                            return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
-                                                && re.entity_id.startsWith('media_player.');
-                                        })
-                                        .map(re => {
-                                            const entity = entities.find(e => e.entity_id === re.entity_id);
-                                            return {
-                                                entity_id: re.entity_id,
-                                                friendly_name: entity?.attributes?.friendly_name || re.entity_id,
-                                                state: entity?.state || 'unknown'
-                                            };
-                                        }),
-                                    switches: registryEntities
-                                        .filter(re => {
-                                            const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
-                                            const areaDeviceIds = areaDevices.map(d => d.id);
-                                            return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
-                                                && re.entity_id.startsWith('switch.');
-                                        })
-                                        .map(re => {
-                                            const entity = entities.find(e => e.entity_id === re.entity_id);
-                                            return {
-                                                entity_id: re.entity_id,
-                                                friendly_name: entity?.attributes?.friendly_name || re.entity_id,
-                                                state: entity?.state || 'unknown'
-                                            };
-                                        }),
-                                    sensors: registryEntities
-                                        .filter(re => {
-                                            const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
-                                            const areaDeviceIds = areaDevices.map(d => d.id);
-                                            return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
-                                                && re.entity_id.startsWith('sensor.')
-                                                && !re.entity_id.includes('signal_strength')
-                                                && !re.entity_id.includes('battery');
-                                        })
-                                        .map(re => {
-                                            const entity = entities.find(e => e.entity_id === re.entity_id);
-                                            return {
-                                                entity_id: re.entity_id,
-                                                friendly_name: entity?.attributes?.friendly_name || re.entity_id,
-                                                state: entity?.state || 'unknown',
-                                                unit: entity?.attributes?.unit_of_measurement
-                                            };
-                                        }),
-                                    binary_sensors: registryEntities
-                                        .filter(re => {
-                                            const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
-                                            const areaDeviceIds = areaDevices.map(d => d.id);
-                                            return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
-                                                && re.entity_id.startsWith('binary_sensor.');
-                                        })
-                                        .map(re => {
-                                            const entity = entities.find(e => e.entity_id === re.entity_id);
-                                            return {
-                                                entity_id: re.entity_id,
-                                                friendly_name: entity?.attributes?.friendly_name || re.entity_id,
-                                                state: entity?.state || 'unknown',
-                                                device_class: entity?.attributes?.device_class
-                                            };
-                                        })
-                                }))
-                            }}
-                        />}
-
-                        {/* Dynamic Lock Sliders */}
-                        {homeLocks.length > 0 && (
-                            <View style={styles.sliderRow}>
-                                {homeLocks.map(lock => {
-                                        const isUnlocked = lock.state === 'unlocked' || lock.state === 'open';
-                                        const name = lock.attributes.friendly_name || lock.entity_id;
-                                        return (
-                                            <View key={lock.entity_id} style={styles.sliderContainer}>
-                                                {isUnlocked ? (
-                                                    <TouchableOpacity
-                                                        style={[styles.statusCard, { backgroundColor: '#FF7043' }]}
-                                                        onPress={() => {
-                                                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                                                            callService('lock', 'lock', { entity_id: lock.entity_id });
-                                                        }}
-                                                    >
-                                                        <LockOpen size={24} color="#fff" />
-                                                        <Text style={styles.statusText}>Unlocked</Text>
-                                                    </TouchableOpacity>
-                                                ) : (
-                                                    <SlideAction
-                                                        label={`Unlock ${name}`}
-                                                        icon={LockOpen}
-                                                        color="#8947ca"
-                                                        onSlide={() => callService('lock', 'unlock', { entity_id: lock.entity_id })}
-                                                    />
-                                                )}
-                                            </View>
-                                        );
-                                    })}
-                            </View>
-                        )}
-
-                        <RoomsList
-                            rooms={roomsWithCounts}
-                            registryEntities={registryEntities}
-                            allEntities={entities}
-                            onRoomPress={handleRoomPress}
-                            overlayOpacity={cardOpacity}
-                            overlayColor={cardColor}
-                            onSettingsPress={handleOpenOpacitySettings}
-                            layout={isTablet ? 'grid' : 'horizontal'}
-                            columns={columns}
-                            haUrl={connectionConfig.url}
-                            haToken={connectionConfig.token}
-                            sensorMappings={sensorMappings}
-                        />
-                    </ScrollView>
-                )}
-            </View>
-
-            {/* ===== ROOMS TAB ===== */}
-            <View style={[{ flex: 1 }, activeTab !== 'rooms' && { display: 'none' }]}>
-                {entities.length === 0 ? <LoadingSpinner /> : (
-                    <View style={[styles.content, { paddingHorizontal: 20, marginTop: 60, paddingBottom: 100, flex: 1 }, isLandscape && sidebarPadding]}>
-                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                            <Text style={styles.sectionTitle}>Rooms</Text>
-                            <TouchableOpacity onPress={() => setIsReorderMode(!isReorderMode)}>
-                                <Text style={{ color: '#8947ca', fontWeight: 'bold', fontSize: 16 }}>
-                                    {isReorderMode ? 'Done' : 'Edit'}
-                                </Text>
-                            </TouchableOpacity>
-                        </View>
-
-                        {isReorderMode ? (
-                            <View style={{ flex: 1, height: '100%' }}>
-                                <DraggableRoomList
-                                    rooms={filteredRooms}
-                                    registryEntities={registryEntities}
-                                    allEntities={entities}
-                                    onOrderChange={handleRoomReorder}
-                                />
-                            </View>
-                        ) : (
-                            <>
-                                {availableFloors.length > 0 && (
-                                    <View style={{ flexDirection: 'row', marginBottom: 20, gap: 10 }}>
-                                        {availableFloors.map(floor => (
-                                            <TouchableOpacity
-                                                key={floor.floor_id}
-                                                onPress={() => setSelectedFloor(floor.floor_id)}
-                                                style={{
-                                                    paddingVertical: 8,
-                                                    paddingHorizontal: 16,
-                                                    backgroundColor: selectedFloor === floor.floor_id ? '#8947ca' : 'rgba(255,255,255,0.1)',
-                                                    borderRadius: 20
-                                                }}
-                                            >
-                                                <Text style={{
-                                                    color: selectedFloor === floor.floor_id ? 'white' : 'rgba(255,255,255,0.6)',
-                                                    fontWeight: '600'
-                                                }}>
-                                                    {floor.name ? floor.name.toUpperCase() : floor.floor_id.toUpperCase()}
-                                                </Text>
-                                            </TouchableOpacity>
-                                        ))}
-                                    </View>
-                                )}
-
-                                <RoomsList
-                                    rooms={filteredRooms}
-                                    registryEntities={registryEntities}
-                                    allEntities={entities}
-                                    onRoomPress={handleRoomPress}
-                                    overlayOpacity={cardOpacity}
-                                    overlayColor={cardColor}
-                                    onSettingsPress={handleOpenOpacitySettings}
-                                    layout="grid"
-                                    columns={columns}
-                                    haUrl={connectionConfig.url}
-                                    haToken={connectionConfig.token}
-                                    sensorMappings={sensorMappings}
-                                />
-                            </>
-                        )}
-                    </View>
-                )}
-            </View>
-
-            {/* ===== CCTV TAB — WebViews only rendered when active (too heavy to keep in background) ===== */}
-            <View style={[{ flex: 1 }, activeTab !== 'cctv' && { display: 'none' }]}>
-                {activeTab === 'cctv' ? (
-                    frigateCameras.length === 0 ? <LoadingSpinner /> : (
-                        <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
-                            <View style={{ marginTop: 60 }}>
-                                <Text style={styles.sectionTitle}>Security Cameras</Text>
-                                <CamerasList
-                                    frigateCameras={frigateCameras}
-                                    service={frigateService.current}
-                                    onCameraPress={handleFrigateCameraPress}
-                                    columns={columns}
-                                />
-                            </View>
-                        </ScrollView>
-                    )
-                ) : null}
-            </View>
-
-            {/* ===== AI TAB — mounts on first visit, stays mounted (preserves conversation) ===== */}
-            <View style={[{ flex: 1 }, activeTab !== 'ai' && { display: 'none' }]}>
-                {aiTabVisited ? (
-                    <BrainView
-                        entities={entities}
-                        callService={callService}
-                        registryDevices={registryDevices}
-                        registryEntities={registryEntities}
-                        registryAreas={registryAreas}
-                        onExit={handleAiExit}
-                        haUrl={connectionConfig.url}
-                        haToken={connectionConfig.token}
-                    />
-                ) : null}
-            </View>
-
-            {/* ===== SETTINGS TAB — unmount when hidden (rarely visited, no state to preserve) ===== */}
-            <View style={[{ flex: 1 }, activeTab !== 'settings' && { display: 'none' }]}>
-                {activeTab === 'settings' ? <SettingsView
-                    areas={(badgeConfig?.selected_areas && badgeConfig.selected_areas.length > 0) ? badgeConfig.selected_areas : registryAreas}
-                    entities={entities}
-                    registryDevices={registryDevices}
-                    registryEntities={registryEntities}
-                    showFamily={showFamily}
-                    autoRoomVisit={autoRoomVisit}
-                    autoRoomResume={autoRoomResume}
-                    showVoiceAssistant={showVoiceAssistant}
-                    showPreferenceButton={showPreferenceButton}
-                    adminUrl={connectionConfig.adminUrl}
-                    onSettingChange={handleSettingChange}
-                    onPlayMedia={handlePlayMedia}
-                    onNetwork={handleNetworkPress}
-                /> : null}
-            </View>
+            {renderContent()}
 
             {isLandscape ? (
                 <TabletSidebar activeTab={activeTab} onTabPress={handleTabPress} />

@@ -19,11 +19,12 @@ export default function RoomSheet({
     haUrl,
     haToken,
     showPreferenceButton = true,
-    sensorMappings = []
+    sensorMappings = [],
+    coverMappings = []
 }) {
     if (!room) return null;
 
-    const { lights, fans, climates, covers, medias, cameras, sensors, doors, switches, automations, scripts } = getRoomEntities(room, registryDevices, registryEntities, allEntities, sensorMappings);
+    const { lights, fans, climates, covers, medias, cameras, sensors, doors, switches, automations, scripts } = getRoomEntities(room, registryDevices, registryEntities, allEntities, sensorMappings, coverMappings);
 
     return (
         <Modal

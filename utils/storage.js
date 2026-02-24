@@ -41,8 +41,9 @@ export const getAdminUrl = async () => {
         // 4. Return Admin URL
         const adminUrl = activeProfile.adminUrl;
         if (adminUrl) {
-            console.log('[Storage] Retrieved Admin URL from profile:', adminUrl);
-            return adminUrl;
+            const normalizedUrl = adminUrl.replace(/^https?:\/\//i, (m) => m.toLowerCase());
+            console.log('[Storage] Retrieved Admin URL from profile:', normalizedUrl);
+            return normalizedUrl;
         } else {
             console.log('[Storage] Active profile has no Admin URL.');
             return null;

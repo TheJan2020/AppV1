@@ -1,10 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
 import { Shield, Lightbulb, Fan, DoorOpen, Zap, Repeat } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
 
-export default function StatusBadges({ securityState, lightsOn, acOn, doorsOpen, power, onPress }) {
+function StatusBadges({ securityState, lightsOn, acOn, doorsOpen, power, onPress }) {
     const [activeIndex, setActiveIndex] = useState(0);
     const [mode, setMode] = useState('loop'); // 'loop', 'fixed-1', 'fixed-2'
 
@@ -183,3 +183,5 @@ const styles = StyleSheet.create({
         fontSize: 11, // Reduced from 12
     }
 });
+
+export default memo(StatusBadges);

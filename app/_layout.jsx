@@ -55,32 +55,33 @@ export default function RootLayout() {
 
     return (
         <ErrorBoundary>
-        <GestureHandlerRootView style={{ flex: 1 }}>
-            <StatusBar style="light" />
-            <Stack
-                screenOptions={{
-                    headerStyle: {
-                        backgroundColor: Colors.background,
-                    },
-                    headerTintColor: Colors.text,
-                    headerTitleStyle: {
-                        fontWeight: 'bold',
-                    },
-                    contentStyle: {
-                        backgroundColor: Colors.background,
-                    },
-                    animation: 'slide_from_right',
-                }}
-            >
-                <Stack.Screen name="index" options={{ headerShown: false }} />
-                <Stack.Screen name="login" options={{ headerShown: false, gestureEnabled: false }} />
-                <Stack.Screen name="dashboard" options={{ headerShown: false, gestureEnabled: false }} />
-                <Stack.Screen name="dashboard-v2" options={{ headerShown: false, gestureEnabled: false }} />
-                <Stack.Screen name="room" options={{ headerShown: false }} />
-                <Stack.Screen name="tv-lab" options={{ headerShown: false }} />
-                <Stack.Screen name="dashboard-v3" options={{ headerShown: false }} />
-            </Stack>
-        </GestureHandlerRootView>
+            <GestureHandlerRootView style={{ flex: 1 }}>
+                <StatusBar style="light" />
+                <Stack
+                    screenOptions={{
+                        headerStyle: {
+                            backgroundColor: Colors.background,
+                        },
+                        headerTintColor: Colors.text,
+                        headerTitleStyle: {
+                            fontWeight: 'bold',
+                        },
+                        contentStyle: {
+                            backgroundColor: Colors.background,
+                        },
+                        animation: 'slide_from_right',
+                    }}
+                >
+                    <Stack.Screen name="index" options={{ headerShown: false }} />
+                    <Stack.Screen name="login" options={{ headerShown: false, gestureEnabled: false }} />
+                    <Stack.Screen name="dashboard" options={{ headerShown: false, gestureEnabled: false }} />
+                    <Stack.Screen name="dashboard-v2" options={{ headerShown: false, gestureEnabled: false }} />
+                    <Stack.Screen name="dashboard-v2-tablet" options={{ headerShown: false, gestureEnabled: false }} />
+                    <Stack.Screen name="room" options={{ headerShown: false }} />
+                    <Stack.Screen name="tv-lab" options={{ headerShown: false }} />
+                    <Stack.Screen name="dashboard-v3" options={{ headerShown: false }} />
+                </Stack>
+            </GestureHandlerRootView>
         </ErrorBoundary>
     );
 }

@@ -1,13 +1,16 @@
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { Video, LayoutGrid, Home, MessageSquare, Settings } from 'lucide-react-native';
+import { Video, LayoutGrid, Home, MessageSquare, Settings, Tablet } from 'lucide-react-native';
 import { BlurView } from 'expo-blur';
 
-export default function TabletSidebar({ activeTab, onTabPress }) {
+import { memo } from 'react';
+
+function TabletSidebar({ activeTab, onTabPress }) {
     const tabs = [
         { id: 'home', label: 'Home', icon: Home },
         { id: 'rooms', label: 'Rooms', icon: LayoutGrid },
         { id: 'cctv', label: 'CCTV', icon: Video },
         { id: 'ai', label: 'A.I.', icon: MessageSquare },
+        { id: 'tablet', label: 'Tablet', icon: Tablet },
         { id: 'settings', label: 'Settings', icon: Settings },
     ];
 
@@ -82,3 +85,5 @@ const styles = StyleSheet.create({
         fontWeight: '600',
     },
 });
+
+export default memo(TabletSidebar);

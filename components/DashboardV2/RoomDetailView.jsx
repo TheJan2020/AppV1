@@ -771,7 +771,8 @@ export default function RoomDetailView({
                             <View style={styles.divider} />
                             <View style={styles.grid}>
                                 {covers.map(cover => {
-                                    const sensorId = cover.entity_id.replace('cover.', 'sensor.');
+                                    // Use admin-configured linkedSensorId, fallback to naming convention
+                                    const sensorId = cover.linkedSensorId || cover.entity_id.replace('cover.', 'sensor.');
                                     const sensor = allEntities.find(e => e.entity_id === sensorId);
                                     return (
                                         <View key={cover.entity_id} style={{ width: cardWidth }}>

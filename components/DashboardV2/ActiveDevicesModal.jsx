@@ -56,6 +56,13 @@ export default function ActiveDevicesModal({ visible, title, devices, onClose, o
         }
     };
 
+    // Clear all pending timeouts when modal unmounts
+    useEffect(() => {
+        return () => {
+            Object.values(pendingActions).forEach(({ timeoutId }) => clearTimeout(timeoutId));
+        };
+    }, [pendingActions]);
+
     return (
         <Modal
             animationType="fade"

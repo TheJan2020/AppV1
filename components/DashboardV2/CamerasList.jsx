@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { WebView } from 'react-native-webview';
 
@@ -41,7 +42,7 @@ const LiveCamera = ({ cam, service }) => {
     );
 };
 
-export default function CamerasList({ frigateCameras, service, onCameraPress, columns = 2 }) {
+function CamerasList({ frigateCameras, service, onCameraPress, columns = 2 }) {
     if (!frigateCameras || frigateCameras.length === 0) return null;
 
     // On tablets (columns > 2), show all cameras in equal-width grid
@@ -128,3 +129,5 @@ const styles = StyleSheet.create({
         fontWeight: '400',
     }
 });
+
+export default memo(CamerasList);

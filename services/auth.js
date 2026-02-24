@@ -9,7 +9,7 @@
 export const validateCredentials = async (haUrl, username, password) => {
     try {
         // Ensure URL does not end with slash
-        const baseUrl = haUrl.replace(/\/$/, '');
+        const baseUrl = haUrl.replace(/^https?:\/\//i, (m) => m.toLowerCase()).replace(/\/$/, '');
         const client_id = 'https://home-assistant.io/android/';
 
         // Step 1: Init Flow

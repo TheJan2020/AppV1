@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { View, Text, StyleSheet, Image, TouchableOpacity } from 'react-native';
 import { Colors } from '../../constants/Colors';
 import { Cloud, CloudRain, Sun, Moon } from 'lucide-react-native';
 
-export default function HeaderV2({ weather, cityName, userName, entities = [], config = {}, onRoomPress }) {
+function HeaderV2({ weather, cityName, userName, entities = [], config = {}, onRoomPress }) {
 
     const getGreeting = () => {
         const hour = new Date().getHours();
@@ -143,3 +143,4 @@ const styles = StyleSheet.create({
     }
 });
 
+export default memo(HeaderV2);

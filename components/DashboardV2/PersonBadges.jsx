@@ -1,8 +1,8 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { View, Text, StyleSheet, Image, ScrollView, TouchableOpacity } from 'react-native';
 import { Bell } from 'lucide-react-native';
 
-export default function PersonBadges({ entities, alertRules, haUrl }) {
+function PersonBadges({ entities, alertRules, haUrl }) {
     const HA_URL = haUrl?.replace(/\/$/, '') || '';
     if (!entities) return null;
 
@@ -192,3 +192,5 @@ const styles = StyleSheet.create({
         fontWeight: '400'
     }
 });
+
+export default memo(PersonBadges);

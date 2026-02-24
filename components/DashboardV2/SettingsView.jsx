@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, FlatList, TextInput, Alert, ActivityIndicator, Switch } from 'react-native';
 import { Colors } from '../../constants/Colors';
 import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles, Monitor, LayoutGrid } from 'lucide-react-native';
@@ -10,7 +10,7 @@ import AlertEntitiesModal from './AlertEntitiesModal';
 import MyPreferencesModal from './MyPreferencesModal';
 import PreferencedEntitiesModal from './PreferencedEntitiesModal';
 
-export default function SettingsView({
+function SettingsView({
     areas = [],
     entities = [],
     registryDevices = [],
@@ -1049,3 +1049,5 @@ const styles = StyleSheet.create({
         fontWeight: '600',
     },
 });
+
+export default memo(SettingsView);

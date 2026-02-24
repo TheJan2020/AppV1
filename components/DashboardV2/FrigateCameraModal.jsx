@@ -180,17 +180,17 @@ export default function FrigateCameraModal({ visible, camera, service, initialVi
 
     // Auto-scroll to history if initialView is history (mapped to events)
     useEffect(() => {
+        let scrollTimer;
         if (visible && viewMode === 'events' && scrollViewRef.current && events.length > 0) {
-            // Wait for render
-            setTimeout(() => {
+            scrollTimer = setTimeout(() => {
                 try {
-                    // SectionList scrollToEnd
-                    scrollViewRef.current.scrollToLocation({ sectionIndex: 0, itemIndex: 0, animated: true });
+                    scrollViewRef.current?.scrollToLocation({ sectionIndex: 0, itemIndex: 0, animated: true });
                 } catch (e) {
                     console.log('Scroll failed:', e);
                 }
             }, 800);
         }
+        return () => { if (scrollTimer) clearTimeout(scrollTimer); };
     }, [visible, viewMode, events.length]);
 
     const fetchEvents = async (loadMore = false) => {

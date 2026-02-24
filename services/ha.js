@@ -3,7 +3,7 @@ import { AppState } from 'react-native';
 export class HAService {
     constructor(url, token) {
         const cleanUrl = url.replace(/\/$/, '');
-        this.url = cleanUrl.replace('http', 'ws') + '/api/websocket';
+        this.url = cleanUrl.replace(/^http/i, 'ws') + '/api/websocket';
         this.token = token;
         this.socket = null;
         this.id = 1;
@@ -62,6 +62,12 @@ export class HAService {
             this.authenticated = false;
             this.socket = null;
 
+            // Reject and clear all pending promises to prevent memory leak
+            this.pending.forEach(({ reject }) => {
+                try { reject(new Error('Connection closed')); } catch (e) { /* ignore */ }
+            });
+            this.pending.clear();
+
             // Only reconnect if app is active and under max retries
             if (this.appState === 'active' && this.reconnectAttempts < this.maxReconnectAttempts) {
                 const delay = Math.min(5000 * Math.pow(2, this.reconnectAttempts), 60000); // 5s, 10s, 20s, 40s, 60s
@@ -93,6 +99,12 @@ export class HAService {
             this.appStateSubscription.remove();
             this.appStateSubscription = null;
         }
+
+        // Reject and clear all pending promises
+        this.pending.forEach(({ reject }) => {
+            try { reject(new Error('Disconnected')); } catch (e) { /* ignore */ }
+        });
+        this.pending.clear();
 
         if (this.socket) {
             console.log('Disconnecting socket...');

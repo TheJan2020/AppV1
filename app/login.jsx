@@ -394,7 +394,7 @@ export default function Login() {
 
             if (username) {
                 console.log('Trying auth with entered username:', username);
-                const isValid = await validateCredentials(haUrl, username, password);
+                const isValid = await validateCredentials(haUrl.replace(/^https?:\/\//i, (m) => m.toLowerCase()), username, password);
                 if (isValid) {
                     authenticated = true;
                 }

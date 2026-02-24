@@ -2,7 +2,9 @@ import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
 import { Video, LayoutGrid, Home, MessageSquare, Settings } from 'lucide-react-native';
 import { BlurView } from 'expo-blur';
 
-export default function TabBar({ activeTab, onTabPress }) {
+import { memo } from 'react';
+
+function TabBar({ activeTab, onTabPress }) {
     const tabs = [
         { id: 'cctv', label: 'CCTV', icon: Video },
         { id: 'rooms', label: 'Rooms', icon: LayoutGrid },
@@ -78,3 +80,5 @@ const styles = StyleSheet.create({
     },
     activeIconContainer: {}
 });
+
+export default memo(TabBar);

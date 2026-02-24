@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ImageBackground } from 'react-native';
 import { Sofa, Bed, Bath, Utensils, Monitor, Lamp, Settings, Lightbulb, Fan, GalleryVerticalEnd, DoorOpen, Thermometer, Droplets, Satellite } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -26,7 +27,7 @@ const formatRoomName = (name) => {
 };
 
 
-export default function RoomsList({
+function RoomsList({
     rooms,
     onRoomPress,
     overlayColor = '#000000',
@@ -331,3 +332,5 @@ const styles = StyleSheet.create({
         height: 150
     }
 });
+
+export default memo(RoomsList);
