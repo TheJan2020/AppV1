@@ -1,10 +1,9 @@
 import { memo } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ImageBackground } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { Image } from 'expo-image';
 import { Sofa, Bed, Bath, Utensils, Monitor, Lamp, Settings, Lightbulb, Fan, GalleryVerticalEnd, DoorOpen, Thermometer, Droplets, Satellite } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
-// ... (getIconForRoom helper remains same)
-// ... (getIconForRoom helper remains same)
 const getIconForRoom = (name) => {
     const lower = (name || '').toLowerCase();
     if (lower.includes('living')) return Sofa;
@@ -61,7 +60,7 @@ function RoomsList({
     const renderCard = (room, index) => {
         const displayName = formatRoomName(room.name);
         const Icon = getIconForRoom(displayName);
-        const imageUrl = room.picture ? `${haUrl}${room.picture}` : null;
+        const imageUrl = room.picture ? `${(haUrl || '').replace(/\/$/, '')}${room.picture}` : null;
 
         const hasActiveDevices = (room.activeLights > 0 || room.activeAC > 0 || room.activeCovers > 0 || room.activeDoors > 0);
 
@@ -98,14 +97,12 @@ function RoomsList({
                 onPress={() => onRoomPress && onRoomPress(room)}
             >
                 {imageUrl ? (
-                    <ImageBackground
-                        source={{
-                            uri: imageUrl,
-                            headers: { Authorization: `Bearer ${haToken}` }
-                        }}
-                        style={styles.backgroundImage}
-                        resizeMode="cover"
-                    >
+                    <View style={styles.backgroundImage}>
+                        <Image
+                            source={{ uri: imageUrl, headers: { Authorization: `Bearer ${haToken}` } }}
+                            style={StyleSheet.absoluteFill}
+                            contentFit="cover"
+                        />
                         <View style={[
                             styles.darkOverlay,
                             { backgroundColor: overlayColor, opacity: overlayOpacity }
@@ -114,7 +111,7 @@ function RoomsList({
                             colors={['transparent', 'rgba(0,0,0,0.4)', 'rgba(0,0,0,0.95)']}
                             style={styles.gradient}
                         />
-                    </ImageBackground>
+                    </View>
                 ) : (
                     <View style={styles.placeholderBackground}>
                         <Icon size={32} color="rgba(255,255,255,0.2)" />

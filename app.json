@@ -1,29 +1,31 @@
 {
   "expo": {
-    "name": "ha-app",
+    "name": "Primewave",
     "slug": "ha-app",
     "version": "1.0.0",
     "orientation": "default",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/500-black.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": false,
+    "newArchEnabled": true,
     "splash": {
       "image": "./assets/splash-screen-dark.png",
       "resizeMode": "contain",
       "backgroundColor": "#1a1b2e"
     },
     "ios": {
+      "bundleIdentifier": "ai.primewave.app",
       "supportsTablet": true,
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
-        }
+        },
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#1a1b2e"
       },
       "edgeToEdgeEnabled": true,
       "permissions": [
@@ -43,22 +45,14 @@
           "faceIDPermission": "Allow $(PRODUCT_NAME) to use Face ID."
         }
       ],
-      "expo-secure-store",
-      [
-        "expo-build-properties",
-        {
-          "android": {
-            "usesCleartextTraffic": true
-          }
-        }
-      ]
+      "expo-secure-store"
     ],
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "127df34a-6b61-4742-ba94-52db6a40d8a1"
+        "projectId": "60d12dc4-39fe-4c9b-a456-13111390c3fc"
       }
     },
-    "owner": "zeyadibrahim"
+    "owner": "uzairkhan-12"
   }
 }
