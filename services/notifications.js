@@ -3,6 +3,7 @@ import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { getAdminUrl } from '../utils/storage';
+import { authFetch } from '../utils/authFetch';
 
 // Configure how notifications behave when the app is in foreground
 Notifications.setNotificationHandler({
@@ -74,7 +75,7 @@ export async function registerForPushNotificationsAsync() {
 async function registerTokenWithBackend(token, backendUrl) {
     try {
         const deviceName = Device.modelName || 'Unknown Device';
-        const response = await fetch(`${backendUrl}/api/notifications/register`, {
+        const response = await authFetch(`${backendUrl}/api/notifications/register`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

@@ -3,6 +3,7 @@ import { BlurView } from 'expo-blur';
 import { X, Search, Database } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
 import { useState, useEffect } from 'react';
+import { authFetch } from '../../utils/authFetch';
 
 export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
     const [entities, setEntities] = useState([]);
@@ -33,7 +34,7 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
         setLoading(true);
         try {
             const url = adminUrl.endsWith('/') ? `${adminUrl}api/monitor` : `${adminUrl}/api/monitor`;
-            const res = await fetch(url + `?t=${Date.now()}`);
+            const res = await authFetch(url + `?t=${Date.now()}`);
             const data = await res.json();
             if (data.success) {
                 setEntities(data.entities);
@@ -73,7 +74,7 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
 
             // Send requests in parallel
             await Promise.all(changes.map(([entityId, ignored]) =>
-                fetch(url, {
+                authFetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ entity_id: entityId, ignored: ignored })

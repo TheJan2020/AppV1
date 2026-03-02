@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { LineChart } from 'react-native-chart-kit';
 import { Colors } from '../../constants/Colors';
 import { Thermometer, Droplets } from 'lucide-react-native';
+import { authFetch } from '../../utils/authFetch';
 
 export default function RoomClimateChart({ tempEntityId, humidityEntityId, adminUrl }) {
     const [chartData, setChartData] = useState(null);
@@ -31,7 +32,7 @@ export default function RoomClimateChart({ tempEntityId, humidityEntityId, admin
                 if (ids.length === 0) return;
 
                 const url = `${baseUrl}api/history?mode=raw&entity_ids=${ids.join(',')}&limit=100`;
-                const res = await fetch(url, { signal: controller.signal });
+                const res = await authFetch(url, { signal: controller.signal });
                 const json = await res.json();
 
                 if (Array.isArray(json)) {

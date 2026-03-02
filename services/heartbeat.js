@@ -1,6 +1,7 @@
 import * as Device from 'expo-device';
 import * as Application from 'expo-application';
 import { Platform } from 'react-native';
+import { authFetch } from '../utils/authFetch';
 
 let heartbeatInterval = null;
 let currentAppState = 'foreground';
@@ -23,7 +24,7 @@ async function sendHeartbeat(adminUrl, userId, userName) {
         const deviceId = await getDeviceId();
         const url = `${adminUrl.replace(/\/$/, '')}/api/sessions/heartbeat`;
 
-        await fetch(url, {
+        await authFetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

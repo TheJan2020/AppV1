@@ -1,6 +1,7 @@
 import TVController from './TVController';
 import { saveConfig } from '../utils/tvLabStorage';
 import { TV_TYPES } from '../constants';
+import { authFetch } from '../../../utils/authFetch';
 
 export default class LGTVAdapter extends TVController {
     constructor(config) {
@@ -28,7 +29,7 @@ export default class LGTVAdapter extends TVController {
             this._log(`Connecting to TV at ${ip}...`);
 
             try {
-                const resp = await fetch(`${adminUrl}/api/tv-proxy`, {
+                const resp = await authFetch(`${adminUrl}/api/tv-proxy`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ action: 'connect', ip, port, clientKey, haEntityId }),
@@ -133,7 +134,7 @@ export default class LGTVAdapter extends TVController {
 
     async _proxyPost(action, body = {}) {
         const { adminUrl } = this.config;
-        const resp = await fetch(`${adminUrl}/api/tv-proxy`, {
+        const resp = await authFetch(`${adminUrl}/api/tv-proxy`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action, ...body }),
@@ -147,7 +148,7 @@ export default class LGTVAdapter extends TVController {
         this._pollTimer = setInterval(async () => {
             try {
                 const { adminUrl } = this.config;
-                const resp = await fetch(`${adminUrl}/api/tv-proxy`);
+                const resp = await authFetch(`${adminUrl}/api/tv-proxy`);
                 const data = await resp.json();
                 if (data.state) {
                     this._tvState = { ...data.state };
@@ -416,7 +417,7 @@ export default class LGTVAdapter extends TVController {
         if (this._proxyMode) {
             try {
                 const { adminUrl } = this.config;
-                const resp = await fetch(`${adminUrl}/api/tv-proxy`);
+                const resp = await authFetch(`${adminUrl}/api/tv-proxy`);
                 const data = await resp.json();
                 return data.state || {};
             } catch { return {}; }

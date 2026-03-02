@@ -14,22 +14,13 @@ const LiveCamera = ({ cam, service }) => {
         );
     }
 
-    // Use backend proxy - no authentication needed!
-    const streamUrl = service.getStreamUrl(cam.name);
-
-    const htmlContent = `
-      <html>
-        <body style="margin:0;padding:0;background:black;display:flex;justify-content:center;align-items:center;height:100%;">
-          <img src="${streamUrl}" style="width:100%;height:100%;object-fit:cover;" />
-        </body>
-      </html>
-    `;
+        const streamUrl = service.getStreamUrl(cam.name);
 
     return (
         <View style={styles.cameraWrapper}>
             <View style={styles.imageContainer}>
                 <WebView
-                    source={{ html: htmlContent }}
+                    source={{ uri: streamUrl, headers: service?.headers || {} }}
                     style={{ flex: 1, backgroundColor: 'black' }}
                     scrollEnabled={false}
                     allowsInlineMediaPlayback={true}

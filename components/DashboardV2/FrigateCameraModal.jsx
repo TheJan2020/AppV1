@@ -9,7 +9,7 @@ import { Play, Calendar, Video as VideoIcon, Radio } from 'lucide-react-native';
 
 const { width, height } = Dimensions.get('window');
 
-const LiveStream = ({ service, cameraName, isMuted, onToggleMute }) => {
+const LiveStream = ({ service, cameraName }) => {
     const webViewRef = useRef(null);
 
     if (!service || !cameraName) {
@@ -20,89 +20,21 @@ const LiveStream = ({ service, cameraName, isMuted, onToggleMute }) => {
         );
     }
 
-    const streamUrl = service.getStreamUrl(cameraName);
-    const audioUrl = service.getAudioUrl?.(cameraName); // Get audio stream if available
-
-    // Inject JavaScript to control audio
-    const injectedJavaScript = `
-        (function() {
-            const audio = document.getElementById('audioStream');
-            if (audio) {
-                audio.volume = 1.0;
-                audio.play().catch(e => console.log('Audio autoplay failed:', e));
-            }
-        })();
-        true;
-    `;
-
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-          <style>
-            body {
-              margin: 0;
-              padding: 0;
-              background: black;
-              display: flex;
-              justify-content: center;
-              align-items: center;
-              height: 100vh;
-              overflow: hidden;
-            }
-            img {
-              width: 100%;
-              height: 100%;
-              object-fit: contain;
-            }
-          </style>
-        </head>
-        <body>
-          <img src="${streamUrl}" alt="Live Stream" />
-          ${audioUrl ? `<audio id="audioStream" src="${audioUrl}" autoplay loop ${isMuted ? 'muted' : ''}></audio>` : ''}
-        </body>
-      </html>
-    `;
-
-    // Handle mute toggle by injecting JavaScript
-    useEffect(() => {
-        if (webViewRef.current && audioUrl) {
-            const muteScript = `
-                const audio = document.getElementById('audioStream');
-                if (audio) {
-                    audio.muted = ${isMuted};
-                }
-                true;
-            `;
-            webViewRef.current.injectJavaScript(muteScript);
-        }
-    }, [isMuted, audioUrl]);
+        const streamUrl = service.getStreamUrl(cameraName);
 
     return (
         <View style={styles.cameraFeed}>
             <WebView
                 ref={webViewRef}
-                source={{ html: htmlContent }}
+                source={{ uri: streamUrl, headers: service?.headers || {} }}
                 style={{ flex: 1, backgroundColor: 'black' }}
                 scrollEnabled={false}
                 allowsInlineMediaPlayback={true}
                 mediaPlaybackRequiresUserAction={false}
                 originWhitelist={['*']}
                 scalesPageToFit={true}
-                injectedJavaScript={injectedJavaScript}
                 javaScriptEnabled={true}
             />
-            {audioUrl && (
-                <TouchableOpacity
-                    style={styles.muteButton}
-                    onPress={onToggleMute}
-                >
-                    <Text style={styles.muteButtonText}>
-                        {isMuted ? '🔇' : '🔊'}
-                    </Text>
-                </TouchableOpacity>
-            )}
         </View>
     );
 };
@@ -308,7 +240,7 @@ export default function FrigateCameraModal({ visible, camera, service, initialVi
                             <View style={styles.recordingPlayerContainer}>
                                 {playbackUrl ? (
                                     <Video
-                                        source={{ uri: playbackUrl }}
+                                        source={{ uri: playbackUrl, headers: service?.headers || {} }}
                                         style={styles.recordingVideo}
                                         useNativeControls
                                         resizeMode="contain"
@@ -342,7 +274,8 @@ export default function FrigateCameraModal({ visible, camera, service, initialVi
                                             ref={videoRef}
                                             key={selectedEvent.id} // Force remount on event change for clean state
                                             source={{
-                                                uri: `${service?.adminUrl}/api/frigate/events/${selectedEvent.id}/clip`
+                                                uri: `${service?.adminUrl}/api/frigate/events/${selectedEvent.id}/clip`,
+                                                headers: service?.headers || {},
                                             }}
                                             style={styles.cameraFeed}
                                             useNativeControls
@@ -474,6 +407,7 @@ export default function FrigateCameraModal({ visible, camera, service, initialVi
                                             selectedEventId={selectedEvent?.id}
                                             listRef={scrollViewRef}
                                             adminUrl={service?.adminUrl}
+                                            authHeaders={service?.headers}
                                         />
                                     )}
                                 </View>

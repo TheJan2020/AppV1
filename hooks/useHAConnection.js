@@ -1,6 +1,7 @@
 import { useRef, useState, useEffect } from 'react';
 import { HAService } from '../services/ha';
 import { FrigateService } from '../services/frigate';
+import { authFetch } from '../utils/authFetch';
 import * as SecureStore from 'expo-secure-store';
 
 /**
@@ -88,13 +89,13 @@ export default function useHAConnection() {
         const baseUrl = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
 
         // Light mappings
-        fetch(`${baseUrl}api/monitored-entities?type=light&t=${Date.now()}`, { signal: controller.signal })
+    authFetch(`${baseUrl}api/monitored-entities?type=light&t=${Date.now()}`, { signal: controller.signal })
             .then(res => res.json())
             .then(data => { if (Array.isArray(data)) setLightMappings(data); })
             .catch(e => { if (e.name !== 'AbortError') console.log('[useHAConnection] Light mappings error:', e); });
 
         // Media mappings
-        fetch(`${baseUrl}api/monitored-entities?type=media_player&t=${Date.now()}`, { signal: controller.signal })
+    authFetch(`${baseUrl}api/monitored-entities?type=media_player&t=${Date.now()}`, { signal: controller.signal })
             .then(res => res.json())
             .then(data => { if (Array.isArray(data)) setMediaMappings(data); })
             .catch(e => { if (e.name !== 'AbortError') console.log('[useHAConnection] Media mappings error:', e); });
@@ -115,17 +116,38 @@ export default function useHAConnection() {
         if (adminUrl) {
             const baseUrl = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
 
-            fetch(`${baseUrl}api/config?t=${Date.now()}`, {
+            authFetch(`${baseUrl}api/config?t=${Date.now()}`, {
                 method: 'GET',
                 headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
                 signal: configAbort.signal,
-            })
+            }, haToken)
                 .then(res => res.json())
-                .then(data => setBadgeConfig(data))
+                .then(data => {
+                    console.log('[useHAConnection] Raw config from backend:', JSON.stringify(data, null, 2));
+                    setBadgeConfig(data);
+
+                    // Use frigate_url from config to initialize FrigateService
+                    const frigateUrl = data?.frigate_url;
+                    console.log('[useHAConnection] Frigate base URL:', frigateUrl ?? 'NOT FOUND in config');
+                    if (frigateUrl) {
+                        frigateService.current = new FrigateService(frigateUrl, null, null, adminUrl, haToken);
+                        frigateService.current.getConfig().then(config => {
+                            if (config?.cameras) {
+                                const cams = Object.keys(config.cameras).map(key => ({
+                                    id: key,
+                                    name: key,
+                                    ...config.cameras[key],
+                                }));
+                                setFrigateCameras(cams);
+                                console.log('[useHAConnection] Frigate cameras loaded:', cams.length);
+                            }
+                        });
+                    }
+                })
                 .catch(err => { if (err.name !== 'AbortError') console.log('[useHAConnection] Config error:', err); });
 
             // Alert rules
-            fetch(`${baseUrl}api/alerts?t=${Date.now()}`, { signal: configAbort.signal })
+            authFetch(`${baseUrl}api/alerts?t=${Date.now()}`, { signal: configAbort.signal }, haToken)
                 .then(res => res.json())
                 .then(data => { if (data.success) setAlertRules(data.rules); })
                 .catch(e => { if (e.name !== 'AbortError') console.log('[useHAConnection] Alert rules error:', e); });
@@ -167,21 +189,6 @@ export default function useHAConnection() {
             });
         } else {
             setLoading(false);
-        }
-
-        // Connect to Frigate
-        if (adminUrl) {
-            frigateService.current = new FrigateService('', null, null, adminUrl);
-            frigateService.current.getConfig().then(config => {
-                if (config?.cameras) {
-                    const cams = Object.keys(config.cameras).map(key => ({
-                        id: key,
-                        name: key,
-                        ...config.cameras[key],
-                    }));
-                    setFrigateCameras(cams);
-                }
-            });
         }
 
         return () => {

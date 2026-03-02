@@ -5,6 +5,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { getAdminUrl } from '../utils/storage';
+import { authFetch } from '../utils/authFetch';
 
 export default function HistoryPage() {
     const router = useRouter();
@@ -32,7 +33,7 @@ export default function HistoryPage() {
         if (!adminUrl) return;
         const fetchUser = async () => {
             try {
-                const usersRes = await fetch(`${adminUrl}/api/users`);
+                const usersRes = await authFetch(`${adminUrl}/api/users`);
                 const users = await usersRes.json();
                 if (users && users.length > 0) setUser(users[0]);
             } catch (e) { console.error(e); }
@@ -74,7 +75,7 @@ export default function HistoryPage() {
                 if (entity_id) url += `&entity_ids=${entity_id}`;
             }
 
-            const res = await fetch(url);
+            const res = await authFetch(url);
             const data = await res.json();
 
             if (data.length < LIMIT) setHasMore(false);

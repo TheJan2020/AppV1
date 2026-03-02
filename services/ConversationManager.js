@@ -3,6 +3,7 @@ import * as FileSystem from 'expo-file-system/legacy';
 import * as SecureStore from 'expo-secure-store';
 import * as Haptics from 'expo-haptics';
 import { getActiveProfileConfig } from './profile';
+import { authFetch } from '../utils/authFetch';
 
 /**
  * Conversation Session Manager
@@ -183,7 +184,7 @@ export class ConversationManager {
             formData.append('api_key', apiKey);
             formData.append('language', 'en');
 
-            const transcribeResponse = await fetch(`${backendUrl}/api/voice/transcribe`, {
+            const transcribeResponse = await authFetch(`${backendUrl}/api/voice/transcribe`, {
                 method: 'POST',
                 body: formData,
             });
@@ -207,7 +208,7 @@ export class ConversationManager {
             }
 
             // Step 2: Process with LLM
-            const processResponse = await fetch(`${backendUrl}/api/voice/process`, {
+            const processResponse = await authFetch(`${backendUrl}/api/voice/process`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -278,7 +279,7 @@ export class ConversationManager {
 
     async speakResponse(text, apiKey, backendUrl) {
         try {
-            const speakResponse = await fetch(`${backendUrl}/api/voice/speak`, {
+            const speakResponse = await authFetch(`${backendUrl}/api/voice/speak`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({

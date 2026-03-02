@@ -2,6 +2,7 @@ import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as SecureStore from 'expo-secure-store';
 import { getActiveProfileConfig } from './profile';
+import { authFetch } from '../utils/authFetch';
 
 /**
  * Simple Wake Word Manager
@@ -103,7 +104,7 @@ export class WakeWordManager {
             formData.append('api_key', apiKey);
             formData.append('language', 'en');
 
-            const response = await fetch(`${backendUrl}/api/voice/transcribe`, {
+            const response = await authFetch(`${backendUrl}/api/voice/transcribe`, {
                 method: 'POST',
                 body: formData,
             });

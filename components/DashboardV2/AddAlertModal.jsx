@@ -3,6 +3,7 @@ import { BlurView } from 'expo-blur';
 import { X, ArrowRight, Check, Search, Save } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
 import { useState, useEffect } from 'react';
+import { authFetch } from '../../utils/authFetch';
 
 export default function AddAlertModal({ visible, onClose, onSuccess, initialRule = null, adminUrl }) {
     const [step, setStep] = useState(1);
@@ -49,7 +50,7 @@ export default function AddAlertModal({ visible, onClose, onSuccess, initialRule
     const fetchMonitoredEntities = async () => {
         try {
             const url = adminUrl.endsWith('/') ? `${adminUrl}api/monitor` : `${adminUrl}/api/monitor`;
-            const res = await fetch(url);
+            const res = await authFetch(url);
             const data = await res.json();
             if (data.success) {
                 setEntities(data.entities);
@@ -77,7 +78,7 @@ export default function AddAlertModal({ visible, onClose, onSuccess, initialRule
             };
             if (isEditing) payload.id = initialRule.id;
 
-            const res = await fetch(url, {
+            const res = await authFetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)

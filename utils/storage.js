@@ -54,3 +54,23 @@ export const getAdminUrl = async () => {
         return null;
     }
 };
+
+/**
+ * Retrieves the HA token from the active profile in SecureStore.
+ */
+export const getHaToken = async () => {
+    try {
+        const activeProfileId = await SecureStore.getItemAsync(SETTINGS_KEY_ACTIVE_PROFILE);
+        if (!activeProfileId) return null;
+
+        const profilesJson = await SecureStore.getItemAsync(SETTINGS_KEY_PROFILES);
+        if (!profilesJson) return null;
+
+        const profiles = JSON.parse(profilesJson);
+        const activeProfile = profiles.find(p => p.id === activeProfileId);
+        return activeProfile?.haToken || null;
+    } catch (error) {
+        console.error('[Storage] Error retrieving HA token:', error);
+        return null;
+    }
+};

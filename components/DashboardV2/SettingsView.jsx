@@ -5,6 +5,7 @@ import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Sett
 import { router } from 'expo-router';
 import { AIService } from '../../services/ai';
 import * as SecureStore from 'expo-secure-store';
+import { authFetch } from '../../utils/authFetch';
 import MonitoredEntitiesModal from './MonitoredEntitiesModal';
 import AlertEntitiesModal from './AlertEntitiesModal';
 import MyPreferencesModal from './MyPreferencesModal';
@@ -676,7 +677,7 @@ function SettingsView({
                         const cleanAdminUrl = adminUrl.replace(/\/$/, '');
 
                         const loading = Alert.alert('Sending...', 'Triggering test notification...', [], { cancelable: false });
-                        const response = await fetch(`${cleanAdminUrl}/api/notifications/send`, {
+                        const response = await authFetch(`${cleanAdminUrl}/api/notifications/send`, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({

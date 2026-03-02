@@ -3,6 +3,7 @@ import { BlurView } from 'expo-blur';
 import { X, Trash2, Plus, Bell } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
 import { useState, useEffect } from 'react';
+import { authFetch } from '../../utils/authFetch';
 import AddAlertModal from './AddAlertModal';
 
 export default function AlertEntitiesModal({ visible, onClose, adminUrl }) {
@@ -21,7 +22,7 @@ export default function AlertEntitiesModal({ visible, onClose, adminUrl }) {
         setLoading(true);
         try {
             const url = adminUrl.endsWith('/') ? `${adminUrl}api/alerts` : `${adminUrl}/api/alerts`;
-            const res = await fetch(url + `?t=${Date.now()}`);
+            const res = await authFetch(url + `?t=${Date.now()}`);
             const data = await res.json();
             if (data.success) {
                 setRules(data.rules);
@@ -51,7 +52,7 @@ export default function AlertEntitiesModal({ visible, onClose, adminUrl }) {
                     onPress: async () => {
                         try {
                             const url = adminUrl.endsWith('/') ? `${adminUrl}api/alerts?id=${id}` : `${adminUrl}/api/alerts?id=${id}`;
-                            await fetch(url, { method: 'DELETE' });
+                            await authFetch(url, { method: 'DELETE' });
                             fetchRules();
                         } catch (e) {
                             Alert.alert("Error", "Failed to delete");

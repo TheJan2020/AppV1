@@ -6,6 +6,7 @@ import { Colors } from '../../constants/Colors';
 import { getAdminUrl } from '../../utils/storage';
 import { checkPreferenceMatch } from '../../utils/preferenceHelpers';
 import * as Haptics from 'expo-haptics';
+import { authFetch } from '../../utils/authFetch';
 
 export default function ActivatePreferencesButton({ roomName, onActivate, onPreferencesLoaded }) {
     const [loading, setLoading] = useState(false);
@@ -54,7 +55,7 @@ export default function ActivatePreferencesButton({ roomName, onActivate, onPref
             const dayType = getDayType(now);
             const hour = now.getHours();
 
-            const response = await fetch(
+            const response = await authFetch(
                 `${backendUrl}/api/preferences/get-room-preferences?room=${encodeURIComponent(roomName)}&season=${season}&dayType=${dayType}&hour=${hour}`
             );
 

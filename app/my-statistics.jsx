@@ -6,6 +6,7 @@ import { ChevronLeft, Smartphone, PieChart as PieIcon, Calendar, X, Lightbulb, T
 import { PieChart, LineChart } from 'react-native-chart-kit';
 import AnalogClockPresence from '../components/AnalogClockPresence';
 import { getAdminUrl } from '../utils/storage';
+import { authFetch } from '../utils/authFetch';
 
 const screenWidth = Dimensions.get('window').width;
 
@@ -42,9 +43,8 @@ export default function StatisticsPage() {
     const [showCalendar, setShowCalendar] = useState(false);
 
     // Helpers
-    // Helpers
     // Use Local Time YYYY-MM-DD to match backend's en-CA format
-    const formatDate = (date) => {
+    const toLocalDateString = (date) => {
         const offset = date.getTimezoneOffset();
         const localDate = new Date(date.getTime() - (offset * 60 * 1000));
         return localDate.toISOString().split('T')[0];
@@ -113,7 +113,7 @@ export default function StatisticsPage() {
             // 1. Users (Only if not loaded)
             let currentUser = user;
             if (!currentUser) {
-                const usersRes = await fetch(`${adminUrl}/api/users`);
+                const usersRes = await authFetch(`${adminUrl}/api/users`);
                 const users = await usersRes.json();
                 if (users.length === 0) throw new Error("No users configured");
                 currentUser = users[0];
@@ -126,7 +126,7 @@ export default function StatisticsPage() {
             const url = `${adminUrl}/api/stats/user?user_id=${currentUser.user_id}&entity_id=${currentUser.entity_id}&start_date=${start.toISOString()}&end_date=${end.toISOString()}`;
 
             console.log('Fetching User Stats:', url);
-            const statsRes = await fetch(url);
+            const statsRes = await authFetch(url);
             if (!statsRes.ok) throw new Error("Failed to fetch user stats");
             const statsData = await statsRes.json();
             if (statsData.error) throw new Error(statsData.error);
@@ -158,7 +158,7 @@ export default function StatisticsPage() {
             }
             console.log('Fetching Home Stats:', url);
 
-            const res = await fetch(url);
+            const res = await authFetch(url);
             if (!res.ok) throw new Error("Failed to fetch home stats");
             const data = await res.json();
             setHomeStats(data);

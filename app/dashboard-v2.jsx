@@ -79,6 +79,14 @@ export default function DashboardV2() {
     const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
     const [showPreferenceButton, setShowPreferenceButton] = useState(true);
 
+    const haHttpUrl = useMemo(() => {
+        if (!connectionConfig.url) return '';
+        return connectionConfig.url
+            .replace(/^ws:\/\//i, 'http://')
+            .replace(/^wss:\/\//i, 'https://')
+            .replace(/\/api\/websocket\/?$/i, '');
+    }, [connectionConfig.url]);
+
 
     // Room Reordering State
     const [savedRoomOrder, setSavedRoomOrder] = useState([]);
@@ -186,13 +194,18 @@ export default function DashboardV2() {
         const controller = new AbortController();
         mappingsAbortRef.current = controller;
 
-        const adminUrl = connectionConfig.adminUrl;
+    const adminUrl = connectionConfig.adminUrl;
+        const haToken = connectionConfig.token;
         const baseUrl = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
+        const authHeaders = {
+            'Authorization': `Bearer ${haToken}`,
+            'Content-Type': 'application/json',
+        };
 
         // 1. Quick Scenes (New)
         const qsUrl = `${baseUrl}api/quick-scenes?t=${Date.now()}`;
         console.log('[Dashboard] Fetching Quick Scenes...');
-        fetch(qsUrl, { signal: controller.signal })
+        fetch(qsUrl, { signal: controller.signal, headers: authHeaders })
             .then(res => res.json())
             .then(data => {
                 if (Array.isArray(data)) {
@@ -205,7 +218,7 @@ export default function DashboardV2() {
         // 2. Lights
         const lightsUrl = `${baseUrl}api/monitored-entities?type=light&t=${Date.now()}`;
         console.log('[Dashboard] Fetching light mappings...');
-        fetch(lightsUrl, { signal: controller.signal })
+        fetch(lightsUrl, { signal: controller.signal, headers: authHeaders })
             .then(res => res.json())
             .then(data => {
                 if (Array.isArray(data)) {
@@ -218,7 +231,7 @@ export default function DashboardV2() {
         // 3. Media
         const mediaUrl = `${baseUrl}api/monitored-entities?type=media_player&t=${Date.now()}`;
         console.log('[Dashboard] Fetching media mappings...');
-        fetch(mediaUrl, { signal: controller.signal })
+        fetch(mediaUrl, { signal: controller.signal, headers: authHeaders })
             .then(res => res.json())
             .then(data => {
                 if (Array.isArray(data)) {
@@ -231,7 +244,7 @@ export default function DashboardV2() {
         // 4. Sensors
         const sensorUrl = `${baseUrl}api/sensors?t=${Date.now()}`;
         console.log('[Dashboard] Fetching sensor mappings...');
-        fetch(sensorUrl, { signal: controller.signal })
+        fetch(sensorUrl, { signal: controller.signal, headers: authHeaders })
             .then(res => res.json())
             .then(data => {
                 if (data.success && Array.isArray(data.sensors)) {
@@ -244,7 +257,7 @@ export default function DashboardV2() {
         // 5. Covers
         const coverUrl = `${baseUrl}api/covers?t=${Date.now()}`;
         console.log('[Dashboard] Fetching cover mappings...');
-        fetch(coverUrl, { signal: controller.signal })
+        fetch(coverUrl, { signal: controller.signal, headers: authHeaders })
             .then(res => res.json())
             .then(data => {
                 if (data.success && Array.isArray(data.covers)) {
@@ -289,7 +302,12 @@ export default function DashboardV2() {
     useEffect(() => {
         if (!connectionConfig.loaded) return;
 
-        const { url: haUrl, token: haToken, adminUrl } = connectionConfig;
+        const { url: haUrl, token: haToken } = connectionConfig;
+    const adminUrl = connectionConfig.adminUrl;
+        const adminAuthHeaders = {
+            'Authorization': `Bearer ${haToken}`,
+            'Content-Type': 'application/json',
+        };
 
         // ... (Admin Config Fetch remains) ...
         console.log('DEBUG: Fetching Admin Config from:', adminUrl);
@@ -299,7 +317,7 @@ export default function DashboardV2() {
         if (adminUrl) {
             // Append /api/config if not present (assuming env var is base URL)
             const configUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/config` : `${adminUrl}/api/config`) + `?t=${Date.now()}`;
-            fetch(configUrl, { method: 'GET', headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }, signal: configAbort.signal })
+            fetch(configUrl, { method: 'GET', headers: { ...adminAuthHeaders, 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }, signal: configAbort.signal })
                 .then(res => res.json())
                 .then(data => {
                     console.log('DEBUG: Fetched Admin Config Keys:', Object.keys(data));
@@ -309,7 +327,7 @@ export default function DashboardV2() {
 
             // Fetch Alert Rules
             const alertUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/alerts` : `${adminUrl}/api/alerts`) + `?t=${Date.now()}`;
-            fetch(alertUrl, { signal: configAbort.signal })
+            fetch(alertUrl, { signal: configAbort.signal, headers: adminAuthHeaders })
                 .then(res => res.json())
                 .then(data => {
                     if (data.success) setAlertRules(data.rules);
@@ -318,7 +336,7 @@ export default function DashboardV2() {
 
             // Fetch Room Tracking Lookup
             const roomTrackingUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/room-tracking/lookup` : `${adminUrl}/api/room-tracking/lookup`);
-            fetch(roomTrackingUrl, { signal: configAbort.signal })
+            fetch(roomTrackingUrl, { signal: configAbort.signal, headers: adminAuthHeaders })
                 .then(res => res.json())
                 .then(data => {
                     if (data.success) {
@@ -330,7 +348,7 @@ export default function DashboardV2() {
 
             // Fetch Sensor Mappings
             const sensorUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/sensors` : `${adminUrl}/api/sensors`);
-            fetch(sensorUrl, { signal: configAbort.signal })
+            fetch(sensorUrl, { signal: configAbort.signal, headers: adminAuthHeaders })
                 .then(res => res.json())
                 .then(data => {
                     if (data.success) {
@@ -342,7 +360,7 @@ export default function DashboardV2() {
 
             // Fetch Cover Mappings
             const coverUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/covers` : `${adminUrl}/api/covers`);
-            fetch(coverUrl, { signal: configAbort.signal })
+            fetch(coverUrl, { signal: configAbort.signal, headers: adminAuthHeaders })
                 .then(res => res.json())
                 .then(data => {
                     if (data.success) {
@@ -426,7 +444,7 @@ export default function DashboardV2() {
         }
 
         // 3. Connect to Frigate (proxied through admin backend)
-        frigateService.current = new FrigateService('', null, null, connectionConfig.adminUrl);
+    frigateService.current = new FrigateService('', null, null, connectionConfig.adminUrl, haToken);
 
         frigateService.current.getConfig().then(config => {
             if (config && config.cameras) {
@@ -1037,7 +1055,7 @@ export default function DashboardV2() {
                         />
                         <View style={styles.divider} />
 
-                        {showFamily && <PersonBadges entities={entities} alertRules={alertRules} haUrl={connectionConfig.url} />}
+                        {showFamily && <PersonBadges entities={entities} alertRules={alertRules} haUrl={haHttpUrl} />}
 
                         <QuickScenes
                             scenes={quickScenesData}
@@ -1211,7 +1229,7 @@ export default function DashboardV2() {
                             onSettingsPress={handleOpenOpacitySettings}
                             layout={isTablet ? 'grid' : 'horizontal'}
                             columns={columns}
-                            haUrl={connectionConfig.url}
+                            haUrl={haHttpUrl}
                             haToken={connectionConfig.token}
                             sensorMappings={sensorMappings}
                         />
@@ -1277,7 +1295,7 @@ export default function DashboardV2() {
                                     onSettingsPress={handleOpenOpacitySettings}
                                     layout="grid"
                                     columns={columns}
-                                    haUrl={connectionConfig.url}
+                                    haUrl={haHttpUrl}
                                     haToken={connectionConfig.token}
                                     sensorMappings={sensorMappings}
                                 />
@@ -1316,7 +1334,7 @@ export default function DashboardV2() {
                         registryEntities={registryEntities}
                         registryAreas={registryAreas}
                         onExit={handleAiExit}
-                        haUrl={connectionConfig.url}
+                        haUrl={haHttpUrl}
                         haToken={connectionConfig.token}
                     />
                 ) : null}
@@ -1364,7 +1382,7 @@ export default function DashboardV2() {
                     lightMappings={lightMappings}
                     mediaMappings={mediaMappings}
                     adminUrl={connectionConfig.adminUrl}
-                    haUrl={connectionConfig.url}
+                    haUrl={haHttpUrl}
                     haToken={connectionConfig.token}
                     showPreferenceButton={showPreferenceButton}
                     sensorMappings={sensorMappings}

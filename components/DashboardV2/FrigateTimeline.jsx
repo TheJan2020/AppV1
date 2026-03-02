@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Image, SectionList, ActivityI
 import { BlurView } from 'expo-blur';
 import { Play } from 'lucide-react-native';
 
-export default function FrigateTimeline({ events, onEventPress, onLoadMore, hasMore, loadingMore, selectedEventId, listRef, adminUrl }) {
+export default function FrigateTimeline({ events, onEventPress, onLoadMore, hasMore, loadingMore, selectedEventId, listRef, adminUrl, authHeaders }) {
 
     // Group events by Date and Hour
     const sections = useMemo(() => {
@@ -64,7 +64,10 @@ export default function FrigateTimeline({ events, onEventPress, onLoadMore, hasM
                     activeOpacity={0.7}
                 >
                     <Image
-                        source={{ uri: `${adminUrl}/api/frigate/events/${item.id}/thumbnail` }}
+                        source={{
+                            uri: `${adminUrl}/api/frigate/events/${item.id}/thumbnail`,
+                            headers: authHeaders || {},
+                        }}
                         style={styles.thumbnail}
                         resizeMode="cover"
                     />

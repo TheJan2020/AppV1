@@ -4,6 +4,7 @@ import { X, Sparkles, Brain, Info, CheckCircle, AlertCircle, Thermometer, Sun, V
 import { Colors } from '../../constants/Colors';
 import { useState, useEffect } from 'react';
 import { AIService } from '../../services/ai';
+import { authFetch } from '../../utils/authFetch';
 
 export default function MyPreferencesModal({ visible, onClose, adminUrl }) {
     const [loading, setLoading] = useState(false);
@@ -41,7 +42,7 @@ export default function MyPreferencesModal({ visible, onClose, adminUrl }) {
         setLoading(true);
         try {
             // 1. Fetch Ignored List
-            const monRes = await fetch(`${adminUrl}/api/monitor?t=${Date.now()}`);
+            const monRes = await authFetch(`${adminUrl}/api/monitor?t=${Date.now()}`);
             const monData = await monRes.json();
             const ignSet = new Set();
             if (monData.success) {
@@ -59,7 +60,7 @@ export default function MyPreferencesModal({ visible, onClose, adminUrl }) {
             setIgnoredSet(ignSet);
 
             // 2. Fetch Structure
-            const structRes = await fetch(`${adminUrl}/api/structure?t=${Date.now()}`);
+            const structRes = await authFetch(`${adminUrl}/api/structure?t=${Date.now()}`);
             const structData = await structRes.json();
 
             if (structData.success) {
@@ -89,7 +90,7 @@ export default function MyPreferencesModal({ visible, onClose, adminUrl }) {
                 openai_key: openaiKey
             };
 
-            const res = await fetch(`${adminUrl}/api/preferences/analyze`, {
+            const res = await authFetch(`${adminUrl}/api/preferences/analyze`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)

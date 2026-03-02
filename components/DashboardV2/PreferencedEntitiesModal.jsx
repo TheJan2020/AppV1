@@ -3,6 +3,7 @@ import { BlurView } from 'expo-blur';
 import { X, Search, Heart } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
 import { useState, useEffect } from 'react';
+import { authFetch } from '../../utils/authFetch';
 
 export default function PreferencedEntitiesModal({ visible, onClose, adminUrl }) {
     const [entities, setEntities] = useState([]);
@@ -33,7 +34,7 @@ export default function PreferencedEntitiesModal({ visible, onClose, adminUrl })
         setLoading(true);
         try {
             const url = adminUrl.endsWith('/') ? `${adminUrl}api/monitor` : `${adminUrl}/api/monitor`;
-            const res = await fetch(url + `?t=${Date.now()}`);
+                const res = await authFetch(url + `?t=${Date.now()}`);
             const data = await res.json();
             if (data.success) {
                 // Determine includePreference defaults to 1 if null/undefined
@@ -77,8 +78,8 @@ export default function PreferencedEntitiesModal({ visible, onClose, adminUrl })
             const url = adminUrl.endsWith('/') ? `${adminUrl}api/monitor` : `${adminUrl}/api/monitor`;
 
             // Send requests in parallel
-            await Promise.all(changes.map(([entityId, val]) =>
-                fetch(url, {
+                await Promise.all(changes.map(([entityId, val]) =>
+                    authFetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ entity_id: entityId, includePreference: val })

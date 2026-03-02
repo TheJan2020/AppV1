@@ -5,6 +5,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { ChevronLeft, Lightbulb, ToggleLeft, Activity, Eye, Thermometer, Play, Lock, Video, Box } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 import { getAdminUrl } from '../utils/storage';
+import { authFetch } from '../utils/authFetch';
 
 export default function EntityHistoryPicker() {
     const router = useRouter();
@@ -33,7 +34,7 @@ export default function EntityHistoryPicker() {
 
             try {
                 console.log(`Fetching entity list from ${adminUrl}`);
-                const res = await fetch(`${adminUrl}/api/stats/home?start_date=${start.toISOString()}&end_date=${end.toISOString()}`);
+                const res = await authFetch(`${adminUrl}/api/stats/home?start_date=${start.toISOString()}&end_date=${end.toISOString()}`);
                 const data = await res.json();
                 setHomeStats(data);
                 setLoading(false);

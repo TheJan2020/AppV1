@@ -6,6 +6,7 @@ import * as Haptics from 'expo-haptics';
 import * as SecureStore from 'expo-secure-store';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Colors } from '../constants/Colors';
+import { authFetch } from '../utils/authFetch';
 
 export default function VoiceAssistantButton({ onCommand, context }) {
     const [isRecording, setIsRecording] = useState(false);
@@ -49,7 +50,7 @@ export default function VoiceAssistantButton({ onCommand, context }) {
                 sound.unloadAsync();
             }
         };
-    }, []);
+    }, [recording, sound]);
 
     const startRecording = async () => {
         try {
@@ -82,8 +83,7 @@ export default function VoiceAssistantButton({ onCommand, context }) {
     const stopRecording = async () => {
         if (!recording) return;
 
-        try {
-            setIsRecording(false);
+    try {
             setStatus('processing');
             setIsProcessing(true);
 
@@ -123,7 +123,7 @@ export default function VoiceAssistantButton({ onCommand, context }) {
             formData.append('api_key', apiKey);
             formData.append('language', 'en');
 
-            const transcribeResponse = await fetch(`${backendUrl}/api/voice/transcribe`, {
+            const transcribeResponse = await authFetch(`${backendUrl}/api/voice/transcribe`, {
                 method: 'POST',
                 body: formData,
             });
@@ -136,7 +136,7 @@ export default function VoiceAssistantButton({ onCommand, context }) {
             console.log('[VoiceAssistant] Transcript:', transcribeData.transcript);
 
             // Step 2: Process with LLM
-            const processResponse = await fetch(`${backendUrl}/api/voice/process`, {
+            const processResponse = await authFetch(`${backendUrl}/api/voice/process`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -170,7 +170,7 @@ export default function VoiceAssistantButton({ onCommand, context }) {
             }
 
             // Step 3: Generate and play TTS
-            const speakResponse = await fetch(`${backendUrl}/api/voice/speak`, {
+            const speakResponse = await authFetch(`${backendUrl}/api/voice/speak`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
