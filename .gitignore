@@ -44,3 +44,6 @@ yarn-error.*
 # EAS
 eas.json
 .eas/
+
+# Markdown files
+*.md

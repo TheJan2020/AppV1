@@ -703,8 +703,12 @@ function SettingsView({
 
             <TouchableOpacity
                 style={styles.logoutBtn}
-                onPress={() => {
-                    // Navigate to login
+                onPress={async () => {
+                    // Clear session so the next launch goes to login
+                    await SecureStore.deleteItemAsync('is_logged_in');
+                    await SecureStore.deleteItemAsync('logged_in_user');
+                    await SecureStore.deleteItemAsync('saved_password');
+                    await SecureStore.deleteItemAsync('saved_username');
                     router.replace('/login');
                 }}
             >

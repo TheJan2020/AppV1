@@ -11,6 +11,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Home } from 'lucide-react-native';
 import { Colors } from '../constants/Colors';
+import * as SecureStore from 'expo-secure-store';
 
 export default function Splash() {
     const router = useRouter();
@@ -24,7 +25,33 @@ export default function Splash() {
         );
         opacity.value = withDelay(500, withSpring(1));
 
-        const timeout = setTimeout(() => {
+        const timeout = setTimeout(async () => {
+            try {
+                const isLoggedIn = await SecureStore.getItemAsync('is_logged_in');
+                const activeProfileId = await SecureStore.getItemAsync('ha_active_profile_id');
+                const profilesJson = await SecureStore.getItemAsync('ha_profiles');
+                const userJson = await SecureStore.getItemAsync('logged_in_user');
+
+                // Restore session only if we have a valid profile AND a saved user
+                if (isLoggedIn === 'true' && activeProfileId && profilesJson && userJson) {
+                    const profiles = JSON.parse(profilesJson);
+                    const activeProfile = profiles.find(p => p.id === activeProfileId);
+                    if (activeProfile) {
+                        const user = JSON.parse(userJson);
+                        router.replace({
+                            pathname: '/dashboard-v2',
+                            params: {
+                                userName: user.name || '',
+                                userId: user.userId || ''
+                            }
+                        });
+                        return;
+                    }
+                }
+            } catch (e) {
+                console.log('[Splash] Error checking session:', e);
+            }
+            // No valid session — go to login
             router.replace('/login');
         }, 2500);
 

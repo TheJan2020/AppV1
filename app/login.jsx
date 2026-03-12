@@ -405,6 +405,13 @@ export default function Login() {
             }
 
             if (authenticated) {
+                // Persist session so user doesn't need to log in again
+                await SecureStore.setItemAsync('is_logged_in', 'true');
+                await SecureStore.setItemAsync('logged_in_user', JSON.stringify({
+                    name: selectedUser.name,
+                    userId: selectedUser.user_id || ''
+                }));
+
                 if (faceIdEnabled) {
                     await SecureStore.setItemAsync('saved_username', username);
                     await SecureStore.setItemAsync('saved_password', password);

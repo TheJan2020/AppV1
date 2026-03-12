@@ -1240,7 +1240,12 @@ export default function DashboardV2() {
             {/* ===== ROOMS TAB ===== */}
             <View style={[{ flex: 1 }, activeTab !== 'rooms' && { display: 'none' }]}>
                 {entities.length === 0 ? <LoadingSpinner /> : (
-                    <View style={[styles.content, { paddingHorizontal: 20, marginTop: 60, paddingBottom: 100, flex: 1 }, isLandscape && sidebarPadding]}>
+                    <ScrollView
+                        style={{ flex: 1 }}
+                        contentContainerStyle={[styles.content, { paddingHorizontal: 20, marginTop: 60, paddingBottom: 120 }, isLandscape && sidebarPadding]}
+                        showsVerticalScrollIndicator={false}
+                        keyboardShouldPersistTaps="handled"
+                    >
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                             <Text style={styles.sectionTitle}>Rooms</Text>
                             <TouchableOpacity onPress={() => setIsReorderMode(!isReorderMode)}>
@@ -1301,7 +1306,7 @@ export default function DashboardV2() {
                                 />
                             </>
                         )}
-                    </View>
+                    </ScrollView>
                 )}
             </View>
 

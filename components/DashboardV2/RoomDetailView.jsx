@@ -573,7 +573,11 @@ export default function RoomDetailView({
             )}
 
             <View style={{ flex: 1 }}>
-                <ScrollView contentContainerStyle={styles.content}>
+                <ScrollView
+                    style={{ flex: 1 }}
+                    contentContainerStyle={styles.content}
+                    scrollEventThrottle={16}
+                >
 
                     {showPreferenceButton && (
                         <ActivatePreferencesButton

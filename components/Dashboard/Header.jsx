@@ -2,6 +2,7 @@ import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
 import { Colors } from '../../constants/Colors';
 import { Hand, LogOut, Settings } from 'lucide-react-native';
 import { useRouter } from 'expo-router';
+import * as SecureStore from 'expo-secure-store';
 
 export default function Header({ weather, power, lightsOn = 0, climateOn = 0, onLightsPress, onClimatePress, onSettingsPress }) {
     const router = useRouter();
@@ -15,7 +16,14 @@ export default function Header({ weather, power, lightsOn = 0, climateOn = 0, on
                 {
                     text: 'Logout',
                     style: 'destructive',
-                    onPress: () => router.replace('/login')
+                    onPress: async () => {
+                        // Clear session so next launch goes to login
+                        await SecureStore.deleteItemAsync('is_logged_in');
+                        await SecureStore.deleteItemAsync('logged_in_user');
+                        await SecureStore.deleteItemAsync('saved_password');
+                        await SecureStore.deleteItemAsync('saved_username');
+                        router.replace('/login');
+                    }
                 }
             ]
         );
