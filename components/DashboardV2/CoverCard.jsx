@@ -254,9 +254,9 @@ function HorizontalCurtainCard({ cover, sensor, onUpdate, needsChange }) {
     const curtainGesture = Gesture.Simultaneous(curtainPanGesture, curtainTapGesture);
     const rollGesture = Gesture.Simultaneous(rollPanGesture, rollTapGesture);
 
-    const posText = currentPosition <= 2
+    const posText = currentPosition < 5
         ? 'Closed'
-        : currentPosition >= 98
+        : currentPosition >= 95
             ? 'Opened'
             : `Opened ${Math.round(currentPosition)}%`;
 
@@ -502,9 +502,9 @@ function VerticalShutterCard({ cover, sensor, onUpdate, needsChange }) {
     const isMovingDown = sensorState === 'DOWN' || coverState === 'closing' || pendingAction === 'closing';
     const isMoving = isMovingUp || isMovingDown;
 
-    const posText = currentPosition <= 2
+    const posText = currentPosition < 5
         ? 'Closed'
-        : currentPosition >= 98
+        : currentPosition >= 95
             ? 'Opened'
             : `Opened ${Math.round(currentPosition)}%`;
 

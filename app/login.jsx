@@ -86,6 +86,11 @@ export default function Login() {
     useEffect(() => {
         if (haUrl && haToken && users.length === 0) {
             connectAndFetchUsers();
+        } else if (haUrl && !haToken && users.length === 0) {
+            // No token in profile — we can still allow login with username/password
+            // Set a placeholder user so the username input is shown and Login button is enabled
+            setUsers([{ id: 'manual', name: 'Manual Login' }]);
+            setSelectedUser({ id: 'manual', name: 'Manual Login' });
         }
     }, [haUrl, haToken, users.length]);
 
@@ -387,24 +392,29 @@ export default function Login() {
             return;
         }
 
+        if (!username) {
+            Alert.alert('Error', 'Please enter a username');
+            return;
+        }
+
+        if (!haUrl) {
+            Alert.alert('Error', 'No Home Assistant URL configured. Please check your profile settings.');
+            return;
+        }
+
         setIsLoggingIn(true);
 
         try {
-            let authenticated = false;
+            // Normalise URL: ensure it uses http(s) scheme, not ws(s)
+            const normalizedUrl = haUrl
+                .replace(/^wss:\/\//i, 'https://')
+                .replace(/^ws:\/\//i, 'http://')
+                .replace(/\/$/, '');
 
-            if (username) {
-                console.log('Trying auth with entered username:', username);
-                const isValid = await validateCredentials(haUrl.replace(/^https?:\/\//i, (m) => m.toLowerCase()), username, password);
-                if (isValid) {
-                    authenticated = true;
-                }
-            } else {
-                Alert.alert('Error', 'Please enter a username');
-                setIsLoggingIn(false);
-                return;
-            }
+            console.log('Trying auth with username:', username, 'URL:', normalizedUrl);
+            const isValid = await validateCredentials(normalizedUrl, username, password);
 
-            if (authenticated) {
+            if (isValid) {
                 // Persist session so user doesn't need to log in again
                 await SecureStore.setItemAsync('is_logged_in', 'true');
                 await SecureStore.setItemAsync('logged_in_user', JSON.stringify({
@@ -422,7 +432,7 @@ export default function Login() {
                     params: { userName: selectedUser.name, userId: selectedUser.user_id || '' }
                 });
             } else {
-                Alert.alert('Login Failed', 'Invalid password or could not verify user.');
+                Alert.alert('Login Failed', 'Invalid username or password.');
             }
 
         } catch (error) {
@@ -453,8 +463,12 @@ export default function Login() {
                 if (savedUser && savedPass) {
                     setIsLoggingIn(true);
                     setUsername(savedUser); // Update UI
-                    // Validate
-                    if (await validateCredentials(haUrl, savedUser, savedPass)) {
+                    // Validate — normalise URL in case it uses wss:// scheme
+                    const normalizedUrl = haUrl
+                        .replace(/^wss:\/\//i, 'https://')
+                        .replace(/^ws:\/\//i, 'http://')
+                        .replace(/\/$/, '');
+                    if (await validateCredentials(normalizedUrl, savedUser, savedPass)) {
                         console.log('Biometric login success');
                         // Find the user object to pass correctly
                         const userObj = users.find(u => {

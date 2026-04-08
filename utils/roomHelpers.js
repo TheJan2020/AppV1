@@ -64,7 +64,7 @@ export const getRoomEntities = (room, registryDevices = [], registryEntities = [
         lights: [...lightEntries.map(mapEntity), ...mappedLocks],
         fans: fanEntries.map(mapEntity),
         climates: climateEntries.map(mapEntity),
-        covers: coverEntries.map(mapEntity).filter(c => c.coverType),
+        covers: coverEntries.map(mapEntity).filter(c => c.coverType && c.coverType !== 'shutter' && c.coverType !== 'garage'),
         cameras: potentialEntities.filter(re => re.entity_id.startsWith('camera.')).map(mapEntity),
         sensors: mappedSensors,
         doors: doorEntities,

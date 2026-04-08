@@ -3,7 +3,7 @@ import { AppState } from 'react-native';
 export class HAService {
     constructor(url, token) {
         const cleanUrl = url.replace(/\/$/, '');
-        this.url = cleanUrl.replace(/^http/i, 'ws') + '/api/websocket';
+        this.url = cleanUrl.replace(/^https/i, 'wss').replace(/^http(?!s)/i, 'ws') + '/api/websocket';
         this.token = token;
         this.socket = null;
         this.id = 1;
@@ -196,7 +196,7 @@ export class HAService {
     }
 
     sendMessage(msg) {
-        if (!this.socket) return Promise.reject('No socket');
+        if (!this.socket) return Promise.reject(new Error('No socket — HA not connected'));
 
         return new Promise((resolve, reject) => {
             const id = this.id++;

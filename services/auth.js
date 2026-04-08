@@ -8,9 +8,15 @@
  */
 export const validateCredentials = async (haUrl, username, password) => {
     try {
-        // Ensure URL does not end with slash
-        const baseUrl = haUrl.replace(/^https?:\/\//i, (m) => m.toLowerCase()).replace(/\/$/, '');
+        // Normalise URL: ensure http(s) scheme (not wss/ws), strip trailing slash
+        const baseUrl = haUrl
+            .replace(/^wss:\/\//i, 'https://')
+            .replace(/^ws:\/\//i, 'http://')
+            .replace(/\/$/, '');
         const client_id = 'https://home-assistant.io/android/';
+
+        console.log('[Auth] Step 1: Init flow at:', `${baseUrl}/auth/login_flow`);
+        console.log('[Auth] Username:', username);
 
         // Step 1: Init Flow
         const initResponse = await fetch(`${baseUrl}/auth/login_flow`, {
@@ -19,56 +25,57 @@ export const validateCredentials = async (haUrl, username, password) => {
             body: JSON.stringify({
                 client_id: client_id,
                 handler: ['homeassistant', null],
-                redirect_uri: 'homeassistant://auth-callback'
+                redirect_uri: client_id
             })
         });
 
+        console.log('[Auth] Init response status:', initResponse.status);
+
         if (!initResponse.ok) {
-            console.error('Auth Init Failed:', initResponse.status);
+            const errText = await initResponse.text();
+            console.error('[Auth] Init FAILED:', initResponse.status, errText);
             return false;
         }
 
         const initData = await initResponse.json();
+        console.log('[Auth] Init data:', JSON.stringify(initData));
         const flowId = initData.flow_id;
 
         if (!flowId) {
-            console.error('No flow_id returned from HA');
+            console.error('[Auth] No flow_id in response:', JSON.stringify(initData));
             return false;
         }
 
-        // Step 2: Login with Credentials
+        // Step 2: Login with Credentials — HA requires client_id here too
+        console.log('[Auth] Step 2: Submitting credentials for flow:', flowId);
         const loginResponse = await fetch(`${baseUrl}/auth/login_flow/${flowId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 username: username,
                 password: password,
-                client_id: client_id
+                client_id: client_id,
             })
         });
 
+        console.log('[Auth] Login response status:', loginResponse.status);
         const loginData = await loginResponse.json();
+        console.log('[Auth] Login response data:', JSON.stringify(loginData));
 
         // Check success
         if (loginData.type === 'create_entry') {
+            console.log('[Auth] ✅ Login SUCCESS');
             return true;
         } else if (loginData.type === 'mfa_required') {
-            // If MFA is required, we currently don't support it in this simple check,
-            // but strictly speaking, the password WAS correct (otherwise it would invalid_auth).
-            // However, to be safe, we might return false or handle it.
-            // For now, let's assume if we got to MFA, the password was right.
-            // BUT, if we want to enforce full login, we should probably fail.
-            // The user just wants "password check". 
-            // Let's log it and return true because the PASSWORD was valid.
-            console.log('MFA Required - Password was valid but more steps needed. Returning true for password check.');
+            console.log('[Auth] MFA required — password was valid, treating as success');
             return true;
         } else {
-            console.log('Auth Failed: ', loginData.input_errors || loginData.type);
+            console.log('[Auth] ❌ Login FAILED. type:', loginData.type, 'errors:', JSON.stringify(loginData.errors || loginData.input_errors || {}));
             return false;
         }
 
     } catch (error) {
-        console.error("Auth validation error:", error);
+        console.error('[Auth] ❌ Exception:', error.message || error);
         return false;
     }
 };

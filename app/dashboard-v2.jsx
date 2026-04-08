@@ -4,6 +4,7 @@ import SecurityControlModal from '../components/DashboardV2/SecurityControlModal
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator } from 'react-native';
+import HomeCameraStrip from '../components/DashboardV2/HomeCameraStrip';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import HeaderV2 from '../components/DashboardV2/HeaderV2';
@@ -28,6 +29,7 @@ import useDeviceType from '../hooks/useDeviceType';
 import RoomSheet from '../components/DashboardV2/RoomSheet';
 import OpacitySettingsModal from '../components/DashboardV2/OpacitySettingsModal';
 import SlideAction from '../components/DashboardV2/SlideAction';
+import ShutterGarageSlide from '../components/DashboardV2/ShutterGarageSlide';
 import BrainView from '../components/DashboardV2/BrainView';
 import VoiceConversation from '../components/VoiceConversation';
 import { LockOpen } from 'lucide-react-native';
@@ -378,40 +380,33 @@ export default function DashboardV2() {
             service.current.connect();
             service.current.subscribe(data => {
                 if (data.type === 'connected') {
-                    service.current.getStates().then(states => {
+                    // Fire ALL registry + state calls simultaneously — one round-trip each,
+                    // then batch all setStates at once so rooms render in a single pass.
+                    Promise.all([
+                        service.current.getStates(),
+                        service.current.getConfig(),
+                        service.current.getDeviceRegistry(),
+                        service.current.getEntityRegistry(),
+                        service.current.getCategoryRegistry(),
+                        service.current.getAreaRegistry(),
+                        service.current.getFloorRegistry(),
+                    ]).then(([states, config, devices, regs, cats, areas, floors]) => {
+                        // Batch all state updates — React 18 batches these automatically
                         setEntities(states || []);
-                    });
-                    service.current.getConfig().then(config => {
-                        if (config && config.location_name) {
-                            setCityName(config.location_name);
-                        }
-                    });
-
-                    // Fetch Registries
-                    service.current.getDeviceRegistry().then(devices => {
+                        if (config?.location_name) setCityName(config.location_name);
                         setRegistryDevices(devices || []);
-                    });
-                    service.current.getEntityRegistry().then(regs => {
                         setRegistryEntities(regs || []);
-                    });
-                    service.current.getCategoryRegistry().then(cats => {
-                        console.log('[Dashboard] Loaded Categories:', cats ? cats.length : 0);
                         setRegistryCategories(cats || []);
-                    });
-                    service.current.getAreaRegistry().then(areas => {
-                        if (areas && areas.length > 0) {
-                            console.log('DEBUG: First Area:', JSON.stringify(areas[0]));
-                        }
                         setRegistryAreas(areas || []);
-                    });
-                    service.current.getFloorRegistry().then(floors => {
-                        setRegistryFloors(floors || []);
                         if (floors && floors.length > 0) {
-                            // Sort floors by level (optional) or just use default order
-                            const sorted = floors.sort((a, b) => (a.level || 0) - (b.level || 0));
+                            const sorted = [...floors].sort((a, b) => (a.level || 0) - (b.level || 0));
+                            setRegistryFloors(sorted);
                             setSelectedFloor(sorted[0].floor_id);
+                        } else {
+                            setRegistryFloors(floors || []);
                         }
-                    });
+                        console.log(`[Dashboard] Loaded: ${(states||[]).length} states, ${(areas||[]).length} areas, ${(floors||[]).length} floors`);
+                    }).catch(e => console.log('[Dashboard] Initial load error:', e.message));
 
                 } else if (data.type === 'state_changed' && data.event && data.event.data) {
                     const newEvent = data.event.data.new_state;
@@ -457,6 +452,31 @@ export default function DashboardV2() {
                 console.log('DEBUG: Frigate Cameras Loaded:', cams.length);
             }
         });
+
+        // 4. Fetch HA camera entities from admin backend as fallback/supplement
+        // These are used when Frigate is unreachable (local IP not accessible remotely)
+        if (adminUrl) {
+            const camUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/cameras` : `${adminUrl}/api/cameras`) + `?t=${Date.now()}`;
+            fetch(camUrl, { headers: adminAuthHeaders })
+                .then(res => res.json())
+                .then(data => {
+                    if (data && Array.isArray(data.cameras) && data.cameras.length > 0) {
+                        // Only use HA cameras if Frigate didn't already load cameras
+                        setFrigateCameras(prev => {
+                            if (prev.length > 0) return prev; // Frigate already loaded, keep it
+                            // Map HA camera entities → same shape as Frigate cameras
+                            return data.cameras.map(c => ({
+                                id: c.entity_id,
+                                name: c.entity_id.replace('camera.', ''),
+                                friendly_name: c.name,
+                                entity_id: c.entity_id,   // marks this as HA camera for snapshot routing
+                            }));
+                        });
+                        console.log('DEBUG: HA Cameras Loaded as fallback:', data.cameras.length);
+                    }
+                })
+                .catch(e => console.log('DEBUG: HA Cameras fetch error:', e));
+        }
 
         return () => {
             configAbort.abort();
@@ -702,9 +722,13 @@ export default function DashboardV2() {
 
     const callService = useCallback((domain, serviceName, serviceData) => {
         if (service.current) {
-            return service.current.callService(domain, serviceName, serviceData);
+            return service.current.callService(domain, serviceName, serviceData)
+                .catch((err) => {
+                    console.warn('[callService] Failed:', domain, serviceName, err?.message ?? err);
+                });
         }
-        return Promise.reject(new Error("Home Assistant service not connected"));
+        console.warn('[callService] HA service not connected');
+        return Promise.resolve();
     }, []);
 
     const handleScenePress = useCallback((sceneId) => {
@@ -964,6 +988,39 @@ export default function DashboardV2() {
         return areaId && activeRoomIds.includes(areaId);
     }), [entities, registryEntities, registryDevices, roomsWithCounts]);
 
+    // Shutter & garage door covers for home screen (global, not per-room)
+    const homeCovers = useMemo(() => {
+        const shutterTypes = ['shutter', 'garage'];
+        return coverMappings
+            .filter(m => shutterTypes.includes(m.coverType))
+            .map(m => {
+                const stateObj = entities.find(e => e.entity_id === m.entity_id);
+                if (!stateObj) return null;
+                const position = stateObj.attributes?.current_position ?? null;
+                // Use position if available (more reliable than state string)
+                // < 5% open  → treat as closed  (nearly fully closed)
+                // >= 5% open → treat as open
+                // Fall back to state string if position not reported
+                let isOpen;
+                if (position !== null) {
+                    isOpen = position >= 5;
+                } else {
+                    isOpen = stateObj.state === 'open' || stateObj.state === 'opening';
+                }
+                return {
+                    entity_id: m.entity_id,
+                    coverType: m.coverType,
+                    name: stateObj.attributes?.friendly_name || m.entity_id,
+                    state: stateObj.state,
+                    position,
+                    isOpen,
+                    isOpening: stateObj.state === 'opening',
+                    isClosing: stateObj.state === 'closing',
+                };
+            })
+            .filter(Boolean);
+    }, [coverMappings, entities]);
+
     return (
         <View style={styles.container}>
             <Stack.Screen options={{ headerShown: false }} />
@@ -1219,6 +1276,27 @@ export default function DashboardV2() {
                             </View>
                         )}
 
+                        {/* Shutter & Garage Door Sliders */}
+                        {homeCovers.length > 0 && (
+                            <View style={styles.sliderRow}>
+                                {homeCovers.map(cover => (
+                                    <View key={cover.entity_id} style={styles.sliderContainer}>
+                                        <ShutterGarageSlide
+                                            label={cover.name}
+                                            coverType={cover.coverType}
+                                            isOpen={cover.isOpen}
+                                            isOpening={cover.isOpening}
+                                            isClosing={cover.isClosing}
+                                            position={cover.position}
+                                            onOpen={() => callService('cover', 'open_cover', { entity_id: cover.entity_id })}
+                                            onClose={() => callService('cover', 'close_cover', { entity_id: cover.entity_id })}
+                                            onStop={() => callService('cover', 'stop_cover', { entity_id: cover.entity_id })}
+                                        />
+                                    </View>
+                                ))}
+                            </View>
+                        )}
+
                         <RoomsList
                             rooms={roomsWithCounts}
                             registryEntities={registryEntities}
@@ -1233,7 +1311,15 @@ export default function DashboardV2() {
                             haToken={connectionConfig.token}
                             sensorMappings={sensorMappings}
                         />
+
+                        <HomeCameraStrip
+                            frigateCameras={frigateCameras}
+                            selectedCameraNames={badgeConfig?.selected_cameras || []}
+                            frigateService={frigateService.current}
+                            onCameraPress={handleFrigateCameraPress}
+                        />
                     </ScrollView>
+
                 )}
             </View>
 
