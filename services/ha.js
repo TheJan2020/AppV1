@@ -118,13 +118,10 @@ export class HAService {
     }
 
     handleMessage(data) {
-
-
         if (data.type === 'auth_required') {
             this.sendAuth();
         } else if (data.type === 'auth_ok') {
             this.authenticated = true;
-            console.log('Auth Successful');
             this.notifyListeners({ type: 'connected' });
             // Subscribe to events
             this.sendMessage({ type: 'subscribe_events', event_type: 'state_changed' });
@@ -201,7 +198,8 @@ export class HAService {
         return new Promise((resolve, reject) => {
             const id = this.id++;
             this.pending.set(id, { resolve, reject });
-            this.socket.send(JSON.stringify({ ...msg, id }));
+            const payload = { ...msg, id };
+            this.socket.send(JSON.stringify(payload));
         });
     }
 

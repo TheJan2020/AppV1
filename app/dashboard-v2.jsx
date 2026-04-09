@@ -1,6 +1,8 @@
 import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
+import * as Notifications from 'expo-notifications';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
+import NotificationModal from '../components/DashboardV2/NotificationModal';
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator } from 'react-native';
@@ -204,70 +206,52 @@ export default function DashboardV2() {
             'Content-Type': 'application/json',
         };
 
-        // 1. Quick Scenes (New)
+        // 1. Quick Scenes
         const qsUrl = `${baseUrl}api/quick-scenes?t=${Date.now()}`;
-        console.log('[Dashboard] Fetching Quick Scenes...');
         fetch(qsUrl, { signal: controller.signal, headers: authHeaders })
             .then(res => res.json())
             .then(data => {
                 if (Array.isArray(data)) {
-                    console.log('[Quick Scenes] Loaded:', data.length);
                     setAllowedQuickScenes(data.map(s => s.entity_id));
                 }
             })
-            .catch(e => { if (e.name !== 'AbortError') console.log("[Quick Scenes] Error:", e); });
+            .catch(e => { if (e.name !== 'AbortError') console.error('[Mappings] Quick Scenes error:', e); });
 
         // 2. Lights
         const lightsUrl = `${baseUrl}api/monitored-entities?type=light&t=${Date.now()}`;
-        console.log('[Dashboard] Fetching light mappings...');
         fetch(lightsUrl, { signal: controller.signal, headers: authHeaders })
             .then(res => res.json())
             .then(data => {
-                if (Array.isArray(data)) {
-                    console.log('[Light Mappings] Loaded:', data.length);
-                    setLightMappings(data);
-                }
+                if (Array.isArray(data)) setLightMappings(data);
             })
-            .catch(e => { if (e.name !== 'AbortError') console.log("[Light Mappings] Error:", e); });
+            .catch(e => { if (e.name !== 'AbortError') console.error('[Mappings] Light error:', e); });
 
         // 3. Media
         const mediaUrl = `${baseUrl}api/monitored-entities?type=media_player&t=${Date.now()}`;
-        console.log('[Dashboard] Fetching media mappings...');
         fetch(mediaUrl, { signal: controller.signal, headers: authHeaders })
             .then(res => res.json())
             .then(data => {
-                if (Array.isArray(data)) {
-                    console.log('[Media Mappings] Loaded:', data.length);
-                    setMediaMappings(data);
-                }
+                if (Array.isArray(data)) setMediaMappings(data);
             })
-            .catch(e => { if (e.name !== 'AbortError') console.log("[Media Mappings] Error:", e); });
+            .catch(e => { if (e.name !== 'AbortError') console.error('[Mappings] Media error:', e); });
 
         // 4. Sensors
         const sensorUrl = `${baseUrl}api/sensors?t=${Date.now()}`;
-        console.log('[Dashboard] Fetching sensor mappings...');
         fetch(sensorUrl, { signal: controller.signal, headers: authHeaders })
             .then(res => res.json())
             .then(data => {
-                if (data.success && Array.isArray(data.sensors)) {
-                    console.log(`[Sensor Mappings] Loaded: ${data.sensors.length}`);
-                    setSensorMappings(data.sensors);
-                }
+                if (data.success && Array.isArray(data.sensors)) setSensorMappings(data.sensors);
             })
-            .catch(e => { if (e.name !== 'AbortError') console.log("Sensor Mappings Error", e); });
+            .catch(e => { if (e.name !== 'AbortError') console.error('[Mappings] Sensor error:', e); });
 
         // 5. Covers
         const coverUrl = `${baseUrl}api/covers?t=${Date.now()}`;
-        console.log('[Dashboard] Fetching cover mappings...');
         fetch(coverUrl, { signal: controller.signal, headers: authHeaders })
             .then(res => res.json())
             .then(data => {
-                if (data.success && Array.isArray(data.covers)) {
-                    console.log(`[Cover Mappings] Loaded: ${data.covers.length}`);
-                    setCoverMappings(data.covers);
-                }
+                if (data.success && Array.isArray(data.covers)) setCoverMappings(data.covers);
             })
-            .catch(e => { if (e.name !== 'AbortError') console.log("Cover Mappings Error", e); });
+            .catch(e => { if (e.name !== 'AbortError') console.error('[Mappings] Cover error:', e); });
     };
 
     // ... (rest of useEffects)
@@ -288,18 +272,6 @@ export default function DashboardV2() {
         fetchMappings();
     }, [connectionConfig.loaded, connectionConfig.adminUrl]);
 
-    // DEBUG: Alert Debugging
-    useEffect(() => {
-        if (entities.length > 0) {
-            const doors = entities.filter(e => e.entity_id.startsWith('sensor.door_'));
-            if (doors.length > 0) {
-                const debugStr = doors.map(d => `${d.entity_id}: ${d.state}`).join('\n');
-                // Alert.alert('Door Debug', debugStr); // Uncomment to see debug
-                console.log('Door Debug:\n' + debugStr);
-            }
-        }
-    }, [entities]);
-
     // Initial Load Logic
     useEffect(() => {
         if (!connectionConfig.loaded) return;
@@ -312,8 +284,6 @@ export default function DashboardV2() {
         };
 
         // ... (Admin Config Fetch remains) ...
-        console.log('DEBUG: Fetching Admin Config from:', adminUrl);
-
         const configAbort = new AbortController();
 
         if (adminUrl) {
@@ -322,19 +292,36 @@ export default function DashboardV2() {
             fetch(configUrl, { method: 'GET', headers: { ...adminAuthHeaders, 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' }, signal: configAbort.signal })
                 .then(res => res.json())
                 .then(data => {
-                    console.log('DEBUG: Fetched Admin Config Keys:', Object.keys(data));
                     setBadgeConfig(data);
                 })
-                .catch(err => { if (err.name !== 'AbortError') console.log('DEBUG: Error loading admin config:', err); });
+                .catch(err => { if (err.name !== 'AbortError') console.error('[Config] Error loading admin config:', err); });
 
             // Fetch Alert Rules
             const alertUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/alerts` : `${adminUrl}/api/alerts`) + `?t=${Date.now()}`;
             fetch(alertUrl, { signal: configAbort.signal, headers: adminAuthHeaders })
                 .then(res => res.json())
                 .then(data => {
-                    if (data.success) setAlertRules(data.rules);
+                    if (data.success) {
+                        setAlertRules(data.rules);
+                        alertRulesRef.current = data.rules; // keep ref in sync for socket closure
+                    }
                 })
                 .catch(e => { if (e.name !== 'AbortError') console.log("Alert Rules Error", e); });
+
+            // Fetch ignored entities list from /api/entities and cache in ref
+            const entitiesUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/entities` : `${adminUrl}/api/entities`);
+            fetch(entitiesUrl, { signal: configAbort.signal, headers: adminAuthHeaders })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success && Array.isArray(data.entities)) {
+                        const ignoredSet = new Set(
+                            data.entities.filter(e => e.ignored).map(e => e.entity_id)
+                        );
+                        ignoredEntitiesRef.current = ignoredSet;
+                        console.log(`[Notifications] Loaded ${ignoredSet.size} ignored entities`);
+                    }
+                })
+                .catch(e => { if (e.name !== 'AbortError') console.log('[Notifications] Ignored entities fetch error:', e); });
 
             // Fetch Room Tracking Lookup
             const roomTrackingUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/room-tracking/lookup` : `${adminUrl}/api/room-tracking/lookup`);
@@ -409,11 +396,126 @@ export default function DashboardV2() {
                     }).catch(e => console.log('[Dashboard] Initial load error:', e.message));
 
                 } else if (data.type === 'state_changed' && data.event && data.event.data) {
-                    const newEvent = data.event.data.new_state;
-                    if (!newEvent) return; // Ignore deletions or null states
+                    const newState = data.event.data.new_state;
+                    const oldState = data.event.data.old_state;
+                    if (!newState) return; // Ignore deletions or null states
 
-                    // Batch updates — collect into pending array, flush every 500ms
-                    pendingEntityUpdates.current.push(newEvent);
+                    const entityId = newState.entity_id;
+                    const newVal   = newState.state;
+                    const oldVal   = oldState?.state;
+                    const attrs    = newState.attributes || {};
+                    const name     = attrs.friendly_name || entityId.replace(/_/g, ' ');
+                    const domain   = entityId.split('.')[0];
+
+                    // ── Notification from socket event (real-time, has old→new) ──
+                    const ignored = ignoredEntitiesRef.current.has(entityId);
+                    const stateActuallyChanged = newVal !== oldVal;
+
+                    if (!ignored && stateActuallyChanged) {
+                        // Domains that are ALWAYS noisy — skip entirely unless in alertRules
+                        const ALWAYS_SKIP = new Set([
+                            'sensor','input_boolean','input_number','input_select',
+                            'automation','sun','zone','update','weather','counter',
+                            'timer','schedule','number','select','text','button',
+                            'remote','calendar','image','stt','tts','wake_word',
+                            'conversation','person','device_tracker','event',
+                            'camera','ai_task',
+                        ]);
+
+                        // Domains that only notify when explicitly in alertRules
+                        const ALERTRULE_ONLY = new Set(['switch','script','light','media_player']);
+
+                        let notifTitle = null;
+                        let notifBody  = null;
+                        let notifCat   = 'default';
+
+                        if (ALWAYS_SKIP.has(domain)) {
+                            const rule = alertRulesRef.current?.find(
+                                r => r.entity_id === entityId && r.trigger_state === newVal
+                            );
+                            if (rule) {
+                                notifTitle = `${name} → ${newVal}`;
+                                notifBody  = 'Alert rule triggered';
+                                notifCat   = 'default';
+                            }
+
+                        } else if (ALERTRULE_ONLY.has(domain)) {
+                            const rule = alertRulesRef.current?.find(
+                                r => r.entity_id === entityId && r.trigger_state === newVal
+                            );
+                            if (rule) {
+                                notifTitle = `${name} ${newVal === 'on' ? 'On' : newVal === 'off' ? 'Off' : newVal}`;
+                                notifBody  = `${domain} changed to ${newVal}`;
+                                notifCat   = domain === 'light' ? 'light' : 'scene';
+                            }
+
+                        } else if (domain === 'lock') {
+                            if (newVal !== 'unavailable' && oldVal !== 'unavailable') {
+                                notifCat   = 'lock';
+                                notifTitle = newVal === 'unlocked' ? `${name} Unlocked` : `${name} Locked`;
+                                notifBody  = `Lock changed: ${oldVal} → ${newVal}`;
+                            }
+
+                        } else if (domain === 'alarm_control_panel') {
+                            const labelMap = {
+                                armed_away: 'Armed Away', armed_home: 'Armed Home',
+                                armed_night: 'Armed Night', disarmed: 'Disarmed',
+                                triggered: '🚨 TRIGGERED', pending: 'Pending', arming: 'Arming',
+                            };
+                            notifCat   = 'security';
+                            notifTitle = `Security: ${labelMap[newVal] || newVal}`;
+                            notifBody  = `Alarm: ${oldVal} → ${newVal}`;
+
+                        } else if (domain === 'binary_sensor') {
+                            const dClass = attrs.device_class || '';
+                            if (entityId.includes('espresense') || entityId.includes('connectivity')) {
+                                // silently skip espresense noise
+                            } else if (['door','window','opening'].includes(dClass)) {
+                                notifCat   = 'door';
+                                const opened = newVal === 'on';
+                                notifTitle = `${name} ${opened ? 'Opened' : 'Closed'}`;
+                                notifBody  = `${dClass.charAt(0).toUpperCase() + dClass.slice(1)} is now ${opened ? 'open' : 'closed'}`;
+                            } else if (dClass === 'motion' && newVal === 'on') {
+                                notifCat   = 'camera';
+                                notifTitle = `Motion — ${name}`;
+                                notifBody  = 'Movement detected';
+                            } else if (dClass === 'smoke' && newVal === 'on') {
+                                notifCat   = 'security';
+                                notifTitle = `🔥 Smoke — ${name}`;
+                                notifBody  = 'Smoke detected!';
+                            } else {
+                                const rule = alertRulesRef.current?.find(
+                                    r => r.entity_id === entityId && r.trigger_state === newVal
+                                );
+                                if (rule) {
+                                    notifTitle = `${name} → ${newVal}`;
+                                    notifBody  = 'Alert triggered';
+                                }
+                            }
+
+                        } else if (domain === 'cover') {
+                            if (newVal !== 'unavailable' && oldVal !== 'unavailable') {
+                                notifCat   = 'default';
+                                notifTitle = `${name} ${newVal === 'open' ? 'Opened' : newVal === 'closed' ? 'Closed' : newVal}`;
+                                notifBody  = `Cover: ${oldVal} → ${newVal}`;
+                            }
+
+                        } else if (domain === 'climate') {
+                            if ((oldVal === 'off' && newVal !== 'off') || (oldVal !== 'off' && newVal === 'off')) {
+                                notifCat   = 'climate';
+                                notifTitle = `AC — ${name}`;
+                                notifBody  = newVal === 'off' ? 'Turned off' : `Set to ${newVal}`;
+                            }
+                        }
+
+                        if (notifTitle) {
+                            pushNotification(notifTitle, notifBody, notifCat);
+                        }
+
+                    }
+
+                    // Batch entity state update (unchanged)
+                    pendingEntityUpdates.current.push(newState);
                     if (!entityFlushTimer.current) {
                         entityFlushTimer.current = setTimeout(() => {
                             const updates = pendingEntityUpdates.current;
@@ -449,7 +551,6 @@ export default function DashboardV2() {
                     ...config.cameras[key]
                 }));
                 setFrigateCameras(cams);
-                console.log('DEBUG: Frigate Cameras Loaded:', cams.length);
             }
         });
 
@@ -472,10 +573,9 @@ export default function DashboardV2() {
                                 entity_id: c.entity_id,   // marks this as HA camera for snapshot routing
                             }));
                         });
-                        console.log('DEBUG: HA Cameras Loaded as fallback:', data.cameras.length);
                     }
                 })
-                .catch(e => console.log('DEBUG: HA Cameras fetch error:', e));
+                .catch(e => console.error('[Cameras] HA cameras fetch error:', e));
         }
 
         return () => {
@@ -513,6 +613,16 @@ export default function DashboardV2() {
     const [cardOpacity, setCardOpacity] = useState(0.4);
     const [cardColor, setCardColor] = useState('#000000');
     const [settingsModalVisible, setSettingsModalVisible] = useState(false);
+
+    // ── Notifications ───────────────────────────────────────────────────────
+    const [notifications, setNotifications] = useState([]);
+    const [showNotifications, setShowNotifications] = useState(false);
+    const [notifUnread, setNotifUnread] = useState(0);
+    const notifIdRef = useRef(1);
+    // Ignored entities from backend /api/entities (ignored=1)
+    const ignoredEntitiesRef = useRef(new Set());
+    // Mirror of alertRules in a ref so the socket closure always reads the latest
+    const alertRulesRef = useRef([]);
 
     // Derived Logic for Badges
     const getAllActiveDevices = useCallback((type) => {
@@ -599,6 +709,48 @@ export default function DashboardV2() {
         }
         return { power: pw, securityState: sec };
     }, [entities, badgeConfig]);
+
+    // ── Notification generation from HA state_changed events ────────────────
+    // All notifications are fired directly in the socket subscriber (real-time,
+    // with old→new state). No useEffect watchers needed — they would duplicate.
+    const pushNotification = useCallback((title, body, category) => {
+        const n = {
+            id: notifIdRef.current++,
+            title,
+            body,
+            category,
+            timestamp: Date.now(),
+            unread: true,
+        };
+        // Update in-app bell/modal
+        setNotifications(prev => [n, ...prev].slice(0, 50));
+        setNotifUnread(prev => prev + 1);
+
+        // Fire real OS notification — shows on lock screen, notification centre,
+        // and as a banner when the app is backgrounded or the screen is off.
+        Notifications.scheduleNotificationAsync({
+            content: {
+                title,
+                body,
+                sound: true,
+                // Pass category so a custom tap handler can deep-link later
+                data: { category, entity_notification: true },
+            },
+            trigger: null, // null = deliver immediately
+        }).catch(() => {
+            // Silently ignore if notifications aren't permitted (e.g. simulator)
+        });
+    }, []);
+
+    const handleBellPress = useCallback(() => {
+        setShowNotifications(true);
+        setNotifUnread(0); // mark all read when opened
+    }, []);
+
+    const handleClearNotifications = useCallback(() => {
+        setNotifications([]);
+        setNotifUnread(0);
+    }, []);
 
     // Default floor selection
     useEffect(() => {
@@ -1039,6 +1191,13 @@ export default function DashboardV2() {
                 />
             )}
 
+            <NotificationModal
+                visible={showNotifications}
+                notifications={notifications}
+                onClose={() => setShowNotifications(false)}
+                onClearAll={handleClearNotifications}
+            />
+
             {modalVisible && (
                 <ActiveDevicesModal
                     visible={modalVisible}
@@ -1101,6 +1260,8 @@ export default function DashboardV2() {
                             entities={entities}
                             config={badgeConfig}
                             onRoomPress={handleHeaderRoomPress}
+                            onBellPress={handleBellPress}
+                            unreadCount={notifUnread}
                         />
                         <StatusBadges
                             securityState={securityState}

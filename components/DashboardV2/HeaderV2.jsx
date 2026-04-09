@@ -1,9 +1,8 @@
 import React, { memo } from 'react';
-import { View, Text, StyleSheet, Image, TouchableOpacity } from 'react-native';
-import { Colors } from '../../constants/Colors';
-import { Cloud, CloudRain, Sun, Moon } from 'lucide-react-native';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { Cloud, CloudRain, Sun, Bell } from 'lucide-react-native';
 
-function HeaderV2({ weather, cityName, userName, entities = [], config = {}, onRoomPress }) {
+function HeaderV2({ weather, cityName, userName, entities = [], config = {}, onRoomPress, onBellPress, unreadCount = 0 }) {
 
     const getGreeting = () => {
         const hour = new Date().getHours();
@@ -48,15 +47,17 @@ function HeaderV2({ weather, cityName, userName, entities = [], config = {}, onR
             <View style={styles.topRow}>
                 <View>
                     <Text style={styles.greeting}>{getGreeting()}</Text>
-                    <Text style={styles.name}>{userName || 'Zeyad'}</Text>
+                    <Text style={styles.name}>{userName || 'Home'}</Text>
                 </View>
-                <View style={styles.logoContainer}>
-                    <Image
-                        source={require('../../assets/header-logo.png')}
-                        style={styles.logo}
-                        resizeMode="contain"
-                    />
-                </View>
+                {/* Bell button */}
+                <TouchableOpacity
+                    style={styles.bellBtn}
+                    onPress={onBellPress}
+                    activeOpacity={0.75}
+                >
+                    <Bell size={20} color="rgba(237,237,245,0.85)" />
+                    {unreadCount > 0 && <View style={styles.bellBadge} />}
+                </TouchableOpacity>
             </View>
 
             <View style={styles.weatherRow}>
@@ -64,16 +65,16 @@ function HeaderV2({ weather, cityName, userName, entities = [], config = {}, onR
                 <Text style={styles.weatherText}>
                     {temp}° {state}
                 </Text>
-                <Text style={styles.weatherDivider}>•</Text>
+                <Text style={styles.weatherDivider}>·</Text>
                 <Text style={styles.weatherCity}>{city}</Text>
 
                 {trackedSensors.length > 0 && (
                     <>
-                        <Text style={styles.weatherDivider}>|</Text>
+                        <Text style={styles.weatherDivider}>·</Text>
                         {trackedSensors.map((val, idx) => (
                             <React.Fragment key={idx}>
                                 <Text style={styles.weatherCity}>{val}</Text>
-                                {idx < trackedSensors.length - 1 && <Text style={styles.weatherDivider}>•</Text>}
+                                {idx < trackedSensors.length - 1 && <Text style={styles.weatherDivider}>·</Text>}
                             </React.Fragment>
                         ))}
                     </>
@@ -88,59 +89,65 @@ const styles = StyleSheet.create({
         paddingTop: 60,
         paddingHorizontal: 20,
         marginBottom: 10,
-        gap: 5 // Spacing between name and weather row
-    },
-    greeting: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        color: '#fff',
-        opacity: 0.8
+        gap: 5,
     },
     topRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
     },
-    logoContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 8 // increased gap for horizontal separation
-    },
-    logo: {
-        width: 80, // 20% smaller (was 100)
-        height: 32, // 20% smaller (was 40)
-        opacity: 1
-    },
-    subLogo: {
-        width: 64, // 20% smaller (was 80)
-        height: 24, // 20% smaller (was 30)
-        opacity: 0.8
+    greeting: {
+        fontSize: 12.5,
+        fontWeight: '400',
+        color: 'rgba(237,237,245,0.45)',
+        letterSpacing: 0.1,
     },
     name: {
-        fontSize: 32,
-        fontWeight: 'bold',
-        color: '#fff',
+        fontSize: 28,
+        fontWeight: '800',
+        color: '#ededf5',
+        letterSpacing: -0.8,
+        marginTop: 1,
+    },
+    bellBtn: {
+        width: 42,
+        height: 42,
+        borderRadius: 14,
+        backgroundColor: 'rgba(255,255,255,0.06)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    bellBadge: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        width: 7,
+        height: 7,
+        borderRadius: 3.5,
+        backgroundColor: '#832ea9',
     },
     weatherRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 6, // Reduced gap too
-        marginTop: -2 // Pull it up slightly
+        gap: 5,
+        marginTop: 2,
     },
     weatherText: {
-        color: '#fff',
-        fontSize: 12, // Reduced from 16
-        fontWeight: '600',
+        color: 'rgba(237,237,245,0.7)',
+        fontSize: 12,
+        fontWeight: '500',
     },
     weatherDivider: {
-        color: 'rgba(255,255,255,0.4)',
-        fontSize: 11, // Reduced from 14
+        color: 'rgba(237,237,245,0.3)',
+        fontSize: 11,
     },
     weatherCity: {
-        color: 'rgba(255,255,255,0.6)',
-        fontSize: 12, // Reduced from 16
-        fontWeight: '500'
-    }
+        color: 'rgba(237,237,245,0.55)',
+        fontSize: 12,
+        fontWeight: '400',
+    },
 });
 
 export default memo(HeaderV2);
