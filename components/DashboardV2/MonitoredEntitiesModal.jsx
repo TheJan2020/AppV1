@@ -1,6 +1,6 @@
 import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, Switch } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { X, Search, Database } from 'lucide-react-native';
+import { X, Search, Bell } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
 import { useState, useEffect } from 'react';
 import { authFetch } from '../../utils/authFetch';
@@ -10,7 +10,7 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
     const [filteredEntities, setFilteredEntities] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [loading, setLoading] = useState(true);
-    const [changedEntities, setChangedEntities] = useState({}); // { entity_id: newStatus }
+    const [changedEntities, setChangedEntities] = useState({}); // { entity_id: { ignored?, notifyAlways? } }
 
     useEffect(() => {
         if (visible) {
@@ -49,15 +49,21 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
 
     const toggleIgnore = (entityId, currentIgnored) => {
         const newStatus = !currentIgnored;
-
-        // Optimistic Update
         const updated = entities.map(e => e.entity_id === entityId ? { ...e, ignored: newStatus ? 1 : 0 } : e);
         setEntities(updated);
-
-        // Track Change
         setChangedEntities(prev => ({
             ...prev,
-            [entityId]: newStatus
+            [entityId]: { ...prev[entityId], ignored: newStatus }
+        }));
+    };
+
+    const toggleNotifyAlways = (entityId, current) => {
+        const newVal = !current;
+        const updated = entities.map(e => e.entity_id === entityId ? { ...e, notifyAlways: newVal ? 1 : 0 } : e);
+        setEntities(updated);
+        setChangedEntities(prev => ({
+            ...prev,
+            [entityId]: { ...prev[entityId], notifyAlways: newVal }
         }));
     };
 
@@ -72,14 +78,25 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
         try {
             const url = adminUrl.endsWith('/') ? `${adminUrl}api/monitor` : `${adminUrl}/api/monitor`;
 
-            // Send requests in parallel
-            await Promise.all(changes.map(([entityId, ignored]) =>
-                authFetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ entity_id: entityId, ignored: ignored })
-                })
-            ));
+            // Send one request per changed field per entity
+            const requests = [];
+            for (const [entityId, fields] of changes) {
+                if (fields.ignored !== undefined) {
+                    requests.push(authFetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ entity_id: entityId, ignored: fields.ignored })
+                    }));
+                }
+                if (fields.notifyAlways !== undefined) {
+                    requests.push(authFetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ entity_id: entityId, notifyAlways: fields.notifyAlways })
+                    }));
+                }
+            }
+            await Promise.all(requests);
 
             setChangedEntities({});
             onClose();
@@ -119,7 +136,8 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
 
                     <Text style={styles.subtitle}>
                         Manage which entities are tracked by the data recorder.
-                        Ignored entities will not be stored in history logs.
+                        Ignored entities will not be stored in history logs.{'\n'}
+                        <Text style={{ color: '#b388ff' }}>🔔 Always Notify</Text> — force push notification for any entity (light, switch, sensor, etc.)
                     </Text>
 
                     <View style={styles.searchContainer}>
@@ -140,7 +158,10 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
                     ) : (
                         <View style={styles.listHeader}>
                             <Text style={styles.headerCell}>ENTITY ID</Text>
-                            <Text style={styles.headerCellRight}>IGNORED</Text>
+                            <View style={styles.headerRight}>
+                                <Text style={styles.headerCellRight}>🔔 NOTIFY</Text>
+                                <Text style={styles.headerCellRight}>IGNORE</Text>
+                            </View>
                         </View>
                     )}
 
@@ -153,12 +174,22 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
                                         <Text style={styles.typeText}>{item.type.toUpperCase()}</Text>
                                     </View>
                                 </View>
-                                <Switch
-                                    value={item.ignored === 1}
-                                    onValueChange={() => toggleIgnore(item.entity_id, item.ignored === 1)}
-                                    trackColor={{ false: "#3e3e3e", true: "#EF5350" }}
-                                    thumbColor={item.ignored === 1 ? "#fff" : "#f4f3f4"}
-                                />
+                                <View style={styles.togglesRow}>
+                                    {/* Always Notify toggle */}
+                                    <Switch
+                                        value={item.notifyAlways === 1}
+                                        onValueChange={() => toggleNotifyAlways(item.entity_id, item.notifyAlways === 1)}
+                                        trackColor={{ false: "#3e3e3e", true: "#7c3aed" }}
+                                        thumbColor={item.notifyAlways === 1 ? "#fff" : "#f4f3f4"}
+                                    />
+                                    {/* Ignored toggle */}
+                                    <Switch
+                                        value={item.ignored === 1}
+                                        onValueChange={() => toggleIgnore(item.entity_id, item.ignored === 1)}
+                                        trackColor={{ false: "#3e3e3e", true: "#EF5350" }}
+                                        thumbColor={item.ignored === 1 ? "#fff" : "#f4f3f4"}
+                                    />
+                                </View>
                             </View>
                         ))}
                     </ScrollView>
@@ -246,6 +277,16 @@ const styles = StyleSheet.create({
         paddingVertical: 12,
         borderBottomWidth: 1,
         borderBottomColor: 'rgba(255,255,255,0.05)'
+    },
+    togglesRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    headerRight: {
+        flexDirection: 'row',
+        gap: 12,
+        alignItems: 'center',
     },
     entityId: {
         color: '#fff',
