@@ -15,11 +15,15 @@
     "ios": {
       "bundleIdentifier": "ai.primewave.app",
       "supportsTablet": true,
+      "entitlements": {
+        "aps-environment": "production"
+      },
       "infoPlist": {
         "NSAppTransportSecurity": {
           "NSAllowsArbitraryLoads": true
         },
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIBackgroundModes": ["remote-notification"]
       }
     },
     "android": {
@@ -42,6 +46,15 @@
     "scheme": "ha-app",
     "plugins": [
       "expo-router",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/500-black.png",
+          "color": "#832ea9",
+          "sounds": [],
+          "mode": "production"
+        }
+      ],
       [
         "expo-local-authentication",
         {
