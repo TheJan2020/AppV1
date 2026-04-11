@@ -1,0 +1,40 @@
+{
+  "cli": {
+    "version": ">= 16.32.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_HA_TOKEN": "$(EXPO_PUBLIC_HA_TOKEN)",
+        "EXPO_PUBLIC_HA_URL": "$(EXPO_PUBLIC_HA_URL)",
+        "EXPO_PUBLIC_ADMIN_URL": "$(EXPO_PUBLIC_ADMIN_URL)"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_HA_TOKEN": "$(EXPO_PUBLIC_HA_TOKEN)",
+        "EXPO_PUBLIC_HA_URL": "$(EXPO_PUBLIC_HA_URL)",
+        "EXPO_PUBLIC_ADMIN_URL": "$(EXPO_PUBLIC_ADMIN_URL)"
+      }
+    },
+    "production": {
+      "autoIncrement": false,
+      "env": {
+        "EXPO_PUBLIC_HA_TOKEN": "$(EXPO_PUBLIC_HA_TOKEN)",
+        "EXPO_PUBLIC_HA_URL": "$(EXPO_PUBLIC_HA_URL)",
+        "EXPO_PUBLIC_ADMIN_URL": "$(EXPO_PUBLIC_ADMIN_URL)"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {
+        "ascAppId": "6758832342"
+      }
+    }
+  }
+}
