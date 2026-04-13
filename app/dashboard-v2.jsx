@@ -409,100 +409,81 @@ export default function DashboardV2() {
                     const domain   = entityId.split('.')[0];
 
                     // ── Notification from socket event (real-time, has old→new) ──
+                    // Rule: if entity is NOT in the ignored set → notify.
+                    // The user controls what they want via the ignore toggle in /api/entities.
+                    // No hardcoded domain lists here.
                     const ignored = ignoredEntitiesRef.current.has(entityId);
                     const stateActuallyChanged = newVal !== oldVal;
 
-                    if (!ignored && stateActuallyChanged) {
-                        // Domains that are ALWAYS noisy — skip entirely unless in alertRules
-                        const ALWAYS_SKIP = new Set([
-                            'sensor','input_boolean','input_number','input_select',
-                            'automation','sun','zone','update','weather','counter',
-                            'timer','schedule','number','select','text','button',
-                            'remote','calendar','image','stt','tts','wake_word',
-                            'conversation','person','device_tracker','event',
-                            'camera','ai_task',
-                        ]);
+                    if (!ignored && stateActuallyChanged &&
+                        newVal !== 'unavailable' && oldVal !== 'unavailable') {
 
-                        // Domains that only notify when explicitly in alertRules
-                        const ALERTRULE_ONLY = new Set(['switch','script','light','media_player']);
-
-                        let notifTitle = null;
-                        let notifBody  = null;
+                        let notifTitle = `${name} → ${newVal}`;
+                        let notifBody  = `Changed from ${oldVal} to ${newVal}`;
                         let notifCat   = 'default';
 
-                        if (ALWAYS_SKIP.has(domain)) {
-                            const rule = alertRulesRef.current?.find(
-                                r => r.entity_id === entityId && r.trigger_state === newVal
-                            );
-                            if (rule) {
-                                notifTitle = `${name} → ${newVal}`;
-                                notifBody  = 'Alert rule triggered';
-                                notifCat   = 'default';
-                            }
-
-                        } else if (ALERTRULE_ONLY.has(domain)) {
-                            const rule = alertRulesRef.current?.find(
-                                r => r.entity_id === entityId && r.trigger_state === newVal
-                            );
-                            if (rule) {
-                                notifTitle = `${name} ${newVal === 'on' ? 'On' : newVal === 'off' ? 'Off' : newVal}`;
-                                notifBody  = `${domain} changed to ${newVal}`;
-                                notifCat   = domain === 'light' ? 'light' : 'scene';
-                            }
-
-                        } else if (domain === 'lock') {
-                            if (newVal !== 'unavailable' && oldVal !== 'unavailable') {
-                                notifCat   = 'lock';
-                                notifTitle = newVal === 'unlocked' ? `${name} Unlocked` : `${name} Locked`;
-                                notifBody  = `Lock changed: ${oldVal} → ${newVal}`;
-                            }
+                        if (domain === 'lock') {
+                            notifCat   = 'lock';
+                            notifTitle = newVal === 'locked'   ? `${name} Locked 🔒`
+                                       : newVal === 'unlocked' ? `${name} Unlocked 🔓`
+                                       : `${name} → ${newVal}`;
+                            notifBody  = `Lock: ${oldVal} → ${newVal}`;
 
                         } else if (domain === 'alarm_control_panel') {
+                            notifCat = 'security';
                             const labelMap = {
                                 armed_away: 'Armed Away', armed_home: 'Armed Home',
                                 armed_night: 'Armed Night', disarmed: 'Disarmed',
                                 triggered: '🚨 TRIGGERED', pending: 'Pending', arming: 'Arming',
                             };
-                            notifCat   = 'security';
                             notifTitle = `Security: ${labelMap[newVal] || newVal}`;
                             notifBody  = `Alarm: ${oldVal} → ${newVal}`;
 
+                        } else if (domain === 'cover') {
+                            notifCat   = 'door';
+                            notifTitle = newVal === 'open'   ? `${name} Opened`
+                                       : newVal === 'closed' ? `${name} Closed`
+                                       : `${name} → ${newVal}`;
+                            notifBody  = `Cover: ${oldVal} → ${newVal}`;
+
+                        } else if (domain === 'climate') {
+                            notifCat   = 'climate';
+                            notifTitle = `AC — ${name}`;
+                            notifBody  = newVal === 'off' ? 'Turned off' : `Set to ${newVal}`;
+
                         } else if (domain === 'binary_sensor') {
                             const dClass = attrs.device_class || '';
-                            // espresense / connectivity → always skip (presence noise)
-                            // motion → always skip (fires constantly, not actionable)
-                            // Only door/window/opening and smoke are meaningful
                             if (['door', 'window', 'opening'].includes(dClass)) {
                                 notifCat   = 'door';
                                 const opened = newVal === 'on';
                                 notifTitle = `${name} ${opened ? 'Opened' : 'Closed'}`;
                                 notifBody  = `${dClass.charAt(0).toUpperCase() + dClass.slice(1)} is now ${opened ? 'open' : 'closed'}`;
-                            } else if (dClass === 'smoke' && newVal === 'on') {
+                            } else if (dClass === 'smoke') {
                                 notifCat   = 'security';
                                 notifTitle = `🔥 Smoke — ${name}`;
-                                notifBody  = 'Smoke detected!';
-                            }
-                            // motion and all other binary_sensor device_classes → skip
-
-                        } else if (domain === 'cover') {
-                            if (newVal !== 'unavailable' && oldVal !== 'unavailable') {
-                                notifCat   = 'default';
-                                notifTitle = `${name} ${newVal === 'open' ? 'Opened' : newVal === 'closed' ? 'Closed' : newVal}`;
-                                notifBody  = `Cover: ${oldVal} → ${newVal}`;
+                                notifBody  = newVal === 'on' ? 'Smoke detected!' : 'Smoke cleared';
+                            } else if (dClass === 'motion') {
+                                notifCat   = 'camera';
+                                notifTitle = `Motion — ${name}`;
+                                notifBody  = newVal === 'on' ? 'Movement detected' : 'Motion cleared';
                             }
 
-                        } else if (domain === 'climate') {
-                            if ((oldVal === 'off' && newVal !== 'off') || (oldVal !== 'off' && newVal === 'off')) {
-                                notifCat   = 'climate';
-                                notifTitle = `AC — ${name}`;
-                                notifBody  = newVal === 'off' ? 'Turned off' : `Set to ${newVal}`;
-                            }
+                        } else if (domain === 'light') {
+                            notifCat   = 'light';
+                            notifTitle = `${name} ${newVal === 'on' ? 'On' : 'Off'}`;
+                            notifBody  = `Light turned ${newVal}`;
+
+                        } else if (domain === 'switch') {
+                            notifTitle = `${name} ${newVal === 'on' ? 'On' : 'Off'}`;
+                            notifBody  = `Switch turned ${newVal}`;
+
+                        } else if (domain === 'scene') {
+                            notifCat   = 'scene';
+                            notifTitle = `Scene: ${name}`;
+                            notifBody  = 'Scene activated';
                         }
 
-                        if (notifTitle) {
-                            pushNotification(notifTitle, notifBody, notifCat);
-                        }
-
+                        pushNotification(notifTitle, notifBody, notifCat);
                     }
 
                     // Batch entity state update (unchanged)
