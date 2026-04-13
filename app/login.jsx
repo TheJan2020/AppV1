@@ -8,6 +8,7 @@ import { Scan, Lock, User, Server, ChevronDown, Check, Settings, Fingerprint, X,
 import { scanNetwork } from '../utils/discovery';
 import { HAService } from '../services/ha';
 import { validateCredentials } from '../services/auth';
+import { registerForPushNotificationsAsync } from '../services/notifications';
 
 const SETTINGS_KEY_PROFILES = 'ha_profiles';
 const SETTINGS_KEY_ACTIVE_PROFILE = 'ha_active_profile_id';
@@ -427,6 +428,11 @@ export default function Login() {
                     await SecureStore.setItemAsync('saved_password', password);
                 }
 
+                // Re-register push token now that adminUrl is in SecureStore.
+                // On a fresh install _layout runs before login so getAdminUrl() returned
+                // null and the token was never sent to the backend.
+                registerForPushNotificationsAsync().catch(() => {});
+
                 router.replace({
                     pathname: route,
                     params: { userName: selectedUser.name, userId: selectedUser.user_id || '' }
@@ -476,6 +482,9 @@ export default function Login() {
                             const guess = u.id.replace('person.', '');
                             return guess === savedUser || u.name.toLowerCase().replace(/\s+/g, '_') === savedUser;
                         }) || { name: 'User' }; // Fallback
+
+                        // Re-register push token in case it changed since last login
+                        registerForPushNotificationsAsync().catch(() => {});
 
                         router.replace({
                             pathname: '/dashboard-v2',

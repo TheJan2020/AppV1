@@ -1,6 +1,5 @@
 import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import * as Notifications from 'expo-notifications';
-import * as SecureStore from 'expo-secure-store';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
 import NotificationModal from '../components/DashboardV2/NotificationModal';
