@@ -3,8 +3,12 @@ import { StatusBar } from 'expo-status-bar';
 import { Colors } from '../constants/Colors';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import ErrorBoundary from '../components/ErrorBoundary';
-
-import { LogBox } from 'react-native';
+import { useEffect } from 'react';
+import { LogBox, Dimensions } from 'react-native';
+import * as ScreenOrientation from 'expo-screen-orientation';
+import * as Notifications from 'expo-notifications';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { registerForPushNotificationsAsync } from '../services/notifications';
 
 LogBox.ignoreLogs([
     "It looks like you might be using shared value's .value",
@@ -31,13 +35,6 @@ try {
 } catch (e) {
     console.log('[ErrorHandler] Could not set global handler:', e);
 }
-
-import { useEffect } from 'react';
-import { Dimensions } from 'react-native';
-import * as ScreenOrientation from 'expo-screen-orientation';
-import * as Notifications from 'expo-notifications';
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { registerForPushNotificationsAsync } from '../services/notifications';
 
 // ── Helpers (mirrored from useNotifications so _layout has no hook dependency) ──
 const NOTIF_STORAGE_KEY = 'app_notifications';
