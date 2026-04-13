@@ -7,7 +7,7 @@ import { useEffect } from 'react';
 import { LogBox, Dimensions } from 'react-native';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as Notifications from 'expo-notifications';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import { registerForPushNotificationsAsync } from '../services/notifications';
 
 LogBox.ignoreLogs([
@@ -36,35 +36,8 @@ try {
     console.log('[ErrorHandler] Could not set global handler:', e);
 }
 
-// ── Helpers (mirrored from useNotifications so _layout has no hook dependency) ──
-const NOTIF_STORAGE_KEY = 'app_notifications';
-const PENDING_OPEN_KEY  = 'pending_notif_open';
-const TTL_MS            = 3 * 24 * 60 * 60 * 1000;
-
-function makeId() {
-    return `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
-}
-
-async function persistPushNotification(title, body, category) {
-    try {
-        const raw      = await AsyncStorage.getItem(NOTIF_STORAGE_KEY);
-        const existing = raw ? JSON.parse(raw) : [];
-        const cutoff   = Date.now() - TTL_MS;
-        const fresh    = existing.filter(n => n.timestamp >= cutoff);
-        const newItem  = {
-            id:        makeId(),
-            title:     title    || '',
-            body:      body     || '',
-            category:  category || 'default',
-            timestamp: Date.now(),
-            unread:    true,
-        };
-        const updated = [newItem, ...fresh].slice(0, 100);
-        await AsyncStorage.setItem(NOTIF_STORAGE_KEY, JSON.stringify(updated));
-    } catch (e) {
-        console.warn('[_layout] persistPushNotification error:', e);
-    }
-}
+// ── Tap signal key stored in SecureStore (tiny value, always available) ──────
+const PENDING_OPEN_KEY = 'pending_notif_open';
 
 export default function RootLayout() {
     useEffect(() => {
@@ -82,37 +55,16 @@ export default function RootLayout() {
         }
 
         // ── Tap from lock screen / notification centre ────────────────────────
-        // Fires whenever the user taps a push notification (app killed, background, or foreground)
-        const tapSub = Notifications.addNotificationResponseReceivedListener(response => {
-            const { title, body, data } = response.notification.request.content;
-            const category = data?.category || 'default';
-
-            // Persist the notification itself (covers the "app was killed" case where
-            // the foreground listener never ran)
-            if (title || body) {
-                persistPushNotification(title, body, category);
-            }
-
-            // Signal dashboard-v2 to open the notification modal
-            AsyncStorage.setItem(PENDING_OPEN_KEY, '1').catch(() => {});
-        });
-
-        // ── Push received while app is in the FOREGROUND ──────────────────────
-        // expo-notifications does NOT auto-show a banner when the app is open, so
-        // we save it here so the in-memory state (via useNotifications hook) can
-        // pick it up through the shared AsyncStorage store.
-        const fgSub = Notifications.addNotificationReceivedListener(notification => {
-            const { title, body, data } = notification.request.content;
-            // Only persist backend-originated pushes (entity_notification flag set in ha-notifier)
-            if (data?.entity_notification) {
-                persistPushNotification(title, body, data?.category || 'default');
-            }
+        // Set a tiny SecureStore flag so dashboard-v2 opens the notification modal
+        // when the app comes to the foreground after a lock-screen tap.
+        const tapSub = Notifications.addNotificationResponseReceivedListener(() => {
+            SecureStore.setItemAsync(PENDING_OPEN_KEY, '1').catch(() => {});
         });
 
         return () => {
             tapSub.remove();
-            fgSub.remove();
         };
+
     }, []);
 
     return (

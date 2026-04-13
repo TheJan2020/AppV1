@@ -1,6 +1,6 @@
 import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import * as Notifications from 'expo-notifications';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
 import NotificationModal from '../components/DashboardV2/NotificationModal';
@@ -720,7 +720,7 @@ export default function DashboardV2() {
     // All notifications are fired directly in the socket subscriber (real-time,
     // with old→new state). No useEffect watchers needed — they would duplicate.
     const pushNotification = useCallback((title, body, category) => {
-        // Persist to AsyncStorage (survives app kill, 3-day TTL)
+        // Add to in-memory store (survives background, cleared on full kill)
         addNotification(title, body, category);
 
         // Fire real OS notification — shows on lock screen, notification centre,
@@ -730,18 +730,15 @@ export default function DashboardV2() {
                 title,
                 body,
                 sound: true,
-                // entity_notification flag lets _layout.jsx know it's ours
                 data: { category, entity_notification: true },
             },
-            trigger: null, // null = deliver immediately
-        }).catch(() => {
-            // Silently ignore if notifications aren't permitted (e.g. simulator)
-        });
+            trigger: null,
+        }).catch(() => {});
     }, [addNotification]);
 
     const handleBellPress = useCallback(() => {
         setShowNotifications(true);
-        markAllRead(); // mark all read when opened
+        markAllRead();
     }, [markAllRead]);
 
     const handleClearNotifications = useCallback(() => {
@@ -757,9 +754,9 @@ export default function DashboardV2() {
 
     // ── Cold-start tap: open notification modal if launched via push tap ──────
     useEffect(() => {
-        AsyncStorage.getItem('pending_notif_open').then(val => {
+        SecureStore.getItemAsync('pending_notif_open').then(val => {
             if (val === '1') {
-                AsyncStorage.removeItem('pending_notif_open').catch(() => {});
+                SecureStore.deleteItemAsync('pending_notif_open').catch(() => {});
                 setShowNotifications(true);
             }
         }).catch(() => {});
@@ -864,9 +861,9 @@ export default function DashboardV2() {
                 fetchMappings();
 
                 // Open notification modal if user tapped a push from lock screen
-                AsyncStorage.getItem('pending_notif_open').then(val => {
+                SecureStore.getItemAsync('pending_notif_open').then(val => {
                     if (val === '1') {
-                        AsyncStorage.removeItem('pending_notif_open').catch(() => {});
+                        SecureStore.deleteItemAsync('pending_notif_open').catch(() => {});
                         setShowNotifications(true);
                     }
                 }).catch(() => {});
