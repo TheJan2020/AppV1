@@ -309,20 +309,22 @@ export default function DashboardV2() {
                 })
                 .catch(e => { if (e.name !== 'AbortError') console.log("Alert Rules Error", e); });
 
-            // Fetch ignored entities list from /api/entities and cache in ref
+            // Fetch monitored+ignored entities list from /api/entities and cache in refs
             const entitiesUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/entities` : `${adminUrl}/api/entities`);
             fetch(entitiesUrl, { signal: configAbort.signal, headers: adminAuthHeaders })
                 .then(res => res.json())
                 .then(data => {
                     if (data.success && Array.isArray(data.entities)) {
-                        const ignoredSet = new Set(
+                        // All entities in the MonitoredEntity table
+                        monitoredEntitiesRef.current = new Set(data.entities.map(e => e.entity_id));
+                        // Subset that the user has muted (ignored=1)
+                        ignoredEntitiesRef.current = new Set(
                             data.entities.filter(e => e.ignored).map(e => e.entity_id)
                         );
-                        ignoredEntitiesRef.current = ignoredSet;
-                        console.log(`[Notifications] Loaded ${ignoredSet.size} ignored entities`);
+                        console.log(`[Notifications] Monitored: ${monitoredEntitiesRef.current.size}, Ignored: ${ignoredEntitiesRef.current.size}`);
                     }
                 })
-                .catch(e => { if (e.name !== 'AbortError') console.log('[Notifications] Ignored entities fetch error:', e); });
+                .catch(e => { if (e.name !== 'AbortError') console.log('[Notifications] Entities fetch error:', e); });
 
             // Fetch Room Tracking Lookup
             const roomTrackingUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/room-tracking/lookup` : `${adminUrl}/api/room-tracking/lookup`);
@@ -409,15 +411,19 @@ export default function DashboardV2() {
                     const domain   = entityId.split('.')[0];
 
                     // ── Notification from socket event (real-time, has old→new) ──
-                    // Rule: if entity is NOT in the ignored set → notify.
-                    // The user controls what they want via the ignore toggle in /api/entities.
-                    // No hardcoded domain lists here.
-                    const ignored = ignoredEntitiesRef.current.has(entityId);
-                    const stateActuallyChanged = newVal !== oldVal;
+                    // Rule:
+                    //   1. Entity must be in MonitoredEntity table (monitoredEntitiesRef)
+                    //   2. Entity must NOT be ignored (ignoredEntitiesRef)
+                    //   3. State must have actually changed
+                    //   4. Skip unavailable transitions (device reconnect noise)
+                    const isMonitored = monitoredEntitiesRef.current.has(entityId);
+                    const isIgnored   = ignoredEntitiesRef.current.has(entityId);
 
-                    if (!ignored && stateActuallyChanged &&
+                    if (isMonitored && !isIgnored &&
+                        newVal !== oldVal &&
                         newVal !== 'unavailable' && oldVal !== 'unavailable') {
 
+                        // Format a nice message — no domain filtering, just presentation
                         let notifTitle = `${name} → ${newVal}`;
                         let notifBody  = `Changed from ${oldVal} to ${newVal}`;
                         let notifCat   = 'default';
@@ -595,7 +601,9 @@ export default function DashboardV2() {
         clearAll:      clearAllNotifications,
     } = useNotifications();
     const [showNotifications, setShowNotifications] = useState(false);
-    // Ignored entities from backend /api/entities (ignored=1)
+    // All entity_ids present in MonitoredEntity table (regardless of ignored flag)
+    const monitoredEntitiesRef = useRef(new Set());
+    // Entity_ids where ignored=1 (user has muted them)
     const ignoredEntitiesRef = useRef(new Set());
     // Mirror of alertRules in a ref so the socket closure always reads the latest
     const alertRulesRef = useRef([]);
