@@ -102,3 +102,28 @@ async function registerTokenWithBackend(token, backendUrl) {
     }
 }
 
+/**
+ * Unregisters the current device's push token from the backend.
+ * Call this on logout so the server stops sending pushes to this device.
+ */
+export async function unregisterPushTokenAsync() {
+    try {
+        const projectId = Constants?.expoConfig?.extra?.eas?.projectId ?? Constants?.easConfig?.projectId;
+        if (!projectId || !Device.isDevice) return;
+
+        const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+        const token = tokenData?.data;
+        if (!token) return;
+
+        const backendUrl = await getAdminUrl();
+        if (!backendUrl) return;
+
+        const url = `${backendUrl}/api/notifications/register?token=${encodeURIComponent(token)}`;
+        await authFetch(url, { method: 'DELETE' });
+        console.log('[Push] Token unregistered on logout');
+    } catch (e) {
+        // Non-fatal — logout should always proceed even if this fails
+        console.warn('[Push] Failed to unregister token on logout:', e.message);
+    }
+}
+

@@ -6,6 +6,7 @@ import { router } from 'expo-router';
 import { AIService } from '../../services/ai';
 import * as SecureStore from 'expo-secure-store';
 import { authFetch } from '../../utils/authFetch';
+import { unregisterPushTokenAsync } from '../../services/notifications';
 import MonitoredEntitiesModal from './MonitoredEntitiesModal';
 import AlertEntitiesModal from './AlertEntitiesModal';
 import MyPreferencesModal from './MyPreferencesModal';
@@ -704,6 +705,8 @@ function SettingsView({
             <TouchableOpacity
                 style={styles.logoutBtn}
                 onPress={async () => {
+                    // Remove this device's push token so server stops sending notifications
+                    await unregisterPushTokenAsync();
                     // Clear session so the next launch goes to login
                     await SecureStore.deleteItemAsync('is_logged_in');
                     await SecureStore.deleteItemAsync('logged_in_user');
