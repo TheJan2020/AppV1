@@ -469,30 +469,20 @@ export default function DashboardV2() {
 
                         } else if (domain === 'binary_sensor') {
                             const dClass = attrs.device_class || '';
-                            if (entityId.includes('espresense') || entityId.includes('connectivity')) {
-                                // silently skip espresense noise
-                            } else if (['door','window','opening'].includes(dClass)) {
+                            // espresense / connectivity → always skip (presence noise)
+                            // motion → always skip (fires constantly, not actionable)
+                            // Only door/window/opening and smoke are meaningful
+                            if (['door', 'window', 'opening'].includes(dClass)) {
                                 notifCat   = 'door';
                                 const opened = newVal === 'on';
                                 notifTitle = `${name} ${opened ? 'Opened' : 'Closed'}`;
                                 notifBody  = `${dClass.charAt(0).toUpperCase() + dClass.slice(1)} is now ${opened ? 'open' : 'closed'}`;
-                            } else if (dClass === 'motion' && newVal === 'on') {
-                                notifCat   = 'camera';
-                                notifTitle = `Motion — ${name}`;
-                                notifBody  = 'Movement detected';
                             } else if (dClass === 'smoke' && newVal === 'on') {
                                 notifCat   = 'security';
                                 notifTitle = `🔥 Smoke — ${name}`;
                                 notifBody  = 'Smoke detected!';
-                            } else {
-                                const rule = alertRulesRef.current?.find(
-                                    r => r.entity_id === entityId && r.trigger_state === newVal
-                                );
-                                if (rule) {
-                                    notifTitle = `${name} → ${newVal}`;
-                                    notifBody  = 'Alert triggered';
-                                }
                             }
+                            // motion and all other binary_sensor device_classes → skip
 
                         } else if (domain === 'cover') {
                             if (newVal !== 'unavailable' && oldVal !== 'unavailable') {
