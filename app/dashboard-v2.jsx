@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import * as Notifications from 'expo-notifications';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
 import NotificationModal from '../components/DashboardV2/NotificationModal';
@@ -28,6 +29,7 @@ import HACamerasList from '../components/DashboardV2/HACamerasList';
 import TabBar from '../components/DashboardV2/TabBar';
 import TabletSidebar from '../components/DashboardV2/TabletSidebar';
 import useDeviceType from '../hooks/useDeviceType';
+import useNotifications from '../hooks/useNotifications';
 import RoomSheet from '../components/DashboardV2/RoomSheet';
 import OpacitySettingsModal from '../components/DashboardV2/OpacitySettingsModal';
 import SlideAction from '../components/DashboardV2/SlideAction';
@@ -615,10 +617,14 @@ export default function DashboardV2() {
     const [settingsModalVisible, setSettingsModalVisible] = useState(false);
 
     // ── Notifications ───────────────────────────────────────────────────────
-    const [notifications, setNotifications] = useState([]);
+    const {
+        notifications,
+        unreadCount:   notifUnread,
+        addNotification,
+        markAllRead,
+        clearAll:      clearAllNotifications,
+    } = useNotifications();
     const [showNotifications, setShowNotifications] = useState(false);
-    const [notifUnread, setNotifUnread] = useState(0);
-    const notifIdRef = useRef(1);
     // Ignored entities from backend /api/entities (ignored=1)
     const ignoredEntitiesRef = useRef(new Set());
     // Mirror of alertRules in a ref so the socket closure always reads the latest
@@ -714,17 +720,8 @@ export default function DashboardV2() {
     // All notifications are fired directly in the socket subscriber (real-time,
     // with old→new state). No useEffect watchers needed — they would duplicate.
     const pushNotification = useCallback((title, body, category) => {
-        const n = {
-            id: notifIdRef.current++,
-            title,
-            body,
-            category,
-            timestamp: Date.now(),
-            unread: true,
-        };
-        // Update in-app bell/modal
-        setNotifications(prev => [n, ...prev].slice(0, 50));
-        setNotifUnread(prev => prev + 1);
+        // Persist to AsyncStorage (survives app kill, 3-day TTL)
+        addNotification(title, body, category);
 
         // Fire real OS notification — shows on lock screen, notification centre,
         // and as a banner when the app is backgrounded or the screen is off.
@@ -733,30 +730,39 @@ export default function DashboardV2() {
                 title,
                 body,
                 sound: true,
-                // Pass category so a custom tap handler can deep-link later
+                // entity_notification flag lets _layout.jsx know it's ours
                 data: { category, entity_notification: true },
             },
             trigger: null, // null = deliver immediately
         }).catch(() => {
             // Silently ignore if notifications aren't permitted (e.g. simulator)
         });
-    }, []);
+    }, [addNotification]);
 
     const handleBellPress = useCallback(() => {
         setShowNotifications(true);
-        setNotifUnread(0); // mark all read when opened
-    }, []);
+        markAllRead(); // mark all read when opened
+    }, [markAllRead]);
 
     const handleClearNotifications = useCallback(() => {
-        setNotifications([]);
-        setNotifUnread(0);
-    }, []);
+        clearAllNotifications();
+    }, [clearAllNotifications]);
 
     // Default floor selection
     useEffect(() => {
         if (!currentFloor) {
             setCurrentFloor('home');
         }
+    }, []);
+
+    // ── Cold-start tap: open notification modal if launched via push tap ──────
+    useEffect(() => {
+        AsyncStorage.getItem('pending_notif_open').then(val => {
+            if (val === '1') {
+                AsyncStorage.removeItem('pending_notif_open').catch(() => {});
+                setShowNotifications(true);
+            }
+        }).catch(() => {});
     }, []);
 
     // -------------------------------------------------------------------------
@@ -856,6 +862,14 @@ export default function DashboardV2() {
                 navigateToPresenceRoomRef.current(true);
                 // Refresh config
                 fetchMappings();
+
+                // Open notification modal if user tapped a push from lock screen
+                AsyncStorage.getItem('pending_notif_open').then(val => {
+                    if (val === '1') {
+                        AsyncStorage.removeItem('pending_notif_open').catch(() => {});
+                        setShowNotifications(true);
+                    }
+                }).catch(() => {});
             }
             appState.current = nextAppState;
             updateAppState(nextAppState === 'active' ? 'foreground' : 'background');
