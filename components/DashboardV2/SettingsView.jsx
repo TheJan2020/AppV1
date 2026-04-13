@@ -25,7 +25,8 @@ function SettingsView({
     autoRoomResume, // Prop from parent
     showVoiceAssistant, // Prop from parent
     showPreferenceButton, // Prop from parent
-    adminUrl // From SecureStore profile
+    adminUrl, // From SecureStore profile
+    onEntitiesChanged, // Called after monitored-entity changes so dashboard refreshes refs
 }) {
     const [activeTab, setActiveTab] = useState('general');
     const [selectedArea, setSelectedArea] = useState(null);
@@ -774,6 +775,7 @@ function SettingsView({
                 visible={monitoredModalVisible}
                 onClose={() => setMonitoredModalVisible(false)}
                 adminUrl={adminUrl}
+                onApplied={onEntitiesChanged}
             />
             <AlertEntitiesModal
                 visible={alertModalVisible}

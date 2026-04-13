@@ -607,6 +607,30 @@ export default function DashboardV2() {
     const ignoredEntitiesRef = useRef(new Set());
     // Mirror of alertRules in a ref so the socket closure always reads the latest
     const alertRulesRef = useRef([]);
+    // Dedup map: `${entity_id}:${state}` → timestamp — suppresses duplicate events
+    // within 10 seconds (HA sometimes fires the same event twice in rapid succession)
+    const recentNotifsRef = useRef(new Map());
+
+    // Re-fetch /api/entities and update both refs immediately.
+    // Called after the user saves changes in MonitoredEntitiesModal so the
+    // notification filter is live without needing an app restart.
+    const refreshEntityRefs = useCallback(() => {
+        const adminUrl = connectionConfig.adminUrl;
+        const haToken  = connectionConfig.token;
+        if (!adminUrl || !haToken) return;
+        const url     = (adminUrl.endsWith('/') ? `${adminUrl}api/entities` : `${adminUrl}/api/entities`);
+        const headers = { 'Authorization': `Bearer ${haToken}`, 'Content-Type': 'application/json' };
+        fetch(url, { headers })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success && Array.isArray(data.entities)) {
+                    monitoredEntitiesRef.current = new Set(data.entities.map(e => e.entity_id));
+                    ignoredEntitiesRef.current   = new Set(data.entities.filter(e => e.ignored).map(e => e.entity_id));
+                    console.log(`[Notifications] Refs refreshed — Monitored: ${monitoredEntitiesRef.current.size}, Ignored: ${ignoredEntitiesRef.current.size}`);
+                }
+            })
+            .catch(e => console.warn('[Notifications] refreshEntityRefs error:', e));
+    }, [connectionConfig.adminUrl, connectionConfig.token]);
 
     // Derived Logic for Badges
     const getAllActiveDevices = useCallback((type) => {
@@ -698,6 +722,19 @@ export default function DashboardV2() {
     // All notifications are fired directly in the socket subscriber (real-time,
     // with old→new state). No useEffect watchers needed — they would duplicate.
     const pushNotification = useCallback((title, body, category) => {
+        // Dedup: suppress if same title+body already fired within 10 seconds
+        const dedupKey = `${title}::${body}`;
+        const now = Date.now();
+        const last = recentNotifsRef.current.get(dedupKey);
+        if (last && (now - last) < 10_000) return; // duplicate — skip
+        recentNotifsRef.current.set(dedupKey, now);
+        // Prune stale entries to prevent memory leak
+        if (recentNotifsRef.current.size > 50) {
+            for (const [k, t] of recentNotifsRef.current) {
+                if (now - t > 10_000) recentNotifsRef.current.delete(k);
+            }
+        }
+
         // Add to in-memory store (survives background, cleared on full kill)
         addNotification(title, body, category);
 
@@ -1597,6 +1634,7 @@ export default function DashboardV2() {
                     onSettingChange={handleSettingChange}
                     onPlayMedia={handlePlayMedia}
                     onNetwork={handleNetworkPress}
+                    onEntitiesChanged={refreshEntityRefs}
                 /> : null}
             </View>
 

@@ -5,7 +5,7 @@ import { Colors } from '../../constants/Colors';
 import { useState, useEffect } from 'react';
 import { authFetch } from '../../utils/authFetch';
 
-export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
+export default function MonitoredEntitiesModal({ visible, onClose, adminUrl, onApplied }) {
     const [entities, setEntities] = useState([]);
     const [filteredEntities, setFilteredEntities] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
@@ -81,6 +81,7 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
             await Promise.all(requests);
 
             setChangedEntities({});
+            onApplied?.(); // refresh notification refs in dashboard immediately
             onClose();
         } catch (e) {
             console.error('[MonitoredModal] save error:', e);
