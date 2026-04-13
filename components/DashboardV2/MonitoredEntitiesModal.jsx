@@ -9,7 +9,8 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
     const [entities, setEntities] = useState([]);
     const [filteredEntities, setFilteredEntities] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false);
+    const [saving, setSaving] = useState(false);
     const [changedEntities, setChangedEntities] = useState({}); // { entity_id: { ignored? } }
 
     useEffect(() => {
@@ -31,17 +32,18 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
     }, [searchQuery, entities]);
 
     const fetchEntities = async () => {
+        if (!adminUrl) return;
         setLoading(true);
         try {
-            const url = adminUrl.endsWith('/') ? `${adminUrl}api/monitor` : `${adminUrl}/api/monitor`;
-            const res = await authFetch(url + `?t=${Date.now()}`);
+            const base = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
+            const res = await authFetch(`${base}api/monitor?t=${Date.now()}`);
             const data = await res.json();
             if (data.success) {
                 setEntities(data.entities);
                 setFilteredEntities(data.entities);
             }
         } catch (e) {
-            console.error(e);
+            console.error('[MonitoredModal] fetch error:', e);
         } finally {
             setLoading(false);
         }
@@ -64,9 +66,10 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
             return;
         }
 
-        setLoading(true);
+        setSaving(true);
         try {
-            const url = adminUrl.endsWith('/') ? `${adminUrl}api/monitor` : `${adminUrl}/api/monitor`;
+            const base = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
+            const url = `${base}api/monitor`;
 
             const requests = changes.map(([entityId, fields]) =>
                 authFetch(url, {
@@ -80,10 +83,10 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
             setChangedEntities({});
             onClose();
         } catch (e) {
-            console.error("Failed to apply changes", e);
-            alert("Failed to apply some changes");
+            console.error('[MonitoredModal] save error:', e);
+            alert('Failed to apply some changes');
         } finally {
-            setLoading(false);
+            setSaving(false);
         }
     };
 
@@ -105,8 +108,11 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
                         <Text style={styles.title}>Monitored Entities</Text>
 
                         {Object.keys(changedEntities).length > 0 ? (
-                            <TouchableOpacity onPress={handleApply} style={styles.applyBtn}>
-                                <Text style={styles.applyBtnText}>Apply</Text>
+                            <TouchableOpacity onPress={handleApply} style={styles.applyBtn} disabled={saving}>
+                                {saving
+                                    ? <ActivityIndicator size="small" color="#fff" />
+                                    : <Text style={styles.applyBtnText}>Apply</Text>
+                                }
                             </TouchableOpacity>
                         ) : (
                             <View style={{ width: 60 }} />
@@ -129,24 +135,23 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
                         />
                     </View>
 
+                    <View style={styles.listHeader}>
+                        <Text style={styles.headerCell}>ENTITY ID</Text>
+                        <Text style={styles.headerCellRight}>IGNORE</Text>
+                    </View>
+
                     {loading ? (
                         <View style={styles.centered}>
                             <ActivityIndicator size="large" color="#8947ca" />
                         </View>
                     ) : (
-                        <View style={styles.listHeader}>
-                            <Text style={styles.headerCell}>ENTITY ID</Text>
-                            <Text style={styles.headerCellRight}>IGNORE</Text>
-                        </View>
-                    )}
-
                     <ScrollView style={styles.list} contentContainerStyle={{ paddingBottom: 40 }}>
                         {filteredEntities.map((item) => (
                             <View key={item.entity_id} style={styles.row}>
                                 <View style={{ flex: 1 }}>
                                     <Text style={styles.entityId}>{item.entity_id}</Text>
                                     <View style={styles.typeTag}>
-                                        <Text style={styles.typeText}>{item.type.toUpperCase()}</Text>
+                                        <Text style={styles.typeText}>{(item.type || 'unknown').toUpperCase()}</Text>
                                     </View>
                                 </View>
                                 <Switch
@@ -158,6 +163,7 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl }) {
                             </View>
                         ))}
                     </ScrollView>
+                    )}
                 </View>
             </View>
         </Modal>
