@@ -1,4 +1,4 @@
-import React, { memo, useCallback } from 'react';
+import React, { memo, useCallback, useEffect } from 'react';
 import {
     View, Text, StyleSheet, Modal, TouchableOpacity,
     ScrollView, Pressable,
@@ -82,10 +82,15 @@ function NotificationItem({ item }) {
     );
 }
 
-function NotificationModal({ visible, notifications = [], onClose, onClearAll }) {
+function NotificationModal({ visible, notifications = [], onClose, onClearAll, onOpen }) {
     const handleClearAll = useCallback(() => {
         if (onClearAll) onClearAll();
     }, [onClearAll]);
+
+    // Fetch latest from DB whenever the modal becomes visible
+    useEffect(() => {
+        if (visible && onOpen) onOpen();
+    }, [visible]);
 
     return (
         <Modal

@@ -55,10 +55,10 @@ export default function RootLayout() {
         }
 
         // ── Tap from lock screen / notification centre ────────────────────────
-        // Set a tiny SecureStore flag so dashboard-v2 opens the notification modal
-        // when the app comes to the foreground after a lock-screen tap.
+        // Just set a flag — dashboard-v2 will open the modal and fetch the
+        // latest notifications from the DB (no need to pass content here).
         const tapSub = Notifications.addNotificationResponseReceivedListener(() => {
-            SecureStore.setItemAsync(PENDING_OPEN_KEY, '1').catch(() => {});
+            SecureStore.setItemAsync('pending_notif_open', '1').catch(() => {});
         });
 
         return () => {
