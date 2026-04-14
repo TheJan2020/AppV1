@@ -599,8 +599,7 @@ export default function DashboardV2() {
         addNotification,
         markAllRead,
         clearAll:      clearAllNotifications,
-        refresh:       refreshNotifications,
-    } = useNotifications(connectionConfig.adminUrl, connectionConfig.token);
+    } = useNotifications();
     const [showNotifications, setShowNotifications] = useState(false);
     // All entity_ids present in MonitoredEntity table (regardless of ignored flag)
     const monitoredEntitiesRef = useRef(new Set());
@@ -771,11 +770,10 @@ export default function DashboardV2() {
     // ── Cold-start tap: open notification modal if launched via push tap ──────
     useEffect(() => {
         SecureStore.getItemAsync('pending_notif_open').then(val => {
-            if (val !== '1') return;
-            SecureStore.deleteItemAsync('pending_notif_open').catch(() => {});
-            // Notifications are stored in the DB by ha-notifier — just open the modal.
-            // useNotifications already fetched the list on mount; it will be there.
-            setShowNotifications(true);
+            if (val === '1') {
+                SecureStore.deleteItemAsync('pending_notif_open').catch(() => {});
+                setShowNotifications(true);
+            }
         }).catch(() => {});
     }, []);
 
@@ -864,8 +862,6 @@ export default function DashboardV2() {
     // App resume listener — set up ONCE, uses refs for latest values
     const navigateToPresenceRoomRef = useRef(navigateToPresenceRoom);
     navigateToPresenceRoomRef.current = navigateToPresenceRoom;
-    const refreshNotificationsRef = useRef(refreshNotifications);
-    refreshNotificationsRef.current = refreshNotifications;
 
     useEffect(() => {
         const subscription = AppState.addEventListener('change', nextAppState => {
@@ -881,11 +877,10 @@ export default function DashboardV2() {
 
                 // Open notification modal if user tapped a push from lock screen
                 SecureStore.getItemAsync('pending_notif_open').then(val => {
-                    if (val !== '1') return;
-                    SecureStore.deleteItemAsync('pending_notif_open').catch(() => {});
-                    // Notifications are in the DB — just refresh and open.
-                    refreshNotificationsRef.current?.();
-                    setShowNotifications(true);
+                    if (val === '1') {
+                        SecureStore.deleteItemAsync('pending_notif_open').catch(() => {});
+                        setShowNotifications(true);
+                    }
                 }).catch(() => {});
             }
             appState.current = nextAppState;
@@ -1227,7 +1222,6 @@ export default function DashboardV2() {
                 notifications={notifications}
                 onClose={() => setShowNotifications(false)}
                 onClearAll={handleClearNotifications}
-                onOpen={refreshNotifications}
             />
 
             {modalVisible && (
