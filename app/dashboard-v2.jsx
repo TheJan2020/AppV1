@@ -599,7 +599,8 @@ export default function DashboardV2() {
         addNotification,
         markAllRead,
         clearAll:      clearAllNotifications,
-    } = useNotifications();
+        refresh:       refreshNotifications,
+    } = useNotifications(connectionConfig.adminUrl, connectionConfig.token);
     const [showNotifications, setShowNotifications] = useState(false);
     // All entity_ids present in MonitoredEntity table (regardless of ignored flag)
     const monitoredEntitiesRef = useRef(new Set());
@@ -772,6 +773,8 @@ export default function DashboardV2() {
         SecureStore.getItemAsync('pending_notif_open').then(val => {
             if (val === '1') {
                 SecureStore.deleteItemAsync('pending_notif_open').catch(() => {});
+                // History is in the DB — the hook already fetched it on mount.
+                // Just open the modal.
                 setShowNotifications(true);
             }
         }).catch(() => {});
@@ -862,6 +865,8 @@ export default function DashboardV2() {
     // App resume listener — set up ONCE, uses refs for latest values
     const navigateToPresenceRoomRef = useRef(navigateToPresenceRoom);
     navigateToPresenceRoomRef.current = navigateToPresenceRoom;
+    const refreshNotificationsRef = useRef(refreshNotifications);
+    refreshNotificationsRef.current = refreshNotifications;
 
     useEffect(() => {
         const subscription = AppState.addEventListener('change', nextAppState => {
@@ -879,6 +884,7 @@ export default function DashboardV2() {
                 SecureStore.getItemAsync('pending_notif_open').then(val => {
                     if (val === '1') {
                         SecureStore.deleteItemAsync('pending_notif_open').catch(() => {});
+                        refreshNotificationsRef.current?.(); // get latest from DB
                         setShowNotifications(true);
                     }
                 }).catch(() => {});
@@ -1222,6 +1228,7 @@ export default function DashboardV2() {
                 notifications={notifications}
                 onClose={() => setShowNotifications(false)}
                 onClearAll={handleClearNotifications}
+                onOpen={refreshNotifications}
             />
 
             {modalVisible && (

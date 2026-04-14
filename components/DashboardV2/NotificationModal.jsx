@@ -1,4 +1,4 @@
-import React, { memo, useCallback } from 'react';
+import React, { memo, useCallback, useEffect } from 'react';
 import {
     View, Text, StyleSheet, Modal, TouchableOpacity,
     ScrollView, Pressable,
@@ -36,16 +36,18 @@ function getCategory(notification) {
 
 function formatTime(ts) {
     if (!ts) return '';
+    // Accept both ISO string and numeric timestamp
+    const ms  = typeof ts === 'number' ? ts : new Date(ts).getTime();
     const now = Date.now();
-    const diff = Math.floor((now - ts) / 1000);
+    const diff = Math.floor((now - ms) / 1000);
     if (diff < 60)   return `${diff}s ago`;
     if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
     if (diff < 86400) {
         const h = Math.floor(diff / 3600);
         return `${h} hr ago`;
     }
-    // Same day → show time
-    const d = new Date(ts);
+    // Older — show date + time
+    const d = new Date(ms);
     const hh = d.getHours();
     const mm = d.getMinutes().toString().padStart(2, '0');
     const ampm = hh >= 12 ? 'PM' : 'AM';
@@ -82,10 +84,15 @@ function NotificationItem({ item }) {
     );
 }
 
-function NotificationModal({ visible, notifications = [], onClose, onClearAll }) {
+function NotificationModal({ visible, notifications = [], onClose, onClearAll, onOpen }) {
     const handleClearAll = useCallback(() => {
         if (onClearAll) onClearAll();
     }, [onClearAll]);
+
+    // Refresh from server whenever the modal opens
+    useEffect(() => {
+        if (visible && onOpen) onOpen();
+    }, [visible]); // eslint-disable-line react-hooks/exhaustive-deps
 
     return (
         <Modal
