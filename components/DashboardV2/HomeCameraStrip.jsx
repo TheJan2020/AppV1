@@ -1,7 +1,15 @@
 import { memo } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Dimensions } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { LinearGradient } from 'expo-linear-gradient';
+import { CF } from '../../utils/typography';
+
+// 2 columns, parent has paddingHorizontal:20 on each side → usable width = screen - 40
+const SCREEN_W = Dimensions.get('window').width;
+const COL_GAP = 10;
+const H_PAD = 40;
+const CARD_W = (SCREEN_W - H_PAD - COL_GAP) / 2;
+const CARD_H = 174;
 
 // Camera card — same design language as RoomsList card but wider + taller
 const CameraCard = ({ cam, frigateService, onPress }) => {
@@ -58,7 +66,7 @@ const CameraCard = ({ cam, frigateService, onPress }) => {
     );
 };
 
-function HomeCameraStrip({ frigateCameras = [], selectedCameraNames = [], frigateService, onCameraPress }) {
+function HomeCameraStrip({ frigateCameras = [], selectedCameraNames = [], frigateService, onCameraPress, onAllCamerasPress }) {
     // selectedCameraNames may be HA entity IDs like "camera.doorstep"
     // frigateCameras have name like "doorstep" (without prefix)
     // Normalise both sides: strip "camera." prefix before comparing
@@ -71,13 +79,12 @@ function HomeCameraStrip({ frigateCameras = [], selectedCameraNames = [], frigat
     return (
         <View style={styles.container}>
             <View style={styles.headerRow}>
-                <Text style={styles.title}>Cameras</Text>
+                <Text style={styles.title}>CAMERAS</Text>
+                <TouchableOpacity onPress={onAllCamerasPress} style={styles.allBtn}>
+                    <Text style={styles.allBtnText}>All Cameras</Text>
+                </TouchableOpacity>
             </View>
-            <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.scrollContent}
-            >
+            <View style={styles.grid}>
                 {cameras.map(cam => (
                     <CameraCard
                         key={cam.id || cam.name}
@@ -86,13 +93,10 @@ function HomeCameraStrip({ frigateCameras = [], selectedCameraNames = [], frigat
                         onPress={onCameraPress}
                     />
                 ))}
-            </ScrollView>
+            </View>
         </View>
     );
 }
-
-const CARD_WIDTH = 220;   // wider than room card (157)
-const CARD_HEIGHT = 148;  // taller than room card (~98)
 
 const styles = StyleSheet.create({
     container: {
@@ -101,29 +105,43 @@ const styles = StyleSheet.create({
     headerRow: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'space-between',
         marginBottom: 10,
-        marginLeft: 4,
+        marginHorizontal: 2,
     },
     title: {
-        color: 'white',
-        fontSize: 16,
-        fontWeight: '300',
-        letterSpacing: 0.5,
+        color: '#9199BA',
+        fontSize: 12,
+        fontFamily: CF.semibold,
+        letterSpacing: 1.4,
+    },
+    allBtn: {
+        paddingVertical: 2,
+        paddingHorizontal: 4,
+    },
+    allBtnText: {
+        color: '#9199BA',
+        fontSize: 12,
+        fontFamily: CF.semibold,
+        letterSpacing: 0.3,
     },
     scrollContent: {
         gap: 12,
         paddingRight: 20,
     },
+    grid: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'space-between',
+        rowGap: COL_GAP,
+    },
     card: {
-        width: CARD_WIDTH,
-        height: CARD_HEIGHT,
+        width: CARD_W,
+        height: CARD_H,
         borderRadius: 16,
         overflow: 'hidden',
-        backgroundColor: '#2a2a2a',
-        borderWidth: 1.5,
-        borderColor: '#8947ca',     // same purple border as room card
+        backgroundColor: '#1e1f35',
         position: 'relative',
-        // same glow as room card
         shadowColor: '#8947ca',
         shadowOffset: { width: 0, height: 0 },
         shadowOpacity: 0.4,
@@ -156,7 +174,7 @@ const styles = StyleSheet.create({
     cameraName: {
         color: 'white',
         fontSize: 14,
-        fontWeight: '600',
+        fontFamily: CF.semibold,
         textShadowColor: 'rgba(0,0,0,0.75)',
         textShadowOffset: { width: 0, height: 1 },
         textShadowRadius: 3,
@@ -182,7 +200,7 @@ const styles = StyleSheet.create({
     liveText: {
         color: 'white',
         fontSize: 10,
-        fontWeight: '600',
+        fontFamily: CF.semibold,
         letterSpacing: 0.5,
     },
 });

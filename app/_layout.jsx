@@ -4,7 +4,8 @@ import { Colors } from '../constants/Colors';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import ErrorBoundary from '../components/ErrorBoundary';
 import { useEffect } from 'react';
-import { LogBox, Dimensions } from 'react-native';
+import { LogBox, Dimensions, Image, StyleSheet, View } from 'react-native';
+import { useFonts } from 'expo-font';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
@@ -40,6 +41,15 @@ try {
 const PENDING_OPEN_KEY = 'pending_notif_open';
 
 export default function RootLayout() {
+    const [fontsLoaded] = useFonts({
+        'ClashDisplay-Extralight': require('../assets/fonts/ClashDisplay-Extralight.otf'),
+        'ClashDisplay-Light':      require('../assets/fonts/ClashDisplay-Light.otf'),
+        'ClashDisplay-Regular':    require('../assets/fonts/ClashDisplay-Regular.otf'),
+        'ClashDisplay-Medium':     require('../assets/fonts/ClashDisplay-Medium.otf'),
+        'ClashDisplay-Semibold':   require('../assets/fonts/ClashDisplay-Semibold.otf'),
+        'ClashDisplay-Bold':       require('../assets/fonts/ClashDisplay-Bold.otf'),
+    });
+
     useEffect(() => {
         registerForPushNotificationsAsync().then(token => {
             if (token) console.log('Push Token Registered:', token);
@@ -81,7 +91,7 @@ export default function RootLayout() {
                             fontWeight: 'bold',
                         },
                         contentStyle: {
-                            backgroundColor: Colors.background,
+                            backgroundColor: '#09091A',
                         },
                         animation: 'slide_from_right',
                     }}
@@ -95,7 +105,25 @@ export default function RootLayout() {
                     <Stack.Screen name="tv-lab" options={{ headerShown: false }} />
                     <Stack.Screen name="dashboard-v3" options={{ headerShown: false }} />
                 </Stack>
+                {/* Global top-center purple glow — rendered OVER screens, touches pass through */}
+                <Image
+                    source={require('../assets/shadow.png')}
+                    style={layoutStyles.topShadow}
+                    resizeMode="contain"
+                    pointerEvents="none"
+                />
             </GestureHandlerRootView>
         </ErrorBoundary>
     );
 }
+
+const layoutStyles = StyleSheet.create({
+    topShadow: {
+        position: 'absolute',
+        top: 0,
+        alignSelf: 'center',
+        width: 521.82,
+        height: 462.37,
+        zIndex: 9999,
+    },
+});

@@ -1,53 +1,65 @@
 import React, { memo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Cloud, CloudRain, Sun, Bell } from 'lucide-react-native';
+import { Cloud, CloudRain, Sun, CloudSnow, CloudLightning, Bell } from 'lucide-react-native';
+import { CF } from '../../utils/typography';
 
-function HeaderV2({ weather, cityName, userName, entities = [], config = {}, onRoomPress, onBellPress, unreadCount = 0 }) {
+function HeaderV2({ weather, cityName, userName, entities = [], config = {}, humidity, indoorTemp, onRoomPress, onBellPress, unreadCount = 0 }) {
+
+    const capitalizeWords = (str) => {
+        if (!str) return str;
+        return str.replace(/\b\w/g, c => c.toUpperCase());
+    };
+
+    const displayName = capitalizeWords(userName) || 'Home';
 
     const getGreeting = () => {
         const hour = new Date().getHours();
-        if (hour < 12) return 'Good Morning,';
-        if (hour < 18) return 'Good Afternoon,';
-        return 'Good Evening,';
+        if (hour < 12) return 'Good morning,';
+        if (hour < 18) return 'Good afternoon,';
+        return 'Good evening,';
     };
 
     const getWeatherIcon = (state) => {
-        if (!state) return <Cloud size={15} color={Colors.primary} />;
-        if (state.includes('rain')) return <CloudRain size={15} color="#64B5F6" />;
-        if (state.includes('cloud')) return <Cloud size={15} color="#90A4AE" />;
-        // Simple check for night/day could be improved
-        return <Sun size={15} color="#FFB74D" />;
+        if (!state) return <Cloud size={13} color="#90A4AE" />;
+        const s = state.toLowerCase();
+        if (s.includes('rain') || s.includes('drizzle')) return <CloudRain size={13} color="#64B5F6" />;
+        if (s.includes('snow')) return <CloudSnow size={13} color="#B0BEC5" />;
+        if (s.includes('thunder') || s.includes('lightning')) return <CloudLightning size={13} color="#FFD54F" />;
+        if (s.includes('cloud') || s.includes('overcast') || s.includes('fog') || s.includes('mist')) return <Cloud size={13} color="#90A4AE" />;
+        return <Sun size={13} color="#FFB74D" />;
     };
 
-    const temp = weather?.attributes?.temperature || '--';
-    const state = weather?.state || 'Unknown';
-    const city = cityName || 'Home';
+    const temp = weather?.attributes?.temperature ?? '--';
+    const state = weather?.state || '';
 
-    // Find current user's person entity to get ID
-    const personEntity = entities.find(e =>
-        e.entity_id.startsWith('person.') &&
-        (e.attributes?.friendly_name?.toLowerCase() === userName?.toLowerCase() ||
-            e.entity_id.includes(userName?.toLowerCase()))
-    );
+    // Resolve state to a friendly label
+    const stateLabel = (() => {
+        if (!state) return 'Clear';
+        const s = state.toLowerCase();
+        if (s.includes('sunny') || s === 'clear-night' || s === 'clear') return 'Sunny';
+        if (s.includes('partlycloudy') || s.includes('partly_cloudy')) return 'Partly Cloudy';
+        if (s.includes('cloudy') || s.includes('overcast')) return 'Cloudy';
+        if (s.includes('fog') || s.includes('mist')) return 'Foggy';
+        if (s.includes('rain') || s.includes('drizzle')) return 'Rainy';
+        if (s.includes('snow')) return 'Snow';
+        if (s.includes('thunder')) return 'Thunderstorm';
+        return state.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    })();
 
-    const userId = personEntity?.attributes?.user_id;
+    // Humidity: prefer prop, then weather attributes
+    const humidityVal = humidity ?? weather?.attributes?.humidity ?? null;
 
-    // Get tracked sensors for this user
-    const trackedSensors = (config?.tracked_devices_list || [])
-        .filter(t => t.user_id === userId)
-        .map(t => {
-            const sensor = entities.find(e => e.entity_id === t.entity_id);
-            if (!sensor) return null;
-            return `${sensor.state}${sensor.attributes?.unit_of_measurement || ''}`;
-        })
-        .filter(Boolean);
+    // Indoor temperature: prop-driven — guard against NaN
+    const indoorVal = (indoorTemp !== null && indoorTemp !== undefined && !isNaN(indoorTemp))
+        ? indoorTemp
+        : null;
 
     return (
         <View style={styles.header}>
             <View style={styles.topRow}>
-                <View>
+                <View style={styles.greetingBlock}>
                     <Text style={styles.greeting}>{getGreeting()}</Text>
-                    <Text style={styles.name}>{userName || 'Home'}</Text>
+                    <Text style={styles.name}>{displayName}</Text>
                 </View>
                 {/* Bell button */}
                 <TouchableOpacity
@@ -55,28 +67,25 @@ function HeaderV2({ weather, cityName, userName, entities = [], config = {}, onR
                     onPress={onBellPress}
                     activeOpacity={0.75}
                 >
-                    <Bell size={20} color="rgba(237,237,245,0.85)" />
+                    <Bell size={19} color="#FFFFFF" />
                     {unreadCount > 0 && <View style={styles.bellBadge} />}
                 </TouchableOpacity>
             </View>
 
+            {/* Weather info row */}
             <View style={styles.weatherRow}>
                 {getWeatherIcon(state)}
-                <Text style={styles.weatherText}>
-                    {temp}° {state}
-                </Text>
-                <Text style={styles.weatherDivider}>·</Text>
-                <Text style={styles.weatherCity}>{city}</Text>
+                <Text style={styles.weatherText}>{stateLabel}, {temp}°C</Text>
 
-                {trackedSensors.length > 0 && (
+                <Text style={styles.dot}>·</Text>
+                <Text style={styles.weatherText}>
+                    Humidity {humidityVal !== null ? `${humidityVal}%` : '--'}
+                </Text>
+
+                {indoorVal !== null && (
                     <>
-                        <Text style={styles.weatherDivider}>·</Text>
-                        {trackedSensors.map((val, idx) => (
-                            <React.Fragment key={idx}>
-                                <Text style={styles.weatherCity}>{val}</Text>
-                                {idx < trackedSensors.length - 1 && <Text style={styles.weatherDivider}>·</Text>}
-                            </React.Fragment>
-                        ))}
+                        <Text style={styles.dot}>·</Text>
+                        <Text style={styles.weatherText}>Indoor {indoorVal}°C</Text>
                     </>
                 )}
             </View>
@@ -87,66 +96,62 @@ function HeaderV2({ weather, cityName, userName, entities = [], config = {}, onR
 const styles = StyleSheet.create({
     header: {
         paddingTop: 60,
-        paddingHorizontal: 20,
-        marginBottom: 10,
-        gap: 5,
+        paddingBottom: 12,
+        gap: 6,
     },
     topRow: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center',
+        alignItems: 'flex-start',
+    },
+    greetingBlock: {
+        gap: 0,
     },
     greeting: {
-        fontSize: 12.5,
-        fontWeight: '400',
+        fontSize: 13,
+        fontFamily: CF.regular,
         color: 'rgba(237,237,245,0.45)',
         letterSpacing: 0.1,
     },
     name: {
-        fontSize: 28,
-        fontWeight: '800',
+        fontSize: 36,
+        fontFamily: CF.bold,
+        fontStyle: 'italic',
         color: '#ededf5',
-        letterSpacing: -0.8,
-        marginTop: 1,
+        letterSpacing: -1.5,
+        marginTop: -2,
+        lineHeight: 42,
     },
     bellBtn: {
         width: 42,
         height: 42,
-        borderRadius: 14,
-        backgroundColor: 'rgba(255,255,255,0.06)',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.08)',
         alignItems: 'center',
         justifyContent: 'center',
     },
     bellBadge: {
         position: 'absolute',
-        top: 8,
-        right: 8,
+        top: 9,
+        right: 9,
         width: 7,
         height: 7,
         borderRadius: 3.5,
-        backgroundColor: '#832ea9',
+        backgroundColor: '#ED1E79',
     },
     weatherRow: {
         flexDirection: 'row',
         alignItems: 'center',
+        flexWrap: 'wrap',
         gap: 5,
         marginTop: 2,
     },
     weatherText: {
-        color: 'rgba(237,237,245,0.7)',
+        color: 'rgba(237,237,245,0.6)',
         fontSize: 12,
-        fontWeight: '500',
+        fontFamily: CF.light,
     },
-    weatherDivider: {
-        color: 'rgba(237,237,245,0.3)',
-        fontSize: 11,
-    },
-    weatherCity: {
-        color: 'rgba(237,237,245,0.55)',
+    dot: {
+        color: 'rgba(237,237,245,0.25)',
         fontSize: 12,
-        fontWeight: '400',
     },
 });
 

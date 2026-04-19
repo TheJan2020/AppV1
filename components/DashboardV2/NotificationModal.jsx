@@ -3,20 +3,18 @@ import {
     View, Text, StyleSheet, Modal, TouchableOpacity,
     ScrollView, Pressable,
 } from 'react-native';
-import { BlurView } from 'expo-blur';
-import { LinearGradient } from 'expo-linear-gradient';
 import { X, Bell, Lock, Thermometer, Camera, Zap, DoorOpen, Shield, Sun } from 'lucide-react-native';
 
 // ── Icon config per notification category ──────────────────────────────────
 const CATEGORY_CONFIG = {
-    lock:     { icon: Lock,        grad: ['#832ea9', '#9b45c8'], color: '#c084fc' },
-    climate:  { icon: Thermometer, grad: ['#1e6fa8', '#3b9fd4'], color: '#60c8f0' },
-    camera:   { icon: Camera,      grad: ['#1e6fa8', '#44c8ca'], color: '#44c8ca' },
-    scene:    { icon: Zap,         grad: ['#b06a10', '#e8a020'], color: '#f0b040' },
-    door:     { icon: DoorOpen,    grad: ['#a83232', '#d95050'], color: '#f08080' },
-    security: { icon: Shield,      grad: ['#832ea9', '#7354b1'], color: '#a880e0' },
-    light:    { icon: Sun,         grad: ['#9a7010', '#d4b030'], color: '#f0d060' },
-    default:  { icon: Bell,        grad: ['#3a3a5c', '#565680'], color: 'rgba(237,237,245,0.6)' },
+    lock:     { icon: Lock,        bg: '#6c2d99', color: '#fff' },
+    climate:  { icon: Thermometer, bg: '#1a7ab5', color: '#fff' },
+    camera:   { icon: Camera,      bg: '#1a8fa8', color: '#fff' },
+    scene:    { icon: Zap,         bg: '#b06a10', color: '#fff' },
+    door:     { icon: DoorOpen,    bg: '#a83232', color: '#fff' },
+    security: { icon: Shield,      bg: '#5c3d99', color: '#fff' },
+    light:    { icon: Sun,         bg: '#9a7010', color: '#fff' },
+    default:  { icon: Bell,        bg: '#3a3a5c', color: 'rgba(237,237,245,0.8)' },
 };
 
 function getCategory(notification) {
@@ -62,14 +60,9 @@ function NotificationItem({ item }) {
     return (
         <View style={styles.item}>
             {/* Icon orb */}
-            <LinearGradient
-                colors={cfg.grad}
-                style={styles.iconOrb}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-            >
-                <IconComp size={20} color="#fff" />
-            </LinearGradient>
+            <View style={[styles.iconOrb, { backgroundColor: cfg.bg }]}>
+                <IconComp size={18} color={cfg.color} />
+            </View>
 
             {/* Text */}
             <View style={styles.itemText}>
@@ -102,23 +95,23 @@ function NotificationModal({ visible, notifications = [], onClose, onClearAll, o
             statusBarTranslucent
             onRequestClose={onClose}
         >
-            {/* Backdrop */}
+            {/* Dim backdrop — tap to close */}
             <Pressable style={styles.backdrop} onPress={onClose} />
 
-            {/* Panel */}
+            {/* Floating card — drops from top of screen below status bar */}
             <View style={styles.panelWrapper} pointerEvents="box-none">
-                <BlurView intensity={60} tint="dark" style={styles.panel}>
+                <View style={styles.panel}>
                     {/* Header row */}
                     <View style={styles.header}>
                         <Text style={styles.headerTitle}>Notifications</Text>
                         <View style={styles.headerRight}>
                             {notifications.length > 0 && (
-                                <TouchableOpacity onPress={handleClearAll} activeOpacity={0.7} style={styles.clearBtn}>
+                                <TouchableOpacity onPress={handleClearAll} activeOpacity={0.7}>
                                     <Text style={styles.clearText}>Clear all</Text>
                                 </TouchableOpacity>
                             )}
                             <TouchableOpacity onPress={onClose} activeOpacity={0.7} style={styles.closeBtn}>
-                                <X size={16} color="rgba(237,237,245,0.8)" />
+                                <X size={14} color="rgba(237,237,245,0.75)" />
                             </TouchableOpacity>
                         </View>
                     </View>
@@ -142,90 +135,94 @@ function NotificationModal({ visible, notifications = [], onClose, onClearAll, o
                             ))}
                         </ScrollView>
                     )}
-                </BlurView>
+                </View>
             </View>
         </Modal>
     );
 }
 
 const styles = StyleSheet.create({
+    // ── Backdrop ──
     backdrop: {
         ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(0,0,0,0.55)',
+        backgroundColor: 'rgba(0,0,0,0.45)',
     },
+    // ── Panel ──
     panelWrapper: {
         position: 'absolute',
-        top: 100,
-        left: 16,
-        right: 16,
-        maxHeight: '75%',
+        top: 54,          // just below the status bar — same as designer
+        left: 0,
+        right: 0,
+        maxHeight: '78%',
+        paddingHorizontal: 14,
     },
     panel: {
-        borderRadius: 20,
-        overflow: 'hidden',
-        backgroundColor: 'rgba(13,13,30,0.85)',
+        borderRadius: 22,
+        backgroundColor: '#12121e',
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.08)',
+        borderColor: 'rgba(255,255,255,0.07)',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 12 },
+        shadowOpacity: 0.55,
+        shadowRadius: 28,
+        elevation: 20,
+        overflow: 'hidden',
     },
     // ── Header ──
     header: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
-        paddingHorizontal: 18,
-        paddingTop: 18,
-        paddingBottom: 12,
+        paddingHorizontal: 20,
+        paddingTop: 20,
+        paddingBottom: 14,
     },
     headerTitle: {
-        fontSize: 18,
+        fontSize: 17,
         fontWeight: '700',
         color: '#ededf5',
-        letterSpacing: -0.3,
+        letterSpacing: -0.2,
     },
     headerRight: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
     },
-    clearBtn: {
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-    },
     clearText: {
         fontSize: 13,
-        color: 'rgba(237,237,245,0.45)',
+        color: 'rgba(237,237,245,0.4)',
         fontWeight: '500',
     },
     closeBtn: {
-        width: 30,
-        height: 30,
-        borderRadius: 10,
-        backgroundColor: 'rgba(255,255,255,0.08)',
+        width: 26,
+        height: 26,
+        borderRadius: 13,
+        backgroundColor: 'rgba(255,255,255,0.09)',
         alignItems: 'center',
         justifyContent: 'center',
     },
     // ── List ──
     list: {
-        paddingHorizontal: 14,
-        paddingBottom: 16,
+        paddingHorizontal: 16,
+        paddingBottom: 18,
     },
     item: {
         flexDirection: 'row',
         alignItems: 'flex-start',
-        paddingVertical: 12,
-        gap: 12,
+        paddingVertical: 13,
+        gap: 13,
     },
     iconOrb: {
-        width: 44,
-        height: 44,
-        borderRadius: 14,
+        width: 42,
+        height: 42,
+        borderRadius: 13,
         alignItems: 'center',
         justifyContent: 'center',
         flexShrink: 0,
     },
     itemText: {
         flex: 1,
-        gap: 2,
+        gap: 3,
     },
     itemTitle: {
         fontSize: 14,
@@ -235,32 +232,32 @@ const styles = StyleSheet.create({
     },
     itemBody: {
         fontSize: 12.5,
-        color: 'rgba(237,237,245,0.55)',
+        color: 'rgba(237,237,245,0.5)',
         lineHeight: 17,
     },
     itemTime: {
         fontSize: 11,
-        color: 'rgba(237,237,245,0.3)',
-        marginTop: 2,
+        color: 'rgba(237,237,245,0.28)',
+        marginTop: 1,
     },
     unreadDot: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
+        width: 7,
+        height: 7,
+        borderRadius: 3.5,
         backgroundColor: '#832ea9',
-        marginTop: 4,
+        marginTop: 5,
         flexShrink: 0,
     },
     separator: {
-        height: 1,
-        backgroundColor: 'rgba(255,255,255,0.05)',
-        marginHorizontal: 4,
+        height: StyleSheet.hairlineWidth,
+        backgroundColor: 'rgba(255,255,255,0.07)',
+        marginLeft: 55,   // aligns with text, skips icon column
     },
     // ── Empty ──
     empty: {
         alignItems: 'center',
         justifyContent: 'center',
-        paddingVertical: 40,
+        paddingVertical: 44,
         gap: 10,
     },
     emptyText: {

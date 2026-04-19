@@ -5,7 +5,7 @@ import SecurityControlModal from '../components/DashboardV2/SecurityControlModal
 import NotificationModal from '../components/DashboardV2/NotificationModal';
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator, Image } from 'react-native';
 import HomeCameraStrip from '../components/DashboardV2/HomeCameraStrip';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
@@ -31,11 +31,9 @@ import useDeviceType from '../hooks/useDeviceType';
 import useNotifications from '../hooks/useNotifications';
 import RoomSheet from '../components/DashboardV2/RoomSheet';
 import OpacitySettingsModal from '../components/DashboardV2/OpacitySettingsModal';
-import SlideAction from '../components/DashboardV2/SlideAction';
-import ShutterGarageSlide from '../components/DashboardV2/ShutterGarageSlide';
+import HomeAccess from '../components/DashboardV2/HomeAccess';
 import BrainView from '../components/DashboardV2/BrainView';
 import VoiceConversation from '../components/VoiceConversation';
-import { LockOpen } from 'lucide-react-native';
 
 import { FrigateService } from '../services/frigate';
 import * as SecureStore from 'expo-secure-store';
@@ -59,11 +57,6 @@ export default function DashboardV2() {
     const frigateService = useRef(null); // Frigate Service Ref
 
     const [entities, setEntities] = useState([]);
-    // Batch state_changed updates — instead of copying the 500+ entity array on every single
-    // WebSocket event (5-20/sec), we collect updates and flush once per 500ms.
-    // This reduces array allocations from ~600/min to ~120/min, preventing OOM on iPhone.
-    const pendingEntityUpdates = useRef([]);
-    const entityFlushTimer = useRef(null);
     const [cityName, setCityName] = useState('Home');
     const [badgeConfig, setBadgeConfig] = useState(null);
     const [currentFloor, setCurrentFloor] = useState(null);
@@ -188,6 +181,9 @@ export default function DashboardV2() {
     const [allowedQuickScenes, setAllowedQuickScenes] = useState([]);
     const [sensorMappings, setSensorMappings] = useState([]);
     const [coverMappings, setCoverMappings] = useState([]);
+    // null = never configured (show all), [] = none selected, [...] = selected ids
+    const [selectedLockIds, setSelectedLockIds] = useState(null);
+    const [selectedCoverIds, setSelectedCoverIds] = useState(null);
 
     const mappingsAbortRef = useRef(null);
 
@@ -253,6 +249,18 @@ export default function DashboardV2() {
                 if (data.success && Array.isArray(data.covers)) setCoverMappings(data.covers);
             })
             .catch(e => { if (e.name !== 'AbortError') console.error('[Mappings] Cover error:', e); });
+
+        // 6. Home Access — selected locks + covers (single unified endpoint)
+        const haUrl2 = `${baseUrl}api/home-access?t=${Date.now()}`;
+        fetch(haUrl2, { signal: controller.signal, headers: authHeaders })
+            .then(res => { if (!res.ok) throw new Error(`home-access ${res.status}`); return res.json(); })
+            .then(data => {
+                if (data.success) {
+                    setSelectedLockIds(data.locks);    // null or string[]
+                    setSelectedCoverIds(data.covers);  // null or string[]
+                }
+            })
+            .catch(e => { if (e.name !== 'AbortError') console.error('[Mappings] HomeAccess error:', e); });
     };
 
     // ... (rest of useEffects)
@@ -492,28 +500,16 @@ export default function DashboardV2() {
                         pushNotification(notifTitle, notifBody, notifCat);
                     }
 
-                    // Batch entity state update (unchanged)
-                    pendingEntityUpdates.current.push(newState);
-                    if (!entityFlushTimer.current) {
-                        entityFlushTimer.current = setTimeout(() => {
-                            const updates = pendingEntityUpdates.current;
-                            pendingEntityUpdates.current = [];
-                            entityFlushTimer.current = null;
-
-                            setEntities(prev => {
-                                const newEntities = [...prev];
-                                for (const update of updates) {
-                                    const index = newEntities.findIndex(e => e.entity_id === update.entity_id);
-                                    if (index !== -1) {
-                                        newEntities[index] = update;
-                                    } else {
-                                        newEntities.push(update);
-                                    }
-                                }
-                                return newEntities;
-                            });
-                        }, 500);
-                    }
+                    // Immediately apply entity state update — no batching delay
+                    setEntities(prev => {
+                        const index = prev.findIndex(e => e.entity_id === newState.entity_id);
+                        if (index !== -1) {
+                            const next = [...prev];
+                            next[index] = newState;
+                            return next;
+                        }
+                        return [...prev, newState];
+                    });
                 }
             });
         }
@@ -559,12 +555,6 @@ export default function DashboardV2() {
         return () => {
             configAbort.abort();
             if (mappingsAbortRef.current) mappingsAbortRef.current.abort();
-            // Clear batched entity update timer
-            if (entityFlushTimer.current) {
-                clearTimeout(entityFlushTimer.current);
-                entityFlushTimer.current = null;
-            }
-            pendingEntityUpdates.current = [];
             if (service.current) {
                 if (service.current.disconnect) {
                     service.current.disconnect();
@@ -576,6 +566,51 @@ export default function DashboardV2() {
     }, [connectionConfig.loaded]);
 
     const weather = useMemo(() => entities.find(e => e.entity_id.startsWith('weather.')), [entities]);
+
+    // Humidity: from weather entity attributes, or from a dedicated humidity sensor
+    const humidity = useMemo(() => {
+        const fromWeather = weather?.attributes?.humidity;
+        if (fromWeather != null) return Math.round(fromWeather);
+        const sensor = entities.find(e =>
+            e.entity_id.includes('humidity') && e.entity_id.startsWith('sensor.')
+        );
+        return sensor ? Math.round(parseFloat(sensor.state)) : null;
+    }, [weather, entities]);
+
+    // Indoor temperature: look for a sensor tagged as indoor/room temperature
+    const indoorTemp = useMemo(() => {
+        const sensor = entities.find(e =>
+            e.entity_id.startsWith('sensor.') &&
+            (e.entity_id.includes('indoor') || e.entity_id.includes('room')) &&
+            (e.entity_id.includes('temperature') || e.entity_id.includes('temp'))
+        );
+        if (sensor) return Math.round(parseFloat(sensor.state));
+        // Fallback: first climate entity's current_temperature
+        const climate = entities.find(e => e.entity_id.startsWith('climate.') && e.attributes?.current_temperature);
+        return climate ? Math.round(climate.attributes.current_temperature) : null;
+    }, [entities]);
+
+    // Security zones for SecurityControlModal dot display
+    const securityZones = useMemo(() => {
+        const alarmEntity = entities.find(e => e.entity_id.startsWith('alarm_control_panel.'));
+        if (!alarmEntity) return [];
+        const isArmed = alarmEntity.state !== 'disarmed';
+        // Try to find sub-zone binary sensors; fall back to empty so modal uses defaults
+        const zoneSensors = entities.filter(e =>
+            e.entity_id.startsWith('binary_sensor.') &&
+            (e.attributes?.device_class === 'door' || e.attributes?.device_class === 'window' ||
+             e.attributes?.device_class === 'motion' || e.entity_id.includes('zone'))
+        );
+        if (zoneSensors.length > 0) {
+            return zoneSensors.slice(0, 6).map(z => ({
+                id: z.entity_id,
+                name: z.attributes?.friendly_name || z.entity_id.replace(/_/g, ' '),
+                detail: z.state === 'on' ? 'Active' : 'Inactive',
+                armed: isArmed && z.state !== 'unavailable',
+            }));
+        }
+        return []; // let the modal use its DEFAULT_ZONES
+    }, [entities]);
 
     // Active Devices Modal State
     const [modalVisible, setModalVisible] = useState(false);
@@ -906,9 +941,40 @@ export default function DashboardV2() {
 
     const callService = useCallback((domain, serviceName, serviceData) => {
         if (service.current) {
+            // ── Optimistic update ────────────────────────────────────────────
+            // For light/switch/fan toggles, instantly flip the UI state so the
+            // user sees the change immediately without waiting for the HA event.
+            const entityId = serviceData?.entity_id;
+            if (entityId && typeof entityId === 'string') {
+                const optimisticState =
+                    serviceName === 'turn_on'  ? 'on'  :
+                    serviceName === 'turn_off' ? 'off' :
+                    serviceName === 'toggle'   ? null  : // handled below
+                    null;
+
+                setEntities(prev => {
+                    const index = prev.findIndex(e => e.entity_id === entityId);
+                    if (index === -1) return prev;
+
+                    const current = prev[index];
+                    const nextState =
+                        optimisticState !== null ? optimisticState :
+                        (current.state === 'on' ? 'off' : 'on'); // toggle
+
+                    const next = [...prev];
+                    next[index] = { ...current, state: nextState };
+                    return next;
+                });
+            }
+            // ────────────────────────────────────────────────────────────────
+
             return service.current.callService(domain, serviceName, serviceData)
                 .catch((err) => {
                     console.warn('[callService] Failed:', domain, serviceName, err?.message ?? err);
+                    // Revert optimistic update on failure by re-fetching states
+                    service.current?.getStates?.()?.then(states => {
+                        if (states) setEntities(states);
+                    });
                 });
         }
         console.warn('[callService] HA service not connected');
@@ -1161,6 +1227,11 @@ export default function DashboardV2() {
 
     const homeLocks = useMemo(() => entities.filter(e => {
         if (!e.entity_id.startsWith('lock.')) return false;
+        // If selected_locks is configured, use it; otherwise fall back to area-based
+        if (selectedLockIds && selectedLockIds.length > 0) {
+            return selectedLockIds.includes(e.entity_id);
+        }
+        if (selectedLockIds !== null) return false; // configured but empty → hide all
         const reg = registryEntities.find(re => re.entity_id === e.entity_id);
         if (!reg) return false;
         const activeRoomIds = roomsWithCounts.map(r => r.area_id);
@@ -1170,13 +1241,30 @@ export default function DashboardV2() {
             areaId = dev?.area_id;
         }
         return areaId && activeRoomIds.includes(areaId);
-    }), [entities, registryEntities, registryDevices, roomsWithCounts]);
+    }), [entities, selectedLockIds, registryEntities, registryDevices, roomsWithCounts]);
+
+    // All shutter/garage covers (for the edit modal)
+    const allHomeAccessCovers = useMemo(() => {
+        const shutterTypes = ['shutter', 'garage'];
+        return coverMappings
+            .filter(m => shutterTypes.includes(m.coverType))
+            .map(m => ({
+                entity_id: m.entity_id,
+                coverType: m.coverType,
+                name: entities.find(e => e.entity_id === m.entity_id)?.attributes?.friendly_name || m.entity_id,
+            }));
+    }, [coverMappings, entities]);
 
     // Shutter & garage door covers for home screen (global, not per-room)
     const homeCovers = useMemo(() => {
         const shutterTypes = ['shutter', 'garage'];
         return coverMappings
-            .filter(m => shutterTypes.includes(m.coverType))
+            .filter(m => {
+                if (!shutterTypes.includes(m.coverType)) return false;
+                // If selectedCoverIds is configured, filter by it; null = show all
+                if (selectedCoverIds !== null) return selectedCoverIds.includes(m.entity_id);
+                return true;
+            })
             .map(m => {
                 const stateObj = entities.find(e => e.entity_id === m.entity_id);
                 if (!stateObj) return null;
@@ -1203,13 +1291,13 @@ export default function DashboardV2() {
                 };
             })
             .filter(Boolean);
-    }, [coverMappings, entities]);
+    }, [coverMappings, entities, selectedCoverIds]);
 
     return (
         <View style={styles.container}>
             <Stack.Screen options={{ headerShown: false }} />
             <LinearGradient
-                colors={['#1a1b2e', '#16161e', '#000000']}
+                colors={['#09091A', '#09091A', '#09091A']}
                 style={styles.background}
             />
             <StatusBar style="light" />
@@ -1220,6 +1308,7 @@ export default function DashboardV2() {
                     onClose={() => setSecurityModalVisible(false)}
                     entity={entities.find(e => e.entity_id.startsWith('alarm_control_panel.'))}
                     onCallService={callService}
+                    zones={securityZones}
                 />
             )}
 
@@ -1292,6 +1381,8 @@ export default function DashboardV2() {
                             userName={userName}
                             entities={entities}
                             config={badgeConfig}
+                            humidity={humidity}
+                            indoorTemp={indoorTemp}
                             onRoomPress={handleHeaderRoomPress}
                             onBellPress={handleBellPress}
                             unreadCount={notifUnread}
@@ -1303,6 +1394,7 @@ export default function DashboardV2() {
                             doorsOpen={doorsOpen}
                             power={power}
                             onPress={handleBadgePress}
+                            zones={securityZones}
                         />
                         <View style={styles.divider} />
 
@@ -1311,6 +1403,8 @@ export default function DashboardV2() {
                         <QuickScenes
                             scenes={quickScenesData}
                             onScenePress={handleScenePress}
+                            adminUrl={connectionConfig?.adminUrl}
+                            onScenesUpdated={(ids) => setAllowedQuickScenes(ids)}
                         />
 
                         {showVoiceAssistant && <VoiceConversation
@@ -1437,59 +1531,24 @@ export default function DashboardV2() {
                             }}
                         />}
 
-                        {/* Dynamic Lock Sliders */}
-                        {homeLocks.length > 0 && (
-                            <View style={styles.sliderRow}>
-                                {homeLocks.map(lock => {
-                                        const isUnlocked = lock.state === 'unlocked' || lock.state === 'open';
-                                        const name = lock.attributes.friendly_name || lock.entity_id;
-                                        return (
-                                            <View key={lock.entity_id} style={styles.sliderContainer}>
-                                                {isUnlocked ? (
-                                                    <TouchableOpacity
-                                                        style={[styles.statusCard, { backgroundColor: '#FF7043' }]}
-                                                        onPress={() => {
-                                                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                                                            callService('lock', 'lock', { entity_id: lock.entity_id });
-                                                        }}
-                                                    >
-                                                        <LockOpen size={24} color="#fff" />
-                                                        <Text style={styles.statusText}>Unlocked</Text>
-                                                    </TouchableOpacity>
-                                                ) : (
-                                                    <SlideAction
-                                                        label={`Unlock ${name}`}
-                                                        icon={LockOpen}
-                                                        color="#8947ca"
-                                                        onSlide={() => callService('lock', 'unlock', { entity_id: lock.entity_id })}
-                                                    />
-                                                )}
-                                            </View>
-                                        );
-                                    })}
-                            </View>
-                        )}
-
-                        {/* Shutter & Garage Door Sliders */}
-                        {homeCovers.length > 0 && (
-                            <View style={styles.sliderRow}>
-                                {homeCovers.map(cover => (
-                                    <View key={cover.entity_id} style={styles.sliderContainer}>
-                                        <ShutterGarageSlide
-                                            label={cover.name}
-                                            coverType={cover.coverType}
-                                            isOpen={cover.isOpen}
-                                            isOpening={cover.isOpening}
-                                            isClosing={cover.isClosing}
-                                            position={cover.position}
-                                            onOpen={() => callService('cover', 'open_cover', { entity_id: cover.entity_id })}
-                                            onClose={() => callService('cover', 'close_cover', { entity_id: cover.entity_id })}
-                                            onStop={() => callService('cover', 'stop_cover', { entity_id: cover.entity_id })}
-                                        />
-                                    </View>
-                                ))}
-                            </View>
-                        )}
+                        {/* Home Access — Locks & Covers */}
+                        <HomeAccess
+                            isHomeActive={activeTab === 'home'}
+                            locks={homeLocks}
+                            covers={homeCovers}
+                            allLockEntities={entities.filter(e => e.entity_id.startsWith('lock.'))}
+                            haEntities={entities}
+                            adminUrl={connectionConfig.adminUrl}
+                            haToken={connectionConfig.token}
+                            onConfigSaved={fetchMappings}
+                            onToggleLock={(entityId, state) => {
+                                const isUnlocked = state === 'unlocked' || state === 'open';
+                                callService('lock', isUnlocked ? 'lock' : 'unlock', { entity_id: entityId });
+                            }}
+                            onControlCover={(entityId, action) => {
+                                callService('cover', action, { entity_id: entityId });
+                            }}
+                        />
 
                         <RoomsList
                             rooms={roomsWithCounts}
@@ -1499,6 +1558,7 @@ export default function DashboardV2() {
                             overlayOpacity={cardOpacity}
                             overlayColor={cardColor}
                             onSettingsPress={handleOpenOpacitySettings}
+                            onAllRoomsPress={() => setActiveTab('rooms')}
                             layout={isTablet ? 'grid' : 'horizontal'}
                             columns={columns}
                             haUrl={haHttpUrl}
@@ -1511,6 +1571,7 @@ export default function DashboardV2() {
                             selectedCameraNames={badgeConfig?.selected_cameras || []}
                             frigateService={frigateService.current}
                             onCameraPress={handleFrigateCameraPress}
+                            onAllCamerasPress={() => setActiveTab('cameras')}
                         />
                     </ScrollView>
 
@@ -1700,6 +1761,13 @@ const styles = StyleSheet.create({
         right: 0,
         top: 0,
         height: '100%',
+    },
+    topShadow: {
+        position: 'absolute',
+        top: 42.82,
+        width: 521.82,
+        height: 462.37,
+        alignSelf: 'center',
     },
     content: {
         paddingTop: 10,

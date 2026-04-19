@@ -1,7 +1,7 @@
 export const Colors = {
     primary: '#03A9F4', // Home Assistant Blue
     secondary: '#FF9800',
-    background: '#1c1c1e',
+    background: '#09091A',
     surface: '#2c2c2e',
     text: '#ffffff',
     textDim: '#8e8e93',

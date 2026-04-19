@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-nati
 import { Image } from 'expo-image';
 import { Sofa, Bed, Bath, Utensils, Monitor, Lamp, Settings, Lightbulb, Fan, GalleryVerticalEnd, DoorOpen, Thermometer, Droplets, Satellite } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { CF } from '../../utils/typography';
 
 const getIconForRoom = (name) => {
     const lower = (name || '').toLowerCase();
@@ -32,6 +33,7 @@ function RoomsList({
     overlayColor = '#000000',
     overlayOpacity = 0.4,
     onSettingsPress,
+    onAllRoomsPress,
     layout = 'horizontal', // 'horizontal' | 'grid',
     columns = 2,
     registryEntities = [],
@@ -91,8 +93,7 @@ function RoomsList({
                 key={room.area_id}
                 style={[
                     styles.card,
-                    layout === 'horizontal' && { width: horizontalCardWidth },
-                    layout === 'grid' && { width: gridCardWidth, marginBottom: 4 }
+                    layout === 'grid' && styles.gridCard,
                 ]}
                 onPress={() => onRoomPress && onRoomPress(room)}
             >
@@ -108,7 +109,8 @@ function RoomsList({
                             { backgroundColor: overlayColor, opacity: overlayOpacity }
                         ]} />
                         <LinearGradient
-                            colors={['transparent', 'rgba(0,0,0,0.4)', 'rgba(0,0,0,0.95)']}
+                            colors={['transparent', 'rgba(0,0,0,0.15)', 'rgba(0,0,0,0.55)', 'rgba(0,0,0,0.97)']}
+                            locations={[0, 0.4, 0.7, 1]}
                             style={styles.gradient}
                         />
                     </View>
@@ -120,7 +122,8 @@ function RoomsList({
                             { backgroundColor: overlayColor, opacity: overlayOpacity }
                         ]} />
                         <LinearGradient
-                            colors={['transparent', 'rgba(0,0,0,0.4)', 'rgba(0,0,0,0.95)']}
+                            colors={['transparent', 'rgba(0,0,0,0.15)', 'rgba(0,0,0,0.55)', 'rgba(0,0,0,0.97)']}
+                            locations={[0, 0.4, 0.7, 1]}
                             style={styles.gradient}
                         />
                     </View>
@@ -185,9 +188,9 @@ function RoomsList({
     return (
         <View style={styles.container}>
             <View style={styles.headerRow}>
-                <Text style={styles.title}>Rooms</Text>
-                <TouchableOpacity onPress={onSettingsPress} style={styles.settingsButton}>
-                    <Settings size={14} color="rgba(255,255,255,0.4)" />
+                <Text style={styles.title}>ROOMS</Text>
+                <TouchableOpacity onPress={onAllRoomsPress || onSettingsPress} style={styles.allBtn}>
+                    <Text style={styles.allBtnText}>All Rooms</Text>
                 </TouchableOpacity>
             </View>
             <ScrollView
@@ -208,15 +211,25 @@ const styles = StyleSheet.create({
     headerRow: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'space-between',
         marginBottom: 10,
-        marginLeft: 4,
-        gap: 8
+        marginHorizontal: 2,
     },
     title: {
-        color: 'white',
-        fontSize: 16,
-        fontWeight: '300',
-        letterSpacing: 0.5,
+        color: '#9199BA',
+        fontSize: 12,
+        fontFamily: CF.semibold,
+        letterSpacing: 1.4,
+    },
+    allBtn: {
+        paddingVertical: 2,
+        paddingHorizontal: 4,
+    },
+    allBtnText: {
+        color: '#9199BA',
+        fontSize: 12,
+        fontFamily: CF.semibold,
+        letterSpacing: 0.3,
     },
     settingsButton: {
         padding: 4,
@@ -226,24 +239,18 @@ const styles = StyleSheet.create({
         paddingRight: 20,
     },
     card: {
-        width: 112, // default, overridden dynamically
-        aspectRatio: 8 / 5,
+        width: 174,
+        height: 198,
         alignSelf: 'flex-start',
         borderRadius: 16,
         overflow: 'hidden',
-        backgroundColor: '#2a2a2a',
-        borderWidth: 1.5,
-        borderColor: '#8947ca', // Purple border
+        backgroundColor: '#1e1e2e',
         position: 'relative',
-        // Glow effect
-        shadowColor: "#8947ca",
-        shadowOffset: {
-            width: 0,
-            height: 0,
-        },
-        shadowOpacity: 0.4,
-        shadowRadius: 8,
-        elevation: 5,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.6,
+        shadowRadius: 16,
+        elevation: 10,
     },
     backgroundImage: {
         width: '100%',
@@ -267,18 +274,23 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         bottom: 0,
-        height: '80%',
+        height: '70%',
     },
     textContainer: {
         position: 'absolute',
-        bottom: 8,
-        left: 10,
-        right: 8,
+        bottom: 0,
+        left: 0,
+        right: 0,
+        height: 50,
+        backgroundColor: 'rgba(0,0,0,0.55)',
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 10,
     },
     roomName: {
         color: 'white',
         fontSize: 14,
-        fontWeight: '600',
+        fontFamily: CF.semibold,
         textShadowColor: 'rgba(0, 0, 0, 0.75)',
         textShadowOffset: { width: 0, height: 1 },
         textShadowRadius: 3,
@@ -286,17 +298,17 @@ const styles = StyleSheet.create({
     leftStatusRow: {
         position: 'absolute',
         top: 8,
-        left: 8,
+        right: 8,
         flexDirection: 'column',
-        alignItems: 'flex-start',
+        alignItems: 'flex-end',
         gap: 6,
     },
     statusRow: {
         position: 'absolute',
         top: 8,
-        right: 8,
-        flexDirection: 'column', // Stack vertically
-        alignItems: 'flex-end',
+        left: 8,
+        flexDirection: 'column',
+        alignItems: 'flex-start',
         gap: 6,
     },
     statusItem: {
@@ -311,17 +323,18 @@ const styles = StyleSheet.create({
     statusText: {
         color: 'white',
         fontSize: 10,
-        fontWeight: '600'
+        fontFamily: CF.semibold,
     },
     gridContainer: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 12,
-        paddingBottom: 20
+        justifyContent: 'space-between',
+        rowGap: 14,
+        paddingBottom: 20,
     },
     gridCard: {
-        width: '48%', // Approx half with gap
-        marginBottom: 4
+        width: '48.5%',
+        height: 180,
     },
     emptyContainer: {
         alignItems: 'center',

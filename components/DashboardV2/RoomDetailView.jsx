@@ -5,7 +5,7 @@ import * as Haptics from 'expo-haptics';
 import { Colors } from '../../constants/Colors';
 import { useState, useEffect, useRef } from 'react';
 import { GestureHandlerRootView, PanGestureHandler, State } from 'react-native-gesture-handler';
-import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing, cancelAnimation } from 'react-native-reanimated';
+import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, withSpring, Easing, cancelAnimation } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SvgUri } from 'react-native-svg';
 
@@ -192,6 +192,11 @@ function LightCard({ light, onToggle, onBrightnessChange, onLongPress, needsChan
 
     const pulseScale = useSharedValue(1);
     const pulseOpacity = useSharedValue(1);
+    const pressScale = useSharedValue(1);
+
+    const pressAnimStyle = useAnimatedStyle(() => ({
+        transform: [{ scale: pressScale.value }],
+    }));
 
     useEffect(() => {
         if (isOn) {
@@ -220,6 +225,11 @@ function LightCard({ light, onToggle, onBrightnessChange, onLongPress, needsChan
 
     const handlePress = () => {
         if (isSliding) return;
+        // Press-down → spring bounce back
+        pressScale.value = withTiming(0.93, { duration: 80 }, () => {
+            pressScale.value = withSpring(1, { damping: 6, stiffness: 300 });
+        });
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         onToggle(light.entity_id, light.stateObj.state);
     };
 
@@ -231,7 +241,7 @@ function LightCard({ light, onToggle, onBrightnessChange, onLongPress, needsChan
             onHandlerStateChange={handleStateChange}
             activeOffsetX={[-10, 10]}
         >
-            <View style={styles.cardContainer}>
+            <Animated.View style={[styles.cardContainer, pressAnimStyle]}>
                 <TouchableOpacity
                     style={[
                         styles.card,
@@ -301,7 +311,7 @@ function LightCard({ light, onToggle, onBrightnessChange, onLongPress, needsChan
                         </View>
                     </View>
                 </TouchableOpacity>
-            </View>
+            </Animated.View>
         </PanGestureHandler>
     );
 }

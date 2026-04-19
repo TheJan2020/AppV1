@@ -18,16 +18,23 @@ export default function useNotifications(adminUrl, haToken) {
     const [unreadCount,   setUnreadCount]   = useState(0);
     const loadedRef = useRef(false);
 
-    const baseUrl    = (adminUrl ?? '').replace(/\/$/, '');
-    const getHeaders = useCallback(() => ({
-        'Authorization': `Bearer ${haToken}`,
+    // Keep latest values in refs so callbacks never need to be recreated
+    const adminUrlRef = useRef(adminUrl);
+    const haTokenRef  = useRef(haToken);
+    useEffect(() => { adminUrlRef.current = adminUrl; }, [adminUrl]);
+    useEffect(() => { haTokenRef.current  = haToken;  }, [haToken]);
+
+    const getBase    = () => (adminUrlRef.current ?? '').replace(/\/$/, '');
+    const getHeaders = () => ({
+        'Authorization': `Bearer ${haTokenRef.current}`,
         'Content-Type':  'application/json',
-    }), [haToken]);
+    });
 
     // ── Fetch from server ─────────────────────────────────────────────────────
+    // Stable reference — reads latest adminUrl/haToken via refs, never changes
     const fetchNotifications = useCallback(() => {
-        if (!adminUrl || !haToken) return;
-        fetch(`${baseUrl}/api/notifications/history`, { headers: getHeaders() })
+        if (!adminUrlRef.current || !haTokenRef.current) return;
+        fetch(`${getBase()}/api/notifications/history`, { headers: getHeaders() })
             .then(res => res.json())
             .then(data => {
                 if (data.success && Array.isArray(data.notifications)) {
@@ -36,14 +43,15 @@ export default function useNotifications(adminUrl, haToken) {
                 }
             })
             .catch(err => console.warn('[useNotifications] fetch error:', err.message));
-    }, [adminUrl, haToken, baseUrl, getHeaders]);
+    }, []); // ← no deps: always stable, reads latest via refs
 
-    // Load once on mount
+    // Load once — when adminUrl first becomes available
     useEffect(() => {
+        if (!adminUrl || !haToken) return;   // wait until config is ready
         if (loadedRef.current) return;
         loadedRef.current = true;
         fetchNotifications();
-    }, [fetchNotifications]);
+    }, [adminUrl, haToken]); // ← run when config arrives; guard prevents double-fetch
 
     // ── Optimistic add (foreground in-app notifications appear instantly) ─────
     const addNotification = useCallback((title, body, category = 'default') => {
@@ -59,30 +67,28 @@ export default function useNotifications(adminUrl, haToken) {
         };
         setNotifications(prev => [newItem, ...prev].slice(0, 100));
         setUnreadCount(prev => prev + 1);
-    }, []);
+    }, []); // stable
 
     // ── Mark all as read ──────────────────────────────────────────────────────
     const markAllRead = useCallback(() => {
         setNotifications(prev => prev.map(n => ({ ...n, unread: false, read: true })));
         setUnreadCount(0);
-        if (!adminUrl || !haToken) return;
-        fetch(`${baseUrl}/api/notifications/history`, { method: 'PATCH', headers: getHeaders() })
+        if (!adminUrlRef.current || !haTokenRef.current) return;
+        fetch(`${getBase()}/api/notifications/history`, { method: 'PATCH', headers: getHeaders() })
             .catch(err => console.warn('[useNotifications] markAllRead error:', err.message));
-    }, [adminUrl, haToken, baseUrl, getHeaders]);
+    }, []); // stable
 
-    // ── Clear all (hides everything before now on server) ────────────────────
+    // ── Clear all ─────────────────────────────────────────────────────────────
     const clearAll = useCallback(() => {
         setNotifications([]);
         setUnreadCount(0);
-        if (!adminUrl || !haToken) return;
-        fetch(`${baseUrl}/api/notifications/history`, { method: 'DELETE', headers: getHeaders() })
+        if (!adminUrlRef.current || !haTokenRef.current) return;
+        fetch(`${getBase()}/api/notifications/history`, { method: 'DELETE', headers: getHeaders() })
             .catch(err => console.warn('[useNotifications] clearAll error:', err.message));
-    }, [adminUrl, haToken, baseUrl, getHeaders]);
+    }, []); // stable
 
     // ── Refresh (call when modal opens) ──────────────────────────────────────
-    const refresh = useCallback(() => {
-        fetchNotifications();
-    }, [fetchNotifications]);
+    const refresh = fetchNotifications; // same stable reference
 
     return { notifications, unreadCount, addNotification, markAllRead, clearAll, refresh };
 }

@@ -1,187 +1,143 @@
-import { useState, useEffect, memo } from 'react';
+import { memo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import Animated, { FadeIn, FadeOut } from 'react-native-reanimated';
-import { Shield, Lightbulb, Fan, DoorOpen, Zap, Repeat } from 'lucide-react-native';
-import { Colors } from '../../constants/Colors';
+import { ChevronRight } from 'lucide-react-native';
 
-function StatusBadges({ securityState, lightsOn, acOn, doorsOpen, power, onPress }) {
-    const [activeIndex, setActiveIndex] = useState(0);
-    const [mode, setMode] = useState('loop'); // 'loop', 'fixed-1', 'fixed-2'
+/**
+ * SecurityZoneStrip
+ *
+ * Shows a pill-shaped row:
+ *   ●  ●  ●   Security · N zones armed   >
+ *
+ * Dots represent named zones; active zones are cyan/teal, inactive are dim.
+ * Tapping opens the SecurityControlModal (via onPress('security')).
+ */
+function StatusBadges({ securityState, lightsOn, acOn, doorsOpen, power, onPress, zones = [] }) {
 
-    // Timer Logic
-    useEffect(() => {
-        let interval;
-        if (mode === 'loop') {
-            interval = setInterval(() => {
-                setActiveIndex(prev => (prev === 0 ? 1 : 0));
-            }, 4000);
-        } else if (mode === 'fixed-1') {
-            setActiveIndex(0);
-        } else if (mode === 'fixed-2') {
-            setActiveIndex(1);
-        }
+    // Build dot indicators.
+    // Each zone: { name, armed: bool }
+    // If no zones provided, fall back to deriving count from securityState.
+    const resolvedZones = zones.length > 0 ? zones : buildFallbackZones(securityState);
 
-        return () => {
-            if (interval) clearInterval(interval);
-        };
-    }, [mode]);
+    const armedCount = resolvedZones.filter(z => z.armed).length;
 
-    const handleToggleMode = () => {
-        setMode(prev => {
-            if (prev === 'loop') return 'fixed-1';
-            if (prev === 'fixed-1') return 'fixed-2';
-            return 'loop';
-        });
+    const getStatusLabel = () => {
+        if (!securityState || securityState === 'Unknown') return 'Security';
+        if (securityState === 'disarmed') return 'Disarmed';
+        if (securityState === 'triggered') return '🚨 Triggered';
+        if (securityState === 'armed_away') return 'Armed Away';
+        if (securityState === 'armed_home') return 'Armed Home';
+        if (securityState === 'armed_night') return 'Armed Night';
+        if (securityState === 'arming') return 'Arming…';
+        return 'Security';
     };
 
-    const renderBadge = (item) => (
-        <TouchableOpacity
-            key={item.id}
-            style={styles.badge}
-            onPress={() => onPress && onPress(item.id)}
-        >
-            <item.icon size={13} color={item.color} />
-            <Text style={styles.label}>{item.label}</Text>
-        </TouchableOpacity>
-    );
+    const isArmed = securityState && securityState !== 'disarmed' && securityState !== 'Unknown';
 
-    const powerItems = [
-        {
-            id: 'lights',
-            icon: Lightbulb,
-            label: `${lightsOn} On`,
-            color: '#FFD700', // Gold/Yellow
-        },
-        {
-            id: 'ac',
-            icon: Fan,
-            label: `${acOn} On`,
-            color: '#4FC3F7', // Light Blue
-        },
-        {
-            id: 'power',
-            icon: Zap,
-            label: '120 KWh', // Hardcoded dummy text
-            color: '#FFB74D', // Orange
-        }
-    ];
-
-    const securityItems = [
-        {
-            id: 'security',
-            icon: Shield,
-            label: securityState || 'Disarmed',
-            color: securityState === 'disarmed' ? Colors.primary : Colors.error,
-        },
-        {
-            id: 'doors',
-            icon: DoorOpen,
-            label: doorsOpen > 0 ? `${doorsOpen} Open` : 'All Closed',
-            color: doorsOpen > 0 ? Colors.error : '#81C784', // Red if open, Green if closed
-        }
-    ];
+    const subLabel = armedCount > 0
+        ? `${armedCount} zone${armedCount !== 1 ? 's' : ''} armed`
+        : 'All zones disarmed';
 
     return (
-        <View style={styles.container}>
-            <View style={styles.mainRow}>
-                {/* Animated Content */}
-                <View style={{ flex: 1 }}>
-                    {activeIndex === 0 ? (
-                        <Animated.View
-                            key="row-0"
-                            entering={FadeIn.duration(500)}
-                            exiting={FadeOut.duration(500)}
-                            style={styles.row}
-                        >
-                            <View style={styles.badgesContainer}>
-                                {powerItems.map(renderBadge)}
-                            </View>
-                        </Animated.View>
-                    ) : (
-                        <Animated.View
-                            key="row-1"
-                            entering={FadeIn.duration(500)}
-                            exiting={FadeOut.duration(500)}
-                            style={styles.row}
-                        >
-                            <View style={styles.badgesContainer}>
-                                {securityItems.map(renderBadge)}
-                            </View>
-                        </Animated.View>
-                    )}
-                </View>
-
-                {/* Loop Toggle Button */}
-                <TouchableOpacity
-                    style={[styles.toggleButton, mode !== 'loop' && styles.toggleButtonActive]}
-                    onPress={handleToggleMode}
-                >
-                    {mode === 'loop' && <Repeat size={14} color="rgba(255,255,255,0.6)" />}
-                    {mode === 'fixed-1' && <Text style={styles.toggleText}>1</Text>}
-                    {mode === 'fixed-2' && <Text style={styles.toggleText}>2</Text>}
-                </TouchableOpacity>
+        <TouchableOpacity
+            style={styles.pill}
+            onPress={() => onPress && onPress('security')}
+            activeOpacity={0.75}
+        >
+            {/* Zone dots — show up to 5 */}
+            <View style={styles.dotsRow}>
+                {resolvedZones.slice(0, 5).map((zone, i) => (
+                    <View
+                        key={i}
+                        style={[
+                            styles.dot,
+                            zone.armed ? styles.dotArmed : styles.dotDisarmed,
+                        ]}
+                    />
+                ))}
             </View>
-        </View>
+
+            {/* Label */}
+            <Text style={styles.label}>
+                <Text style={[styles.labelBold, isArmed && styles.labelArmed]}>
+                    {getStatusLabel()}
+                </Text>
+                <Text style={styles.labelSep}>{' · '}</Text>
+                <Text style={styles.labelSub}>{subLabel}</Text>
+            </Text>
+
+            {/* Chevron */}
+            <ChevronRight size={16} color="rgba(237,237,245,0.35)" style={styles.chevron} />
+        </TouchableOpacity>
     );
 }
 
-const styles = StyleSheet.create({
-    container: {
-        marginBottom: 10,
-        paddingHorizontal: 20,
-    },
-    mainRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12
-    },
-    toggleButton: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
-        backgroundColor: 'rgba(255,255,255,0.05)',
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)'
-    },
-    toggleButtonActive: {
-        backgroundColor: '#8947ca',
-        borderColor: '#8947ca'
-    },
-    toggleText: {
-        color: '#fff',
-        fontSize: 14,
-        fontWeight: 'bold'
-    },
-    row: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12
-    },
+/**
+ * When no explicit zone list is passed, synthesise a minimal set based
+ * on the alarm_control_panel state so the dots still look reasonable.
+ */
+function buildFallbackZones(securityState) {
+    const armed = securityState && securityState !== 'disarmed' && securityState !== 'Unknown';
+    // Return 4 fake zones; if armed, mark first 3 as armed
+    return [
+        { name: 'Zone 1', armed: armed },
+        { name: 'Zone 2', armed: armed },
+        { name: 'Zone 3', armed: armed },
+        { name: 'Zone 4', armed: false },
+    ];
+}
 
-    badgesContainer: {
-        flexDirection: 'row',
-        gap: 8,
-        flex: 1,
-        flexWrap: 'wrap'
-    },
-    badge: {
+const styles = StyleSheet.create({
+    pill: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'rgba(255, 255, 255, 0.05)',
-        paddingVertical: 4,  // Reduced from 6
-        paddingHorizontal: 8, // Reduced from 10
-        borderRadius: 20,
-        gap: 4, // Reduced from 6
+        marginHorizontal: 0,
+        marginBottom: 10,
+        paddingVertical: 12,
+        paddingHorizontal: 14,
+        borderRadius: 22,
+        backgroundColor: '#13132A',
         borderWidth: 1,
-        borderColor: 'rgba(255, 255, 255, 0.08)',
+        borderColor: 'rgba(255,255,255,0.08)',
+        gap: 10,
+    },
+    dotsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+    },
+    dot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+    },
+    dotArmed: {
+        backgroundColor: '#26C6DA', // cyan-teal — matches screenshot
+    },
+    dotDisarmed: {
+        backgroundColor: 'rgba(237,237,245,0.18)',
     },
     label: {
-        color: '#fff',
+        flex: 1,
+        fontSize: 13,
+    },
+    labelBold: {
+        color: 'rgba(237,237,245,0.9)',
         fontWeight: '600',
-        fontSize: 11, // Reduced from 12
-    }
+    },
+    labelArmed: {
+        color: '#ededf5',
+    },
+    labelSep: {
+        color: 'rgba(237,237,245,0.3)',
+        fontWeight: '400',
+    },
+    labelSub: {
+        color: 'rgba(237,237,245,0.5)',
+        fontWeight: '400',
+    },
+    chevron: {
+        marginLeft: 'auto',
+    },
 });
 
 export default memo(StatusBadges);

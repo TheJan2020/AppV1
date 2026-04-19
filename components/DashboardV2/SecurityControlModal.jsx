@@ -1,11 +1,23 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Modal, TouchableOpacity, ActivityIndicator, Alert } from 'react-native';
+import { View, Text, StyleSheet, Modal, TouchableOpacity, ActivityIndicator, Alert, ScrollView, Switch } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { Shield, ShieldAlert, ShieldCheck, Moon, Briefcase, X, Lock, Delete } from 'lucide-react-native';
+import { Shield, ShieldAlert, ShieldCheck, Moon, Briefcase, X, Lock, Delete, ChevronDown } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
 import Animated, { FadeInUp, FadeOutDown } from 'react-native-reanimated';
 
-export default function SecurityControlModal({ visible, onClose, entity, onCallService }) {
+/**
+ * Default zone definitions — shown when the alarm panel has no sub-zone entities.
+ * In a real setup you'd pass real zone entities via the `zones` prop.
+ */
+const DEFAULT_ZONES = [
+    { id: 'main_entrance',   name: 'Main Entrance',   detail: 'Door closed',       armed: true  },
+    { id: 'perimeter',       name: 'Perimeter',        detail: '4 sensors active',  armed: true  },
+    { id: 'interior_motion', name: 'Interior Motion',  detail: 'Home mode',         armed: false },
+    { id: 'cameras',         name: 'Cameras',          detail: '3 live feeds',      armed: true  },
+    { id: 'guest_access',    name: 'Guest Access',     detail: 'No guests',         armed: false },
+];
+
+export default function SecurityControlModal({ visible, onClose, entity, onCallService, zones }) {
     const [loading, setLoading] = useState(false);
     const [showKeypad, setShowKeypad] = useState(false);
     const [code, setCode] = useState('');
@@ -139,14 +151,42 @@ export default function SecurityControlModal({ visible, onClose, entity, onCallS
         </View>
     );
 
+    // ── Zones list — uses passed `zones` prop or DEFAULT_ZONES ─────────────
+    const resolvedZones = (zones && zones.length > 0) ? zones : DEFAULT_ZONES;
+
+    const renderZoneRow = (zone) => (
+        <View key={zone.id} style={styles.zoneRow}>
+            {/* Status dot */}
+            <View style={[styles.zoneDot, zone.armed ? styles.zoneDotArmed : styles.zoneDotDisarmed]} />
+
+            {/* Name + detail */}
+            <View style={styles.zoneInfo}>
+                <Text style={styles.zoneName}>{zone.name}</Text>
+                <Text style={styles.zoneDetail}>
+                    {zone.armed ? 'Armed' : 'Disarmed'}
+                    {zone.detail ? ` · ${zone.detail}` : ''}
+                </Text>
+            </View>
+
+            {/* Toggle — visual only (real toggle needs per-zone service calls) */}
+            <Switch
+                value={zone.armed}
+                onValueChange={() => {}}
+                trackColor={{ false: 'rgba(255,255,255,0.1)', true: 'rgba(137,71,202,0.55)' }}
+                thumbColor={zone.armed ? Colors.primary : 'rgba(255,255,255,0.4)'}
+                ios_backgroundColor="rgba(255,255,255,0.1)"
+            />
+        </View>
+    );
+
     return (
         <Modal
-            animationType="fade"
+            animationType="slide"
             transparent={true}
             visible={visible}
             onRequestClose={onClose}
         >
-            <BlurView intensity={20} style={styles.container} tint="dark">
+            <View style={styles.container}>
                 <TouchableOpacity style={styles.backdrop} onPress={onClose} />
 
                 <Animated.View
@@ -154,22 +194,29 @@ export default function SecurityControlModal({ visible, onClose, entity, onCallS
                     exiting={FadeOutDown}
                     style={styles.modalContent}
                 >
+                    {/* Drag handle */}
+                    <View style={styles.dragHandle} />
+
+                    {/* Header */}
                     <View style={styles.header}>
-                        <Text style={styles.title}>
-                            {showKeypad ? 'Enter Code' : 'Security Control'}
-                        </Text>
+                        <Text style={styles.title}>Security Zones</Text>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-                            <X size={20} color="#fff" />
+                            <ChevronDown size={22} color="rgba(237,237,245,0.7)" />
                         </TouchableOpacity>
                     </View>
 
                     {!showKeypad ? (
                         <>
-                            <View style={styles.statusContainer}>
-                                {getIcon()}
-                                <Text style={styles.statusText}>{getStatusText()}</Text>
-                            </View>
+                            {/* Zones list */}
+                            <ScrollView
+                                style={styles.zonesList}
+                                showsVerticalScrollIndicator={false}
+                                contentContainerStyle={{ paddingBottom: 8 }}
+                            >
+                                {resolvedZones.map(renderZoneRow)}
+                            </ScrollView>
 
+                            {/* Arm / Disarm actions */}
                             <View style={styles.actions}>
                                 {state === 'disarmed' ? (
                                     <>
@@ -179,7 +226,7 @@ export default function SecurityControlModal({ visible, onClose, entity, onCallS
                                                 onPress={() => handleAction('alarm_arm_home')}
                                                 disabled={loading}
                                             >
-                                                <Shield size={24} color="#fff" />
+                                                <Shield size={18} color="#fff" />
                                                 <Text style={styles.btnText}>Arm Home</Text>
                                             </TouchableOpacity>
                                         )}
@@ -189,7 +236,7 @@ export default function SecurityControlModal({ visible, onClose, entity, onCallS
                                                 onPress={() => handleAction('alarm_arm_away')}
                                                 disabled={loading}
                                             >
-                                                <Briefcase size={24} color="#fff" />
+                                                <Briefcase size={18} color="#fff" />
                                                 <Text style={styles.btnText}>Arm Away</Text>
                                             </TouchableOpacity>
                                         )}
@@ -199,7 +246,7 @@ export default function SecurityControlModal({ visible, onClose, entity, onCallS
                                                 onPress={() => handleAction('alarm_arm_night')}
                                                 disabled={loading}
                                             >
-                                                <Moon size={24} color="#fff" />
+                                                <Moon size={18} color="#fff" />
                                                 <Text style={styles.btnText}>Arm Night</Text>
                                             </TouchableOpacity>
                                         )}
@@ -210,8 +257,8 @@ export default function SecurityControlModal({ visible, onClose, entity, onCallS
                                         onPress={() => handleAction('alarm_disarm')}
                                         disabled={loading}
                                     >
-                                        <Lock size={24} color="#fff" />
-                                        <Text style={styles.btnText}>Disarm</Text>
+                                        <Lock size={18} color="#fff" />
+                                        <Text style={styles.btnText}>Disarm All</Text>
                                     </TouchableOpacity>
                                 )}
                             </View>
@@ -227,7 +274,7 @@ export default function SecurityControlModal({ visible, onClose, entity, onCallS
                     )}
 
                 </Animated.View>
-            </BlurView>
+            </View>
         </Modal>
     );
 }
@@ -235,94 +282,130 @@ export default function SecurityControlModal({ visible, onClose, entity, onCallS
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        backgroundColor: 'rgba(0,0,0,0.5)'
+        justifyContent: 'flex-end',
+        backgroundColor: 'rgba(0,0,0,0.55)',
     },
     backdrop: {
         ...StyleSheet.absoluteFillObject,
     },
     modalContent: {
-        width: '85%',
-        backgroundColor: '#1E1E2C',
-        borderRadius: 20,
-        padding: 24,
-        alignItems: 'center',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 10 },
-        shadowOpacity: 0.5,
-        shadowRadius: 20,
-        elevation: 10,
+        backgroundColor: '#16161F',
+        borderTopLeftRadius: 28,
+        borderTopRightRadius: 28,
+        paddingHorizontal: 20,
+        paddingBottom: 32,
+        paddingTop: 12,
+        borderTopWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: -6 },
+        shadowOpacity: 0.45,
+        shadowRadius: 18,
+        elevation: 16,
+        minHeight: 420,
+    },
+    dragHandle: {
+        width: 38,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: 'rgba(255,255,255,0.18)',
+        alignSelf: 'center',
+        marginBottom: 16,
     },
     header: {
         width: '100%',
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 20
+        marginBottom: 18,
     },
     title: {
         fontSize: 20,
-        fontWeight: 'bold',
-        color: '#fff'
+        fontWeight: '700',
+        color: '#ededf5',
+        letterSpacing: -0.3,
     },
     closeBtn: {
-        padding: 5,
-        backgroundColor: 'rgba(255,255,255,0.1)',
-        borderRadius: 15
+        padding: 6,
+        backgroundColor: 'rgba(255,255,255,0.07)',
+        borderRadius: 14,
     },
-    statusContainer: {
+    // ── Zone rows ─────────────────────────────────────────────────────────────
+    zonesList: {
+        marginBottom: 16,
+    },
+    zoneRow: {
+        flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 30,
-        gap: 16
+        paddingVertical: 14,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.05)',
+        gap: 12,
     },
-    statusText: {
-        fontSize: 22,
-        fontWeight: 'bold',
-        color: '#fff',
-        letterSpacing: 0.5
+    zoneDot: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
     },
+    zoneDotArmed: {
+        backgroundColor: '#26C6DA',
+    },
+    zoneDotDisarmed: {
+        backgroundColor: 'rgba(237,237,245,0.15)',
+    },
+    zoneInfo: {
+        flex: 1,
+        gap: 2,
+    },
+    zoneName: {
+        fontSize: 15,
+        fontWeight: '600',
+        color: '#ededf5',
+    },
+    zoneDetail: {
+        fontSize: 12,
+        color: 'rgba(237,237,245,0.4)',
+        fontWeight: '400',
+    },
+    // ── Arm / Disarm actions ──────────────────────────────────────────────────
     actions: {
-        width: '100%',
-        gap: 12
+        gap: 10,
     },
     actionBtn: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
-        padding: 16,
+        paddingVertical: 14,
         borderRadius: 16,
-        gap: 12,
+        gap: 10,
     },
     armBtn: {
-        backgroundColor: 'rgba(137, 71, 202, 0.2)',
+        backgroundColor: 'rgba(137, 71, 202, 0.18)',
         borderWidth: 1,
-        borderColor: Colors.primary
+        borderColor: 'rgba(137,71,202,0.45)',
     },
     disarmBtn: {
-        backgroundColor: 'rgba(76, 175, 80, 0.2)',
+        backgroundColor: 'rgba(76, 175, 80, 0.15)',
         borderWidth: 1,
-        borderColor: '#4CAF50'
+        borderColor: 'rgba(76,175,80,0.45)',
     },
     btnText: {
         color: '#fff',
-        fontSize: 16,
-        fontWeight: '600'
+        fontSize: 15,
+        fontWeight: '600',
     },
     loadingOverlay: {
         ...StyleSheet.absoluteFillObject,
         backgroundColor: 'rgba(0,0,0,0.5)',
         justifyContent: 'center',
         alignItems: 'center',
-        borderRadius: 20
+        borderRadius: 28,
     },
-    // Keypad Styles
+    // ── Keypad ────────────────────────────────────────────────────────────────
     keypadContainer: {
         width: '100%',
         alignItems: 'center',
-        gap: 20
+        gap: 20,
     },
     codeDisplay: {
         width: '100%',
@@ -331,20 +414,20 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         backgroundColor: 'rgba(0,0,0,0.3)',
         borderRadius: 12,
-        marginBottom: 10
+        marginBottom: 10,
     },
     codeText: {
         fontSize: 32,
         color: '#fff',
         letterSpacing: 8,
-        fontWeight: 'bold'
+        fontWeight: 'bold',
     },
     keypadGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
         justifyContent: 'center',
         gap: 15,
-        width: 280
+        width: 280,
     },
     keypadBtn: {
         width: 70,
@@ -354,7 +437,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.05)'
+        borderColor: 'rgba(255,255,255,0.05)',
     },
     keypadActionBtn: {
         backgroundColor: 'rgba(255,255,255,0.05)',
@@ -362,13 +445,13 @@ const styles = StyleSheet.create({
     keypadText: {
         fontSize: 24,
         fontWeight: '600',
-        color: '#fff'
+        color: '#fff',
     },
     cancelLink: {
         padding: 10,
     },
     cancelText: {
         color: 'rgba(255,255,255,0.5)',
-        fontSize: 16
-    }
+        fontSize: 16,
+    },
 });

@@ -171,16 +171,12 @@ export class FrigateService {
     getSnapshotUrl(cameraName) {
         // Use backend proxy for snapshots too
         const url = `${this.adminUrl}/api/frigate/snapshot/${cameraName}`;
-        console.log('[FrigateService] Snapshot URL:', url);
         return url;
     }
 
     getHASnapshotUrl(entityIdOrName) {
-        // Proxy HA camera_proxy images through the backend
-        // Works when Frigate is unreachable (local IP not accessible remotely)
         const entity = entityIdOrName.startsWith('camera.') ? entityIdOrName : `camera.${entityIdOrName}`;
         const url = `${this.adminUrl}/api/ha-camera/${entity}`;
-        console.log('[FrigateService] HA Snapshot URL:', url);
         return url;
     }
 
