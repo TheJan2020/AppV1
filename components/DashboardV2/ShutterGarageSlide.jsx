@@ -325,6 +325,7 @@ export default function ShutterGarageSlide({
     onOpen,
     onClose,
     onStop,
+    garageDurationMs = 20000,
 }) {
     const isGarage  = coverType === 'garage';
     const isShutter = !isGarage;
@@ -346,7 +347,7 @@ export default function ShutterGarageSlide({
         lockTimer.current = setTimeout(() => {
             setGarageLock('idle');
             haConfirmedMoving.current = false;
-        }, GARAGE_LOCK_MS);
+        }, garageDurationMs);
     };
 
     // Release lock when HA confirms movement (isOpening/isClosing) then stops,

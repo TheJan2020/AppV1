@@ -58,18 +58,14 @@ const TRAVEL_MS = 15000;           // ~15s garage travel estimate
 // ── SVG Icons ─────────────────────────────────────────────────────────────────
 function LockClosedIcon({ size = 22, color = '#fff' }) {
     return (
-        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Svg width={size} height={size * (26.49 / 20.6)} viewBox="0 0 20.6 26.49" fill="none">
             <Path
-                d="M17 11H7a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2z"
-                stroke={color} strokeWidth={1.8} fill="none"
+                d="M4.73,10.14v-4.22c0-1.4.58-2.74,1.61-3.73,1.03-.99,2.43-1.54,3.89-1.54s2.86.56,3.89,1.54c1.03.99,1.61,2.33,1.61,3.73v4.22"
+                stroke={color} strokeWidth={1.29}
             />
             <Path
-                d="M12 15v2"
-                stroke={color} strokeWidth={2} strokeLinecap="round"
-            />
-            <Path
-                d="M8 11V7a4 4 0 018 0v4"
-                stroke={color} strokeWidth={1.8} strokeLinecap="round" fill="none"
+                d="M10.3,17.59c.37,0,.73-.15.99-.41.26-.26.41-.62.41-.99s-.15-.73-.41-.99c-.26-.26-.62-.41-.99-.41s-.73.15-.99.41-.41.62-.41.99.15.73.41.99c.26.26.62.41.99.41ZM10.3,17.59v4.2M2.74,10.59h15.12c1.23,0,2.24,1.01,2.24,2.24v9.8c0,1.85-1.51,3.36-3.36,3.36H3.86c-1.85,0-3.36-1.51-3.36-3.36v-9.8c0-1.23,1.01-2.24,2.24-2.24Z"
+                stroke={color} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"
             />
         </Svg>
     );
@@ -77,29 +73,49 @@ function LockClosedIcon({ size = 22, color = '#fff' }) {
 
 function LockOpenIcon({ size = 22, color = '#fff' }) {
     return (
-        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Svg width={size} height={size * (26.21 / 20.6)} viewBox="0 0 20.6 26.21" fill="none">
             <Path
-                d="M17 11H7a2 2 0 00-2 2v6a2 2 0 002 2h10a2 2 0 002-2v-6a2 2 0 00-2-2z"
-                stroke={color} strokeWidth={1.8} fill="none"
-            />
-            <Path
-                d="M12 15v2"
-                stroke={color} strokeWidth={2} strokeLinecap="round"
-            />
-            <Path
-                d="M8 11V7a4 4 0 017.9-1.1"
-                stroke={color} strokeWidth={1.8} strokeLinecap="round" fill="none"
+                d="M4.7,10.31v-4.2c0-1.36.5-2.68,1.4-3.71.9-1.02,2.15-1.68,3.5-1.86,1.35-.17,2.72.16,3.85.92,1.13.77,1.94,1.92,2.28,3.24M10.3,17.31c.37,0,.73-.15.99-.41.26-.26.41-.62.41-.99s-.15-.73-.41-.99c-.26-.26-.62-.41-.99-.41s-.73.15-.99.41-.41.62-.41.99.15.73.41.99c.26.26.62.41.99.41ZM10.3,17.31v4.2M2.74,10.31h15.12c1.23,0,2.24,1.01,2.24,2.24v9.8c0,1.85-1.51,3.36-3.36,3.36H3.86c-1.85,0-3.36-1.51-3.36-3.36v-9.8c0-1.23,1.01-2.24,2.24-2.24Z"
+                stroke={color} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"
             />
         </Svg>
     );
 }
 
-function GarageIcon({ size = 22 }) {
+function GarageClosedIcon({ size = 22, color = '#fff' }) {
     return (
-        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
-            <Path d="M3 10.5L12 4l9 6.5V20a1 1 0 01-1 1H4a1 1 0 01-1-1V10.5z" fill="#fff" opacity={0.9} />
-            <Path d="M9 21v-5h6v5" fill="rgba(0,0,0,0.25)" />
-            <Path d="M7.5 13h9M7.5 16h9" stroke="rgba(0,0,0,0.3)" strokeWidth={1.5} strokeLinecap="round" />
+        <Svg width={size} height={size * (24.33 / 22)} viewBox="0 0 22 24.33" fill="none">
+            <Path
+                d="M8.41,1.78l-4.8,3.26c-1.52,1.04-2.29,1.56-2.7,2.35-.41.79-.41,1.73-.41,3.6v8.08c0,2.24,0,3.37.68,4.06.68.7,1.78.7,3.98.7h11.67c2.2,0,3.3,0,3.98-.7.68-.7.68-1.82.68-4.06v-8.08c0-1.87,0-2.81-.41-3.6-.41-.79-1.18-1.31-2.7-2.35l-4.8-3.26c-1.25-.85-1.88-1.28-2.59-1.28s-1.33.43-2.59,1.28Z"
+                stroke={color} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"
+            />
+            <Path
+                d="M5.17,23.83v-8.17c0-2.2,0-3.3.68-3.98.68-.68,1.78-.68,3.98-.68h2.33c2.2,0,3.3,0,3.98.68.68.68.68,1.78.68,3.98v8.17M5.17,14.5h11.67M5.17,19.17h11.67"
+                stroke={color} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"
+            />
+            <Path
+                d="M11.01,6.33h-.01"
+                stroke={color} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"
+            />
+        </Svg>
+    );
+}
+
+function GarageOpenIcon({ size = 22, color = '#fff' }) {
+    return (
+        <Svg width={size} height={size * (24.33 / 22)} viewBox="0 0 22 24.33" fill="none">
+            <Path
+                d="M5.17,23.83v-8.17c0-2.2,0-3.3.68-3.98.68-.68,1.78-.68,3.98-.68h2.33c2.2,0,3.3,0,3.98.68.68.68.68,1.78.68,3.98v8.17"
+                stroke={color} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"
+            />
+            <Path
+                d="M8.41,1.78l-4.8,3.26c-1.52,1.04-2.29,1.56-2.7,2.35-.41.79-.41,1.73-.41,3.6v8.08c0,2.24,0,3.37.68,4.06.68.7,1.78.7,3.98.7h11.67c2.2,0,3.3,0,3.98-.7.68-.7.68-1.82.68-4.06v-8.08c0-1.87,0-2.81-.41-3.6-.41-.79-1.18-1.31-2.7-2.35l-4.8-3.26c-1.25-.85-1.88-1.28-2.59-1.28s-1.33.43-2.59,1.28Z"
+                stroke={color} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"
+            />
+            <Path
+                d="M11.01,6.33h-.01"
+                stroke={color} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round"
+            />
         </Svg>
     );
 }
@@ -115,8 +131,9 @@ function ShutterIcon({ size = 18 }) {
 // ─────────────────────────────────────────────────────────────────────────────
 //  LockPill — binary drag + locking/unlocking transit state
 // ─────────────────────────────────────────────────────────────────────────────
-function LockPill({ name, isUnlocked, isLocking, isUnlocking, entityState, onToggle, focusKey }) {
+function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, entityState, onToggle, focusKey }) {
     const inTransit  = !!(isLocking || isUnlocking);
+    const disabled   = isPassage; // passage mode — lock is held open, cannot be locked
     const [pillW, setPillW] = useState(0);
     const translateX        = useSharedValue(0);
     const maxTravelSV       = useSharedValue(0);
@@ -156,7 +173,7 @@ function LockPill({ name, isUnlocked, isLocking, isUnlocking, entityState, onTog
     };
 
     const pan = Gesture.Pan()
-        .enabled(!inTransit)
+        .enabled(!inTransit && !disabled)
         .activeOffsetX([-8, 8])
         .failOffsetY([-20, 20])
         .onUpdate(e => {
@@ -196,13 +213,15 @@ function LockPill({ name, isUnlocked, isLocking, isUnlocking, entityState, onTog
         opacity: pulseOpacity.value,
     }));
 
-    const transitColor = isLocking ? '#B085FF' : C_ORANGE;
-    const pillBg       = inTransit
-        ? (isLocking ? 'rgba(137,71,202,0.12)' : 'rgba(255,112,67,0.07)')
-        : (isUnlocked ? 'rgba(255,112,67,0.07)' : C_BG);
-    const border       = inTransit
-        ? (isLocking ? 'rgba(137,71,202,0.6)' : 'rgba(255,112,67,0.5)')
-        : (isUnlocked ? 'rgba(255,112,67,0.4)' : C_BORDER);
+    const transitColor = isLocking ? C_PURPLE : '#FF3B3B';
+    const pillBg       = isPassage
+        ? 'rgba(255,160,0,0.09)'
+        : '#13132A';
+    const border       = isPassage
+        ? 'rgba(255,160,0,0.55)'
+        : inTransit
+            ? (isLocking ? 'rgba(137,71,202,0.60)' : 'rgba(255,59,59,0.70)')
+            : C_BORDER;
     const Icon         = isUnlocked ? LockOpenIcon : LockClosedIcon;
 
     const transitLabel = isLocking ? 'Locking…' : 'Unlocking…';
@@ -216,7 +235,17 @@ function LockPill({ name, isUnlocked, isLocking, isUnlocking, entityState, onTog
             <Animated.View style={[styles.pill, { backgroundColor: pillBg }]} onLayout={onLayout}>
                 <View style={[styles.pillTrack, { borderColor: border }]} />
 
-                {inTransit ? (
+                {isPassage ? (
+                    /* ── Passage mode — held open, cannot lock ── */
+                    <View style={styles.passageRow} pointerEvents="none">
+                        <View style={styles.passageDot} />
+                        <View style={{ flex: 1, paddingHorizontal: 8 }}>
+                            <Text style={styles.pillLabelName} numberOfLines={1}>{name}</Text>
+                            <Text style={styles.passageLabel}>Passage mode</Text>
+                        </View>
+                        <LockOpenIcon size={20} color={C_AMBER} />
+                    </View>
+                ) : inTransit ? (
                     <Animated.View style={[styles.garageTransitCenter, transitLabelStyle]} pointerEvents="none">
                         <Text style={[styles.pillLabelName, { color: transitColor, fontWeight: '700', letterSpacing: 0.3 }]}>{transitLabel}</Text>
                     </Animated.View>
@@ -226,13 +255,22 @@ function LockPill({ name, isUnlocked, isLocking, isUnlocking, entityState, onTog
                             <Text style={styles.pillLabelName} numberOfLines={1}>{name}</Text>
                         </Animated.View>
                         <Animated.View style={[styles.knob, knobStyle]} pointerEvents="none">
-                            <LinearGradient
-                                colors={isUnlocked ? [C_ORANGE, C_ORANGE] : ['#602FBE', '#7B2FBE']}
-                                start={{ x: 0, y: 0.5 }}
-                                end={{ x: 1, y: 0.5 }}
-                                style={StyleSheet.absoluteFill}
-                            />
-                            <Icon size={32} color="#fff" />
+                            {isUnlocked ? (
+                                // Outlined circle for unlocked
+                                <View style={[StyleSheet.absoluteFill, { borderRadius: KNOB / 2, borderWidth: 2, borderColor: C_PURPLE, backgroundColor: 'transparent' }]} />
+                            ) : (
+                                // Filled gradient for locked
+                                <LinearGradient
+                                    colors={['#602FBE', '#7B2FBE']}
+                                    start={{ x: 0, y: 0.5 }}
+                                    end={{ x: 1, y: 0.5 }}
+                                    style={StyleSheet.absoluteFill}
+                                />
+                            )}
+                            {isUnlocked
+                                ? <LockOpenIcon size={26} color={C_PURPLE} />
+                                : <LockClosedIcon size={26} color="#fff" />
+                            }
                         </Animated.View>
                     </>
                 )}
@@ -244,7 +282,7 @@ function LockPill({ name, isUnlocked, isLocking, isUnlocking, entityState, onTog
 // ─────────────────────────────────────────────────────────────────────────────
 //  GaragePill — drag when idle, progress bar + stop when in transit
 // ─────────────────────────────────────────────────────────────────────────────
-function GaragePill({ name, isOpen, isOpening, isClosing, onControl, focusKey }) {
+function GaragePill({ name, isOpen, isOpening, isClosing, onControl, focusKey, travelMs = TRAVEL_MS }) {
     const [localTransit, setLocalTransit] = useState(null);
     const timerRef = useRef(null);
 
@@ -271,7 +309,7 @@ function GaragePill({ name, isOpen, isOpening, isClosing, onControl, focusKey })
     useEffect(() => {
         if (inTransit) {
             progress.value = 0;
-            progress.value = withTiming(1, { duration: TRAVEL_MS });
+            progress.value = withTiming(1, { duration: travelMs });
 
             const dist = goingUp ? -10 : 10;
             arrowY.value = 0;
@@ -297,7 +335,7 @@ function GaragePill({ name, isOpen, isOpening, isClosing, onControl, focusKey })
         clearTimeout(timerRef.current);
         setLocalTransit(direction);
         onControl(direction === 'opening' ? 'open_cover' : 'close_cover');
-        timerRef.current = setTimeout(() => setLocalTransit(null), TRAVEL_MS);
+        timerRef.current = setTimeout(() => setLocalTransit(null), travelMs);
     };
 
     const pan = Gesture.Pan()
@@ -345,13 +383,11 @@ function GaragePill({ name, isOpen, isOpening, isClosing, onControl, focusKey })
         width: progress.value * Math.max(pillW - PAD * 2, 0),
     }));
 
-    const transitColor = goingUp ? C_ORANGE : C_PURPLE;
-    const pillBg = inTransit
-        ? (goingUp ? 'rgba(255,112,67,0.07)' : 'rgba(137,71,202,0.07)')
-        : (isOpen  ? 'rgba(255,112,67,0.07)' : C_BG);
+    const transitColor = goingUp ? '#FF3B3B' : C_PURPLE;
+    const pillBg = '#13132A';
     const border = inTransit
-        ? (goingUp ? 'rgba(255,112,67,0.4)' : 'rgba(137,71,202,0.4)')
-        : (isOpen  ? 'rgba(255,112,67,0.4)' : C_BORDER);
+        ? (goingUp ? 'rgba(255,59,59,0.70)' : 'rgba(137,71,202,0.60)')
+        : C_BORDER;
 
     const idlePad = isOpen
         ? { paddingLeft: 14, paddingRight: KNOB + 8 }
@@ -377,13 +413,22 @@ function GaragePill({ name, isOpen, isOpening, isClosing, onControl, focusKey })
                             <Text style={styles.pillLabelName} numberOfLines={1}>{name}</Text>
                         </Animated.View>
                         <Animated.View style={[styles.knob, knobAnimStyle]} pointerEvents="none">
-                            <LinearGradient
-                                colors={isOpen ? [C_ORANGE, C_ORANGE] : ['#602FBE', '#7B2FBE']}
-                                start={{ x: 0, y: 0.5 }}
-                                end={{ x: 1, y: 0.5 }}
-                                style={StyleSheet.absoluteFill}
-                            />
-                            <GarageIcon size={32} />
+                            {isOpen ? (
+                                // Outlined circle for open
+                                <View style={[StyleSheet.absoluteFill, { borderRadius: KNOB / 2, borderWidth: 2, borderColor: C_PURPLE, backgroundColor: 'transparent' }]} />
+                            ) : (
+                                // Filled gradient for closed
+                                <LinearGradient
+                                    colors={['#602FBE', '#7B2FBE']}
+                                    start={{ x: 0, y: 0.5 }}
+                                    end={{ x: 1, y: 0.5 }}
+                                    style={StyleSheet.absoluteFill}
+                                />
+                            )}
+                            {isOpen
+                                ? <GarageOpenIcon size={28} color={C_PURPLE} />
+                                : <GarageClosedIcon size={28} color="#fff" />
+                            }
                         </Animated.View>
                     </>
                 )}
@@ -890,6 +935,7 @@ export default function HomeAccess({
     haToken,
     allLockEntities = [],
     haEntities = [],
+    lockPassageConfigs = {},
     onConfigSaved,
 }) {
     const garages  = covers.filter(c => c.coverType === 'garage');
@@ -956,6 +1002,28 @@ export default function HomeAccess({
                                     }
                                     isLocking={item.data.state === 'locking'}
                                     isUnlocking={item.data.state === 'unlocking'}
+                                    isPassage={(() => {
+                                        const pc = lockPassageConfigs[item.data.entity_id];
+                                        if (pc?.enabled) {
+                                            if (pc?.passage_entity_id) {
+                                                // Check the LIVE HA state of the passage entity
+                                                const passageEntity = haEntities.find(
+                                                    e => e.entity_id === pc.passage_entity_id
+                                                );
+                                                return (
+                                                    passageEntity?.state === 'on' ||
+                                                    passageEntity?.state === 'true'
+                                                );
+                                            }
+                                            // passage mode is configured but no entity linked yet — not active
+                                            return false;
+                                        }
+                                        // Fallback: check HA attributes directly on the lock
+                                        return (
+                                            item.data.attributes?.lock_status === 'passage_mode' ||
+                                            item.data.attributes?.passage_mode === true
+                                        );
+                                    })()}
                                     entityState={item.data.state}
                                     onToggle={(currentState) =>
                                         onToggleLock &&
@@ -970,6 +1038,7 @@ export default function HomeAccess({
                                     isOpen={item.data.isOpen}
                                     isOpening={item.data.isOpening}
                                     isClosing={item.data.isClosing}
+                                    travelMs={item.data.garageDurationMs || TRAVEL_MS}
                                     onControl={(action) =>
                                         onControlCover &&
                                         onControlCover(item.data.entity_id, action)
@@ -1105,6 +1174,27 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
         zIndex: 20,
+    },
+    passageRow: {
+        ...StyleSheet.absoluteFillObject,
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 14,
+    },
+    passageDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: C_AMBER,
+        marginRight: 2,
+    },
+    passageLabel: {
+        color: C_AMBER,
+        fontSize: 10,
+        fontFamily: CF.semibold,
+        letterSpacing: 0.3,
+        marginTop: 1,
+        opacity: 0.85,
     },
 
     // ── Garage transit UI ────────────────────────────────────────────────────

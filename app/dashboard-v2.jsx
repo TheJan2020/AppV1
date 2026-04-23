@@ -184,6 +184,7 @@ export default function DashboardV2() {
     // null = never configured (show all), [] = none selected, [...] = selected ids
     const [selectedLockIds, setSelectedLockIds] = useState(null);
     const [selectedCoverIds, setSelectedCoverIds] = useState(null);
+    const [lockPassageConfigs, setLockPassageConfigs] = useState({}); // { [entity_id]: { enabled, passage_entity_id } }
 
     const mappingsAbortRef = useRef(null);
 
@@ -250,17 +251,24 @@ export default function DashboardV2() {
             })
             .catch(e => { if (e.name !== 'AbortError') console.error('[Mappings] Cover error:', e); });
 
-        // 6. Home Access — selected locks + covers (single unified endpoint)
+        // 6. Home Access — selected locks + covers
         const haUrl2 = `${baseUrl}api/home-access?t=${Date.now()}`;
         fetch(haUrl2, { signal: controller.signal, headers: authHeaders })
             .then(res => { if (!res.ok) throw new Error(`home-access ${res.status}`); return res.json(); })
             .then(data => {
                 if (data.success) {
-                    setSelectedLockIds(data.locks);    // null or string[]
-                    setSelectedCoverIds(data.covers);  // null or string[]
+                    setSelectedLockIds(data.locks);
+                    setSelectedCoverIds(data.covers);
                 }
             })
             .catch(e => { if (e.name !== 'AbortError') console.error('[Mappings] HomeAccess error:', e); });
+
+        // 7. Lock passage configs
+        const lockPassageUrl = `${baseUrl}api/lock-passage?t=${Date.now()}`;
+        fetch(lockPassageUrl, { signal: controller.signal, headers: authHeaders })
+            .then(res => { if (!res.ok) return {}; return res.json(); })
+            .then(data => { if (data.configs) setLockPassageConfigs(data.configs); })
+            .catch(() => {});
     };
 
     // ... (rest of useEffects)
@@ -1288,6 +1296,7 @@ export default function DashboardV2() {
                     isOpen,
                     isOpening: stateObj.state === 'opening',
                     isClosing: stateObj.state === 'closing',
+                    garageDurationMs: m.garageDuration ? m.garageDuration * 1000 : 20000,
                 };
             })
             .filter(Boolean);
@@ -1538,6 +1547,7 @@ export default function DashboardV2() {
                             covers={homeCovers}
                             allLockEntities={entities.filter(e => e.entity_id.startsWith('lock.'))}
                             haEntities={entities}
+                            lockPassageConfigs={lockPassageConfigs}
                             adminUrl={connectionConfig.adminUrl}
                             haToken={connectionConfig.token}
                             onConfigSaved={fetchMappings}
