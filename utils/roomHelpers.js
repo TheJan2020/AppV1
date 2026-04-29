@@ -64,7 +64,27 @@ export const getRoomEntities = (room, registryDevices = [], registryEntities = [
         lights: [...lightEntries.map(mapEntity), ...mappedLocks],
         fans: fanEntries.map(mapEntity),
         climates: climateEntries.map(mapEntity),
-        covers: coverEntries.map(mapEntity).filter(c => c.coverType && c.coverType !== 'shutter' && c.coverType !== 'garage'),
+        covers: (() => {
+            const mapped = coverEntries.map(mapEntity);
+
+            // Garage covers are handled exclusively in HomeAccess — exclude them here.
+            // Shutter covers belong in the room curtains section, sorted to the end.
+            const nonShutters = mapped.filter(c => {
+                const id   = (c.entity_id   || '').toLowerCase();
+                const name = (c.displayName || '').toLowerCase();
+                const isMaster = id.includes('master_curtain') || id.includes('master curtain') ||
+                                 name.includes('master curtain') || name.includes('master_curtain');
+                // master always included; garage always excluded; shutter handled separately
+                if (isMaster) return true;
+                if (!c.coverType) return false;
+                return c.coverType !== 'shutter' && c.coverType !== 'garage';
+            });
+
+            const shutters = mapped.filter(c => c.coverType === 'shutter');
+
+            // Shutters go last, after all curtain types
+            return [...nonShutters, ...shutters];
+        })(),
         cameras: potentialEntities.filter(re => re.entity_id.startsWith('camera.')).map(mapEntity),
         sensors: mappedSensors,
         doors: doorEntities,

@@ -118,6 +118,21 @@ export class HAService {
     }
 
     handleMessage(data) {
+        // Log only messages related to "Master Controller" lights
+        if (data.type === 'event' && data.event?.event_type === 'state_changed') {
+            const newState  = data.event?.data?.new_state;
+            const oldState  = data.event?.data?.old_state;
+            const entityId  = data.event?.data?.entity_id || '';
+            const friendlyName = newState?.attributes?.friendly_name || '';
+
+            if (friendlyName.toLowerCase().includes('master controller') ||
+                entityId.toLowerCase().includes('master_controller')) {
+                console.log('[HA WS ← MASTER CONTROLLER]', entityId);
+                console.log('  state :', oldState?.state, '→', newState?.state);
+                console.log('  attrs :', JSON.stringify(newState?.attributes, null, 2));
+            }
+        }
+
         if (data.type === 'auth_required') {
             this.sendAuth();
         } else if (data.type === 'auth_ok') {

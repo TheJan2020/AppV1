@@ -1,14 +1,15 @@
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Image } from 'react-native';
 import { useState, useEffect } from 'react';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, Easing } from 'react-native-reanimated';
 import { Zap } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
+import { LinearGradient } from 'expo-linear-gradient';
 import { getAdminUrl } from '../../utils/storage';
 import { checkPreferenceMatch } from '../../utils/preferenceHelpers';
 import * as Haptics from 'expo-haptics';
 import { authFetch } from '../../utils/authFetch';
 
-export default function ActivatePreferencesButton({ roomName, onActivate, onPreferencesLoaded }) {
+export default function ActivatePreferencesButton({ roomName, onActivate, onPreferencesLoaded, logoSource }) {
     const [loading, setLoading] = useState(false);
     const [preferences, setPreferences] = useState([]);
     const [needsChange, setNeedsChange] = useState(0);
@@ -137,83 +138,148 @@ export default function ActivatePreferencesButton({ roomName, onActivate, onPref
         return (day === 5 || day === 6) ? 'weekend' : 'weekday';
     };
 
-    console.log('[ActivatePreferencesButton] Render state:', { roomName, loading, preferencesCount: preferences.length, needsChange });
+    // quiet in render
 
     // Show button for debugging - comment this out later
     // if (loading || preferences.length === 0) {
     //     return null;
     // }
 
+    const isDisabled = applying || needsChange === 0;
+
     return (
         <View style={styles.container}>
-            <TouchableOpacity
-                style={styles.button}
-                onPress={activatePreferences}
-                activeOpacity={0.8}
-                disabled={applying || needsChange === 0}
+            {/* Cyan glow border — matches the screenshot exactly */}
+            <LinearGradient
+                colors={['#00D4FF', '#0099FF', '#6C5CE7']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={[styles.gradientBorder, isDisabled && styles.disabledOpacity]}
             >
-                {/* Glow effect */}
-                <Animated.View style={[styles.glow, glowStyle]} />
+                <TouchableOpacity
+                    style={styles.buttonInner}
+                    onPress={activatePreferences}
+                    activeOpacity={0.8}
+                    disabled={isDisabled}
+                >
+                    {/* Subtle inner glow layer */}
+                    <Animated.View style={[styles.glow, glowStyle]} />
 
-                {/* Button content */}
-                <View style={styles.buttonContent}>
-                    {applying ? (
-                        <ActivityIndicator size="small" color="#fff" />
-                    ) : (
-                        <Zap size={24} color="#fff" fill="#fff" />
-                    )}
-                    <View>
-                        <Text style={styles.buttonText}>
-                            {applying ? 'Activating...' : 'Activate Preferences'}
-                        </Text>
-                        {needsChange > 0 && !applying && (
-                            <Text style={styles.badgeText}>{needsChange} changes needed</Text>
-                        )}
+                    <View style={styles.innerRow}>
+                        {/* Logo — no background, just the image floating on dark */}
+                        <View style={styles.logoWrapper}>
+                            {logoSource ? (
+                                <Image source={logoSource} style={styles.logo} resizeMode="contain" />
+                            ) : (
+                                <Zap size={32} color="#00D4FF" />
+                            )}
+                        </View>
+
+                        {/* Vertical divider */}
+                        <View style={styles.divider} />
+
+                        <View style={styles.textBlock}>
+                            {applying ? (
+                                <ActivityIndicator size="small" color="#fff" style={{ marginBottom: 4 }} />
+                            ) : null}
+                            <Text style={styles.buttonTitle}>
+                                {applying ? 'Activating...' : 'Apply Your Preferences'}
+                            </Text>
+                            <Text style={styles.buttonSubtitle}>
+                                Tailored To Your Liking By{' '}
+                                <Text style={styles.aiWord}>AI</Text>
+                            </Text>
+                        </View>
                     </View>
-                </View>
-            </TouchableOpacity>
+                </TouchableOpacity>
+            </LinearGradient>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
-        paddingHorizontal: 20,
-        paddingVertical: 12,
+        // No horizontal padding — RoomDetailView's prefButtonContainer already adds it
+        paddingVertical: 8,
         alignItems: 'center',
+        width: '100%',
     },
-    button: {
-        backgroundColor: 'rgba(137, 71, 202, 0.1)', // Slight purple tint background
-        borderRadius: 16,
-        paddingVertical: 16,
-        paddingHorizontal: 24,
-        position: 'relative',
-        overflow: 'visible',
-        borderWidth: 1,
-        borderColor: '#8947ca', // Purple border
-        // Minimal glow
-        shadowColor: '#8947ca',
+    /* ── 2-px gradient outline pill ── */
+    gradientBorder: {
+        width: '100%',
+        borderRadius: 20,
+        padding: 1.5,
+        // Outer drop-shadow so the border glows off the dark bg
+        shadowColor: '#00D4FF',
         shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.6,
-        shadowRadius: 8,
-        elevation: 5,
+        shadowOpacity: 0.35,
+        shadowRadius: 12,
+        elevation: 8,
     },
+    disabledOpacity: {
+        opacity: 0.5,
+    },
+    /* ── Dark inner pill ── */
+    buttonInner: {
+        width: '100%',
+        height: 82,
+        backgroundColor: '#0d0d1a',
+        borderRadius: 19,
+        paddingHorizontal: 10,
+        justifyContent: 'center',
+        overflow: 'hidden',
+    },
+    /* ── Subtle centre glow ── */
     glow: {
-        display: 'none', // Remove the previous pulse animation element if we want just a static glow, or keep it subtle
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0,
+        borderRadius: 19,
+        backgroundColor: 'rgba(0, 180, 255, 0.04)',
     },
-    buttonContent: {
+    innerRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
+        gap: 0,
     },
-    buttonText: {
-        color: '#fff',
-        fontSize: 16,
+    /* ── Logo block — transparent bg, matches the mock ── */
+    logoWrapper: {
+        width: 120,
+        height: 70,
+        alignItems: 'center',
+        justifyContent: 'center',
+        // no background, no border-radius, logo floats freely
+    },
+    logo: {
+        width: 115,
+        height: 65,
+    },
+    /* ── Thin vertical rule between logo and text ── */
+    divider: {
+        width: 0,            // invisible — remove if you want a hairline
+        height: 44,
+        marginRight: 20,
+    },
+    textBlock: {
+        flex: 1,
+        justifyContent: 'center',
+    },
+    buttonTitle: {
+        color: '#ffffff',
+        fontSize: 20,
         fontWeight: '700',
+        letterSpacing: 0.2,
+        marginBottom: 5,
     },
-    badgeText: {
-        color: 'rgba(255,255,255,0.8)',
-        fontSize: 12,
-        marginTop: 2,
+    buttonSubtitle: {
+        color: 'rgba(255,255,255,0.65)',
+        fontSize: 13,
+        fontWeight: '400',
+    },
+    aiWord: {
+        color: 'rgba(255,255,255,0.9)',
+        fontWeight: '700',
     },
 });

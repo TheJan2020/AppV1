@@ -13,6 +13,7 @@ import HeaderV2 from '../components/DashboardV2/HeaderV2';
 import StatusBadges from '../components/DashboardV2/StatusBadges';
 import PersonBadges from '../components/DashboardV2/PersonBadges';
 import ActiveDevicesModal from '../components/DashboardV2/ActiveDevicesModal';
+import LocksModal from '../components/DashboardV2/LocksModal';
 import SettingsView from '../components/DashboardV2/SettingsView';
 import { HAService } from '../services/ha';
 import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
@@ -267,7 +268,17 @@ export default function DashboardV2() {
         const lockPassageUrl = `${baseUrl}api/lock-passage?t=${Date.now()}`;
         fetch(lockPassageUrl, { signal: controller.signal, headers: authHeaders })
             .then(res => { if (!res.ok) return {}; return res.json(); })
-            .then(data => { if (data.configs) setLockPassageConfigs(data.configs); })
+            .then(data => {
+                if (data.configs) {
+                    setLockPassageConfigs(data.configs);
+                    // Build sensor → lock map for socket handler
+                    const sensorMap = {};
+                    Object.entries(data.configs).forEach(([lockId, pc]) => {
+                        if (pc.sensor_entity_id) sensorMap[pc.sensor_entity_id] = lockId;
+                    });
+                    lockSensorMapRef.current = sensorMap;
+                }
+            })
             .catch(() => {});
     };
 
@@ -310,6 +321,7 @@ export default function DashboardV2() {
                 .then(res => res.json())
                 .then(data => {
                     setBadgeConfig(data);
+                    locksArmedRef.current = !!data?.locks_armed;
                 })
                 .catch(err => { if (err.name !== 'AbortError') console.error('[Config] Error loading admin config:', err); });
 
@@ -435,6 +447,15 @@ export default function DashboardV2() {
                     const isMonitored = monitoredEntitiesRef.current.has(entityId);
                     const isIgnored   = ignoredEntitiesRef.current.has(entityId);
 
+                    // ── Lock / garage / lock-sensor notifications ────────────────
+                    // These are handled exclusively by the backend ha-notifier.js,
+                    // which reads locks_armed from config.json and sends push to ALL
+                    // registered devices. The app never fires these locally so that
+                    // arm/disarm set on one device takes effect for every device.
+                    //
+                    // All other domain notifications (lights, climate, sensors, etc.)
+                    // are handled below through the isMonitored / isIgnored path.
+
                     if (isMonitored && !isIgnored &&
                         newVal !== oldVal &&
                         newVal !== 'unavailable' && oldVal !== 'unavailable') {
@@ -444,13 +465,17 @@ export default function DashboardV2() {
                         let notifBody  = `Changed from ${oldVal} to ${newVal}`;
                         let notifCat   = 'default';
 
-                        if (domain === 'lock') {
-                            notifCat   = 'lock';
-                            notifTitle = newVal === 'locked'   ? `${name} Locked 🔒`
-                                       : newVal === 'unlocked' ? `${name} Unlocked 🔓`
-                                       : `${name} → ${newVal}`;
-                            notifBody  = `Lock: ${oldVal} → ${newVal}`;
+                        // ── Lock / garage-cover / lock-sensor — handled by backend only ──
+                        // The backend ha-notifier.js sends push to ALL devices based on
+                        // locks_armed in config.json. Never fire these locally.
+                        const isLockSensorHere = !!lockSensorMapRef.current[entityId];
+                        const isCoverGarage    = domain === 'cover' &&
+                            (attrs.device_class === 'garage');
+                        let skipNotif = false;
 
+                        if (domain === 'lock' || isCoverGarage || isLockSensorHere) {
+                            // backend-only — skip local notification
+                            skipNotif = true;
                         } else if (domain === 'alarm_control_panel') {
                             notifCat = 'security';
                             const labelMap = {
@@ -505,7 +530,9 @@ export default function DashboardV2() {
                             notifBody  = 'Scene activated';
                         }
 
-                        pushNotification(notifTitle, notifBody, notifCat);
+                        if (!skipNotif) {
+                            pushNotification(notifTitle, notifBody, notifCat);
+                        }
                     }
 
                     // Immediately apply entity state update — no batching delay
@@ -623,6 +650,7 @@ export default function DashboardV2() {
     // Active Devices Modal State
     const [modalVisible, setModalVisible] = useState(false);
     const [securityModalVisible, setSecurityModalVisible] = useState(false);
+    const [locksModalVisible, setLocksModalVisible] = useState(false);
 
     const [activeBadgeType, setActiveBadgeType] = useState(null); // 'lights', 'ac', 'doors'
 
@@ -654,6 +682,11 @@ export default function DashboardV2() {
     // Dedup map: `${entity_id}:${state}` → timestamp — suppresses duplicate events
     // within 10 seconds (HA sometimes fires the same event twice in rapid succession)
     const recentNotifsRef = useRef(new Map());
+    // Tracks whether lock-alert arm mode is on — kept as a ref so the HA socket
+    // callback closure always reads the latest value without needing re-registration.
+    const locksArmedRef = useRef(false);
+    // Map of sensor_entity_id → lock_entity_id for fast lookup in socket handler
+    const lockSensorMapRef = useRef({}); // { "binary_sensor.front_door": "lock.front_door" }
 
     // Re-fetch /api/entities and update both refs immediately.
     // Called after the user saves changes in MonitoredEntitiesModal so the
@@ -723,11 +756,32 @@ export default function DashboardV2() {
     const handleBadgePress = useCallback((type) => {
         if (type === 'security') {
             setSecurityModalVisible(true);
+        } else if (type === 'locks') {
+            setLocksModalVisible(true);
         } else {
             setActiveBadgeType(type);
             setModalVisible(true);
         }
     }, []);
+
+    // Save locks_armed to backend config + update local state + ref
+    const handleLockArmToggle = useCallback(async (newArmed) => {
+        const updatedConfig = { ...badgeConfig, locks_armed: newArmed };
+        setBadgeConfig(updatedConfig);
+        locksArmedRef.current = newArmed;
+        const adminUrl = connectionConfig.adminUrl;
+        if (!adminUrl) return;
+        const configUrl = adminUrl.endsWith('/') ? `${adminUrl}api/config` : `${adminUrl}/api/config`;
+        try {
+            await fetch(configUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${connectionConfig.token}` },
+                body: JSON.stringify(updatedConfig),
+            });
+        } catch (e) {
+            console.warn('[LockArm] Failed to save to backend:', e.message);
+        }
+    }, [badgeConfig, connectionConfig]);
 
     // Calculate Counts from Grouped Data (memoized — these are O(n*m) operations)
     const activeLightsGrouped = useMemo(() => getAllActiveDevices('lights'), [getAllActiveDevices]);
@@ -1251,11 +1305,10 @@ export default function DashboardV2() {
         return areaId && activeRoomIds.includes(areaId);
     }), [entities, selectedLockIds, registryEntities, registryDevices, roomsWithCounts]);
 
-    // All shutter/garage covers (for the edit modal)
+    // Garage-only covers for the edit modal (shutters now live in room curtains)
     const allHomeAccessCovers = useMemo(() => {
-        const shutterTypes = ['shutter', 'garage'];
         return coverMappings
-            .filter(m => shutterTypes.includes(m.coverType))
+            .filter(m => m.coverType === 'garage')
             .map(m => ({
                 entity_id: m.entity_id,
                 coverType: m.coverType,
@@ -1263,12 +1316,12 @@ export default function DashboardV2() {
             }));
     }, [coverMappings, entities]);
 
-    // Shutter & garage door covers for home screen (global, not per-room)
+    // Garage door covers for home screen (global, not per-room) — shutters now live inside room curtains
     const homeCovers = useMemo(() => {
-        const shutterTypes = ['shutter', 'garage'];
+        const garageOnly = ['garage'];
         return coverMappings
             .filter(m => {
-                if (!shutterTypes.includes(m.coverType)) return false;
+                if (!garageOnly.includes(m.coverType)) return false;
                 // If selectedCoverIds is configured, filter by it; null = show all
                 if (selectedCoverIds !== null) return selectedCoverIds.includes(m.entity_id);
                 return true;
@@ -1328,6 +1381,20 @@ export default function DashboardV2() {
                 onClearAll={handleClearNotifications}
                 onOpen={refreshNotifications}
             />
+
+            {locksModalVisible && (
+                <LocksModal
+                    visible={locksModalVisible}
+                    locks={entities.filter(e => e.entity_id.startsWith('lock.'))}
+                    lockPassageConfigs={lockPassageConfigs}
+                    entities={entities}
+                    onClose={() => setLocksModalVisible(false)}
+                    isArmed={!!badgeConfig?.locks_armed}
+                    onArmToggle={handleLockArmToggle}
+                    adminUrl={connectionConfig.adminUrl}
+                    haToken={connectionConfig.token}
+                />
+            )}
 
             {modalVisible && (
                 <ActiveDevicesModal
@@ -1404,6 +1471,9 @@ export default function DashboardV2() {
                             power={power}
                             onPress={handleBadgePress}
                             zones={securityZones}
+                            locks={entities.filter(e => e.entity_id.startsWith('lock.'))}
+                            lockPassageConfigs={lockPassageConfigs}
+                            entities={entities}
                         />
                         <View style={styles.divider} />
 
@@ -1581,7 +1651,10 @@ export default function DashboardV2() {
                             selectedCameraNames={badgeConfig?.selected_cameras || []}
                             frigateService={frigateService.current}
                             onCameraPress={handleFrigateCameraPress}
-                            onAllCamerasPress={() => setActiveTab('cameras')}
+                            onAllCamerasPress={() => setActiveTab('cctv')}
+                            adminUrl={connectionConfig.adminUrl}
+                            cardHeight={badgeConfig?.camera_card_height || 174}
+                            onCamerasUpdated={(ids) => setBadgeConfig(prev => ({ ...prev, selected_cameras: ids }))}
                         />
                     </ScrollView>
 

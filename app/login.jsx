@@ -52,6 +52,7 @@ export default function Login() {
     const [isLoggingIn, setIsLoggingIn] = useState(false);
     const [isBiometricSupported, setIsBiometricSupported] = useState(false);
     const [faceIdEnabled, setFaceIdEnabled] = useState(false);
+    const [isReturningUser, setIsReturningUser] = useState(false);
 
     // Profile Management State
     const [showSettings, setShowSettings] = useState(false);
@@ -106,6 +107,10 @@ export default function Login() {
             // Load FaceID setting
             const savedFaceId = await SecureStore.getItemAsync('face_id_enabled');
             if (savedFaceId === 'true') setFaceIdEnabled(true);
+
+            // Check if returning user
+            const hasLoggedInBefore = await SecureStore.getItemAsync('has_logged_in_before');
+            if (hasLoggedInBefore === 'true') setIsReturningUser(true);
 
             // Load Profiles
             const profilesJson = await SecureStore.getItemAsync(SETTINGS_KEY_PROFILES);
@@ -418,6 +423,7 @@ export default function Login() {
             if (isValid) {
                 // Persist session so user doesn't need to log in again
                 await SecureStore.setItemAsync('is_logged_in', 'true');
+                await SecureStore.setItemAsync('has_logged_in_before', 'true');
                 await SecureStore.setItemAsync('logged_in_user', JSON.stringify({
                     name: selectedUser.name,
                     userId: selectedUser.user_id || ''
@@ -671,6 +677,15 @@ export default function Login() {
         >
             <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
                 <View style={styles.container}>
+                    <View style={styles.welcomeBlock}>
+                        <Text style={styles.welcomeText}>
+                            {isReturningUser ? 'Welcome Back 👋' : 'Welcome 👋'}
+                        </Text>
+                        <Text style={styles.welcomeSubText}>
+                            {isReturningUser ? 'Good to see you again' : "Let's get you connected"}
+                        </Text>
+                    </View>
+
                     <ScrollView
                         ref={scrollViewRef}
                         style={{ flex: 1 }}
@@ -680,19 +695,10 @@ export default function Login() {
                     >
                         <View style={styles.header}>
                             <Image
-                                source={require('../assets/login-logo.png')}
+                                source={require('../assets/Light.png')}
                                 style={styles.logo}
                                 resizeMode="contain"
                             />
-                            <TouchableOpacity
-                                style={styles.settingsBtn}
-                                onPress={() => {
-                                    setEditingProfile(null);
-                                    setShowSettings(true);
-                                }}
-                            >
-                                <Settings size={24} color={Colors.textDim} />
-                            </TouchableOpacity>
                         </View>
 
                         <View style={styles.form}>
@@ -720,8 +726,8 @@ export default function Login() {
                                                 {profiles.find(p => p.id === activeProfileId)?.name || 'Unknown Profile'}
                                             </Text>
                                         </View>
-                                        <TouchableOpacity onPress={handleScan} disabled={isScanning}>
-                                            {isScanning ? <ActivityIndicator size="small" color={Colors.primary} /> : <Scan size={20} color={Colors.primary} />}
+                                        <TouchableOpacity onPress={() => { setEditingProfile(null); setShowSettings(true); }}>
+                                            <Settings size={20} color={Colors.primary} />
                                         </TouchableOpacity>
                                     </View>
 
@@ -893,17 +899,30 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         position: 'relative'
     },
-    settingsBtn: {
-        position: 'absolute',
-        right: 0,
-        top: 20,
-        padding: 10
+    welcomeBlock: {
+        width: '100%',
+        alignItems: 'flex-start',
+        marginBottom: 16,
+        marginTop: 50,
     },
     logo: {
         width: 280,
         height: 120,
-        marginBottom: 40,
-        marginTop: 40,
+        marginBottom: 10,
+        marginTop: 0,
+    },
+    welcomeText: {
+        color: '#fff',
+        fontSize: 26,
+        fontWeight: 'bold',
+        textAlign: 'left',
+        marginBottom: 4,
+    },
+    welcomeSubText: {
+        color: Colors.textDim,
+        fontSize: 14,
+        textAlign: 'left',
+        marginBottom: 10,
     },
     form: {
         gap: 20,
@@ -911,8 +930,8 @@ const styles = StyleSheet.create({
     inputContainer: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: Colors.surface,
-        borderRadius: 12,
+        backgroundColor: '#13132A',
+        borderRadius: 30,
         paddingHorizontal: 15,
         height: 60,
     },
@@ -1131,23 +1150,25 @@ const styles = StyleSheet.create({
         fontWeight: '600'
     },
     settingsInput: {
-        backgroundColor: 'rgba(255,255,255,0.08)',
-        borderRadius: 8,
-        padding: 12,
+        backgroundColor: '#13132A',
+        borderRadius: 30,
+        paddingHorizontal: 18,
+        paddingVertical: 14,
         color: '#fff',
         fontSize: 16,
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
-        minHeight: 50
+        borderColor: 'rgba(255,255,255,0.07)',
+        minHeight: 54,
     },
     scanBtn: {
-        width: 50,
+        width: 54,
+        height: 54,
         justifyContent: 'center',
         alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.08)',
-        borderRadius: 8,
+        backgroundColor: '#13132A',
+        borderRadius: 27,
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
+        borderColor: 'rgba(255,255,255,0.07)',
     },
     saveButton: {
         backgroundColor: Colors.primary,

@@ -80,6 +80,6 @@ const styles = StyleSheet.create({
         borderTopLeftRadius: 30,
         borderTopRightRadius: 30,
         overflow: 'hidden',
-        backgroundColor: '#16161e', // Moved bg here to ensure solid behind view
+        backgroundColor: '#09091A', // Rooms modal background (requested)
     }
 });

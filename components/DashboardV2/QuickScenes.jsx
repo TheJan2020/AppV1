@@ -3,7 +3,8 @@ import {
     Modal, FlatList, ActivityIndicator, Alert, TextInput,
     Animated, PanResponder,
 } from 'react-native';
-import { Zap, Moon, Sun, LogOut, Home, Edit2, Check, X, Search } from 'lucide-react-native';
+import { Edit2, Check, X, Search } from 'lucide-react-native';
+import SceneCard from './SceneCard';
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { authFetch } from '../../utils/authFetch';
 import { CF } from '../../utils/typography';
@@ -279,22 +280,11 @@ export default function QuickScenes({ scenes = [], onScenePress, adminUrl, onSce
                 </View>
             ) : (
                 <View style={styles.grid}>
-                    {scenes.map((scene) => {
-                        const Icon = getSceneIcon(scene.label);
-                        return (
-                            <TouchableOpacity
-                                key={scene.id}
-                                style={styles.card}
-                                onPress={() => onScenePress && onScenePress(scene.id)}
-                                activeOpacity={0.75}
-                            >
-                                <View style={styles.iconContainer}>
-                                    <Icon size={26} color="#8947ca" />
-                                </View>
-                                <Text style={styles.label} numberOfLines={1}>{scene.label}</Text>
-                            </TouchableOpacity>
-                        );
-                    })}
+                    {scenes.map((scene) => (
+                        <View key={scene.id} style={{ width: '48.5%', paddingBottom: 6 }}>
+                            <SceneCard id={scene.id} label={scene.label} onPress={onScenePress} />
+                        </View>
+                    ))}
                 </View>
             )}
 

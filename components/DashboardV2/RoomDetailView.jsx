@@ -1,8 +1,9 @@
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ImageBackground } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ImageBackground, Image } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { X, Lightbulb, Fan, ChevronLeft, Droplets, Thermometer, DoorOpen, DoorClosed, Lock, LockOpen, Power, Play, Zap, ChevronDown, ChevronUp } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '../../constants/Colors';
+import { CF } from '../../utils/typography';
 import { useState, useEffect, useRef } from 'react';
 import { GestureHandlerRootView, PanGestureHandler, State } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, withSpring, Easing, cancelAnimation } from 'react-native-reanimated';
@@ -17,6 +18,10 @@ import HACamerasList from './HACamerasList';
 import RoomClimateChart from './RoomClimateChart';
 import ActivatePreferencesButton from './ActivatePreferencesButton';
 import SlideAction from './SlideAction';
+import SceneCard from './SceneCard';
+import LightsGroupCard from './LightsGroupCard';
+import CoversGroupCard from './CoversGroupCard';
+import { LockPill } from './HomeAccess';
 
 // Convert area_id-style names (e.g. "living_room") to proper display names ("Living Room")
 const formatRoomName = (name) => {
@@ -342,6 +347,15 @@ export default function RoomDetailView({
     haToken,
     showPreferenceButton = true
 }) {
+    // Debug: print scripts in dev builds so it's easy to verify which scenes are passed in
+    if (typeof __DEV__ !== 'undefined' && __DEV__) {
+        try {
+            // eslint-disable-next-line no-console
+            console.log('[RoomDetailView] room:', room?.name || room?.area_id, 'scripts:', scripts?.map(s => ({ id: s.entity_id, name: s.displayName })));
+        } catch (e) {
+            // ignore
+        }
+    }
     const cardWidth = columns > 2 ? `${Math.floor(100 / columns) - 2}%` : '48%';
     const [selectedLight, setSelectedLight] = useState(null);
     const [preferences, setPreferences] = useState([]);
@@ -364,12 +378,24 @@ export default function RoomDetailView({
     const mainTemp = tempSensors.length > 0 ? tempSensors[0] : null;
     const mainHumidity = humiditySensors.length > 0 ? humiditySensors[0] : null;
 
+    // Split locks out of the lights array (they arrive merged from roomHelpers)
+    const lockEntities = lights.filter(l => l.entity_id.startsWith('lock.'));
+    const actualLightEntities = lights.filter(l => !l.entity_id.startsWith('lock.'));
+
     const handleUpdate = (entityId, payload) => {
         if (onToggle) onToggle('light', 'turn_on', { entity_id: entityId, ...payload });
     };
 
     const handleBrightness = (entityId, brightness) => {
         if (onToggle) onToggle('light', 'turn_on', { entity_id: entityId, brightness: brightness });
+    };
+
+    const handleColorTemp = (entityId, kelvin) => {
+        if (onToggle) onToggle('light', 'turn_on', { entity_id: entityId, color_temp_kelvin: kelvin });
+    };
+
+    const handleRgb = (entityId, rgb) => {
+        if (onToggle) onToggle('light', 'turn_on', { entity_id: entityId, rgb_color: rgb });
     };
 
     const handleActivatePreferences = async (entities) => {
@@ -455,8 +481,29 @@ export default function RoomDetailView({
                             <X size={24} color={Colors.textDim} />
                         </TouchableOpacity>
                     </View>
+                    {/* Weather / humidity / indoor temp row (compact) + device count + sensors */}
                     <View style={styles.headerStatsRow}>
-                        <Text style={styles.subtitle}>{lights.length + fans.length} Devices available</Text>
+                        {(() => {
+                            const weatherEntity = allEntities?.find(e => e.entity_id && e.entity_id.startsWith('weather.'));
+                            const temp = weatherEntity?.attributes?.temperature ?? '--';
+                            const humidityVal = (() => {
+                                const fromWeather = weatherEntity?.attributes?.humidity;
+                                if (fromWeather != null) return Math.round(fromWeather);
+                                return null;
+                            })();
+                            const indoorSensor = allEntities?.find(e => e.entity_id && (e.entity_id.includes('indoor') || e.entity_id.includes('indoor_temp') || e.entity_id.includes('temperature')));
+                            const indoorVal = (typeof indoorSensor?.state === 'string' && !isNaN(Number(indoorSensor.state))) ? Math.round(Number(indoorSensor.state)) : (mainTemp?.stateObj?.state ? Math.round(Number(mainTemp.stateObj.state)) : null);
+
+                            return (
+                                <>
+                                    <Text style={styles.subtitle}>{temp}°C</Text>
+                                    <Text style={styles.subtitle}>{humidityVal !== null ? `Humidity ${humidityVal}%` : 'Humidity --'}</Text>
+                                    {indoorVal !== null && <Text style={styles.subtitle}>{`Indoor ${indoorVal}°C`}</Text>}
+                                    <Text style={styles.subtitle}>{lights.length + fans.length} Devices available</Text>
+                                </>
+                            );
+                        })()}
+
                         <View style={styles.sensorRow}>
                             {tempSensors.map(s => (
                                 <View key={s.entity_id} style={styles.sensorChip}>
@@ -589,13 +636,7 @@ export default function RoomDetailView({
                     scrollEventThrottle={16}
                 >
 
-                    {showPreferenceButton && (
-                        <ActivatePreferencesButton
-                            roomName={formatRoomName(room.name)}
-                            onActivate={handleActivatePreferences}
-                            onPreferencesLoaded={setPreferences}
-                        />
-                    )}
+                    {/* Preference button is rendered below the scenes to match design */}
 
                     {automations.length > 0 && (
                         <View style={styles.automationSection}>
@@ -649,37 +690,83 @@ export default function RoomDetailView({
                         />
                     )}
 
-                    {scripts.length > 0 && (
+                    {(scripts.length > 0 || lockEntities.length > 0) && (
                         <View>
-                            <Text style={styles.sectionTitle}>Scripts</Text>
-                            <View style={styles.scriptsRow}>
-                                {scripts.map(script => {
-                                    const isRunning = script.stateObj.state === 'on';
-                                    return (
-                                        <TouchableOpacity
-                                            key={script.entity_id}
-                                            style={[styles.scriptChip, isRunning && styles.scriptChipActive]}
-                                            onPress={() => {
-                                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                                if (onToggle) onToggle('script', 'turn_on', { entity_id: script.entity_id });
-                                            }}
-                                        >
-                                            <Play size={14} color={isRunning ? '#fff' : Colors.textDim} />
-                                            <Text style={[styles.scriptChipText, isRunning && styles.scriptChipTextActive]} numberOfLines={1}>
-                                                {script.displayName}
-                                            </Text>
-                                        </TouchableOpacity>
-                                    );
-                                })}
-                            </View>
+                            {/* Render scripts/scenes as the same card used on home QuickScenes. Use the already-filtered `scripts` prop. */}
+                            {scripts.length > 0 && (
+                                <View style={styles.grid}>
+                                    {scripts.map(s => {
+                                        const scene = { id: s.entity_id, label: s.displayName };
+                                        return (
+                                            <View key={scene.id} style={{ width: cardWidth }}>
+                                                <SceneCard id={scene.id} label={scene.label} onPress={(id) => {
+                                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                                    if (onToggle) onToggle('script', 'turn_on', { entity_id: id });
+                                                }} />
+                                            </View>
+                                        );
+                                    })}
+                                </View>
+                            )}
+
+                            {/* ── Lock pills — same drag-knob UI as home dashboard, shown above Apply Preferences ── */}
+                            {lockEntities.length > 0 && (
+                                <View style={[styles.lockPillsRow, scripts.length > 0 && { marginTop: 10 }]}>
+                                    {lockEntities.map(lock => {
+                                        const isUnlocked = lock.stateObj.state === 'unlocked' || lock.stateObj.state === 'open';
+                                        return (
+                                            <View key={lock.entity_id} style={styles.lockPillCell}>
+                                                <LockPill
+                                                    name={lock.displayName || lock.entity_id}
+                                                    isUnlocked={isUnlocked}
+                                                    isLocking={lock.stateObj.state === 'locking'}
+                                                    isUnlocking={lock.stateObj.state === 'unlocking'}
+                                                    isPassage={false}
+                                                    entityState={lock.stateObj.state}
+                                                    focusKey={lock.entity_id}
+                                                    onToggle={() => {
+                                                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                                                        if (onToggle) onToggle('lock', isUnlocked ? 'lock' : 'unlock', { entity_id: lock.entity_id });
+                                                    }}
+                                                />
+                                            </View>
+                                        );
+                                    })}
+                                </View>
+                            )}
+
                             <View style={styles.divider} />
+                            {/* Activate Preferences button styled like the screenshot */}
+                            <View style={styles.prefButtonContainer}>
+                                <ActivatePreferencesButton
+                                    roomName={formatRoomName(room.name)}
+                                    onActivate={handleActivatePreferences}
+                                    onPreferencesLoaded={setPreferences}
+                                    logoSource={require('../../assets/logo_for_prefrences.png')}
+                                />
+                            </View>
+                        </View>
+                    )}
+
+                    {/* No scripts or locks but still show preferences if needed */}
+                    {scripts.length === 0 && lockEntities.length === 0 && (
+                        <View>
+                            <View style={styles.divider} />
+                            <View style={styles.prefButtonContainer}>
+                                <ActivatePreferencesButton
+                                    roomName={formatRoomName(room.name)}
+                                    onActivate={handleActivatePreferences}
+                                    onPreferencesLoaded={setPreferences}
+                                    logoSource={require('../../assets/logo_for_prefrences.png')}
+                                />
+                            </View>
                         </View>
                     )}
 
                     {(() => {
-                        const actualLights = lights.filter(l => !l.entity_id.startsWith('lock.'));
-                        const locks = lights.filter(l => l.entity_id.startsWith('lock.'));
-                        const hasDevices = actualLights.length > 0 || fans.length > 0 || locks.length > 0 || doorSensors.length > 0;
+                        const actualLights = actualLightEntities;
+                        const locks = lockEntities;
+                        const hasDevices = actualLights.length > 0 || fans.length > 0 || doorSensors.length > 0;
 
                         if (!hasDevices) {
                             return (
@@ -692,75 +779,42 @@ export default function RoomDetailView({
 
                         return (
                             <>
-                                <View style={styles.grid}>
-                                    {actualLights.map((light) => (
-                                        <View key={light.entity_id} style={{ width: cardWidth }}>
-                                            <LightCard
-                                                light={light}
-                                                needsChange={checkNeedsChange(light.entity_id)}
-                                                mapping={lightMappings.find(m => m.entity_id === light.entity_id)}
-                                                adminUrl={adminUrl}
-                                                onToggle={(id, state) => {
-                                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                                    if (onToggle) onToggle('light', 'toggle', { entity_id: id });
-                                                }}
-                                                onBrightnessChange={handleBrightness}
-                                                onLongPress={(l) => {
-                                                    const m = lightMappings.find(m => m.entity_id === l.entity_id);
-                                                    setSelectedLight({ ...l, colorCapability: m?.colorCapability || null });
-                                                }}
-                                            />
-                                        </View>
-                                    ))}
-                                    {fans.map((fan) => (
-                                        <View key={fan.entity_id} style={{ width: cardWidth }}>
-                                            <FanCard
-                                                fan={fan}
-                                                needsChange={checkNeedsChange(fan.entity_id)}
-                                                onToggle={(id, state) => {
-                                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                                    if (onToggle) onToggle('fan', 'toggle', { entity_id: id });
-                                                }}
-                                            />
-                                        </View>
-                                    ))}
-                                </View>
+                                {/* ── Lights group card (dots + slider + expandable individual cards) ── */}
+                                {actualLights.length > 0 && (
+                                    <LightsGroupCard
+                                        lights={actualLights}
+                                        lightMappings={lightMappings}
+                                        adminUrl={adminUrl}
+                                        roomName={room.name}
+                                        onToggle={(id, state) => {
+                                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                            if (onToggle) onToggle('light', 'toggle', { entity_id: id });
+                                        }}
+                                        onBrightnessChange={handleBrightness}
+                                        onColorTempChange={handleColorTemp}
+                                        onRgbChange={handleRgb}
+                                        onLongPress={(l) => {
+                                            const m = lightMappings.find(m => m.entity_id === l.entity_id);
+                                            setSelectedLight({ ...l, colorCapability: m?.colorCapability || null });
+                                        }}
+                                    />
+                                )}
 
-                                {locks.length > 0 && (
-                                    <View>
-                                        <View style={styles.divider} />
-                                        <View style={styles.lockSliderRow}>
-                                            {locks.map(lock => {
-                                                const isUnlocked = lock.stateObj.state === 'unlocked' || lock.stateObj.state === 'open';
-                                                const name = lock.displayName || lock.entity_id;
-
-                                                return (
-                                                    <View key={lock.entity_id} style={styles.lockSliderContainer}>
-                                                        {isUnlocked ? (
-                                                            <TouchableOpacity
-                                                                style={[styles.lockStatusCard, { backgroundColor: '#FF7043' }]}
-                                                                onPress={() => {
-                                                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                                                                    if (onToggle) onToggle('lock', 'lock', { entity_id: lock.entity_id });
-                                                                }}
-                                                            >
-                                                                <LockOpen size={24} color="#fff" />
-                                                                <Text style={styles.lockStatusText}>Unlocked</Text>
-                                                            </TouchableOpacity>
-                                                        ) : (
-                                                            <SlideAction
-                                                                label={`Unlock ${name}`}
-                                                                icon={LockOpen}
-                                                                color="#8947ca"
-                                                                onSlide={() => {
-                                                                    if (onToggle) onToggle('lock', 'unlock', { entity_id: lock.entity_id });
-                                                                }}
-                                                            />
-                                                        )}
-                                                    </View>
-                                                );
-                                            })}
-                                        </View>
+                                {/* ── Fans (keep existing cards) ── */}
+                                {fans.length > 0 && (
+                                    <View style={styles.grid}>
+                                        {fans.map((fan) => (
+                                            <View key={fan.entity_id} style={{ width: cardWidth }}>
+                                                <FanCard
+                                                    fan={fan}
+                                                    needsChange={checkNeedsChange(fan.entity_id)}
+                                                    onToggle={(id, state) => {
+                                                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                                        if (onToggle) onToggle('fan', 'toggle', { entity_id: id });
+                                                    }}
+                                                />
+                                            </View>
+                                        ))}
                                     </View>
                                 )}
                             </>
@@ -770,38 +824,69 @@ export default function RoomDetailView({
                     {cameras.length > 0 && (
                         <View>
                             <View style={styles.divider} />
-                            <HACamerasList
-                                cameras={cameras.map(c => c.stateObj)}
-                                allEntities={allEntities}
-                                haUrl={haUrl}
-                                haToken={haToken}
-                                onCameraPress={() => { }}
-                            />
+                            <Text style={styles.sectionTitle}>Cameras</Text>
+                            <View style={styles.grid}>
+                                {cameras.map(cam => {
+                                    const stateObj = cam.stateObj || {};
+                                    const attrs = stateObj.attributes || {};
+                                    const name = attrs.friendly_name || cam.displayName || cam.entity_id;
+                                    const pictureUrl = attrs.entity_picture
+                                        ? `${(haUrl || '').replace(/\/$/, '')}${attrs.entity_picture}`
+                                        : null;
+                                    const isUnavailable = stateObj.state === 'unavailable';
+                                    const cameraName = cam.entity_id.replace('camera.', '');
+                                    const motionEntityId = `binary_sensor.${cameraName}`;
+                                    const motionSensor = allEntities?.find(e => e.entity_id === motionEntityId);
+                                    const hasMotion = motionSensor?.state === 'on';
+
+                                    return (
+                                        <View key={cam.entity_id} style={{ width: cardWidth }}>
+                                            <View style={styles.cameraCard}>
+                                                {pictureUrl && !isUnavailable ? (
+                                                    <Image
+                                                        source={{ uri: pictureUrl, headers: { Authorization: `Bearer ${haToken}` } }}
+                                                        style={styles.cameraThumb}
+                                                        resizeMode="cover"
+                                                    />
+                                                ) : (
+                                                    <View style={[styles.cameraThumb, styles.cameraThumbPlaceholder]}>
+                                                        <Text style={styles.cameraOffText}>{isUnavailable ? 'Unavailable' : 'No feed'}</Text>
+                                                    </View>
+                                                )}
+                                                {/* Gradient overlay */}
+                                                <View style={styles.cameraGradientOverlay} />
+                                                {/* LIVE badge */}
+                                                {!isUnavailable && (
+                                                    <View style={styles.cameraLiveBadge}>
+                                                        <Text style={styles.cameraLiveText}>LIVE</Text>
+                                                    </View>
+                                                )}
+                                                {/* MOTION badge */}
+                                                {hasMotion && (
+                                                    <View style={styles.cameraMotionBadge}>
+                                                        <Text style={styles.cameraMotionText}>MOTION</Text>
+                                                    </View>
+                                                )}
+                                                {/* Name at bottom */}
+                                                <Text style={styles.cameraCardName} numberOfLines={1}>{name}</Text>
+                                            </View>
+                                        </View>
+                                    );
+                                })}
+                            </View>
                         </View>
                     )}
 
                     {covers.length > 0 && (
                         <View>
                             <View style={styles.divider} />
-                            <View style={styles.grid}>
-                                {covers.map(cover => {
-                                    // Use admin-configured linkedSensorId, fallback to naming convention
-                                    const sensorId = cover.linkedSensorId || cover.entity_id.replace('cover.', 'sensor.');
-                                    const sensor = allEntities.find(e => e.entity_id === sensorId);
-                                    return (
-                                        <View key={cover.entity_id} style={{ width: cardWidth }}>
-                                            <CoverCard
-                                                cover={cover}
-                                                sensor={sensor}
-                                                needsChange={checkNeedsChange(cover.entity_id)}
-                                                onUpdate={(id, domain, service, data) => {
-                                                    if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
-                                                }}
-                                            />
-                                        </View>
-                                    );
-                                })}
-                            </View>
+                            <CoversGroupCard
+                                covers={covers}
+                                allEntities={allEntities}
+                                onUpdate={(id, domain, service, data) => {
+                                    if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
+                                }}
+                            />
                         </View>
                     )}
 
@@ -1183,6 +1268,74 @@ const styles = StyleSheet.create({
         fontWeight: 'bold',
         marginBottom: 12
     },
+    // ── Camera cards ──
+    cameraCard: {
+        borderRadius: 14,
+        overflow: 'hidden',
+        backgroundColor: '#1a1a2e',
+        aspectRatio: 16 / 9,
+        position: 'relative',
+        marginBottom: 4,
+    },
+    cameraThumb: {
+        width: '100%',
+        height: '100%',
+    },
+    cameraThumbPlaceholder: {
+        backgroundColor: '#0f0f1a',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    cameraOffText: {
+        color: 'rgba(255,255,255,0.3)',
+        fontSize: 12,
+    },
+    cameraGradientOverlay: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'transparent',
+    },
+    cameraLiveBadge: {
+        position: 'absolute',
+        top: 7,
+        right: 7,
+        backgroundColor: 'rgba(244,67,54,0.85)',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 5,
+    },
+    cameraLiveText: {
+        color: '#fff',
+        fontSize: 9,
+        fontWeight: '700',
+        letterSpacing: 0.5,
+    },
+    cameraMotionBadge: {
+        position: 'absolute',
+        top: 7,
+        left: 7,
+        backgroundColor: 'rgba(255,193,7,0.9)',
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+        borderRadius: 5,
+    },
+    cameraMotionText: {
+        color: '#000',
+        fontSize: 9,
+        fontWeight: '700',
+        letterSpacing: 0.5,
+    },
+    cameraCardName: {
+        position: 'absolute',
+        bottom: 7,
+        left: 9,
+        right: 9,
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '600',
+        textShadowColor: 'rgba(0,0,0,0.8)',
+        textShadowOffset: { width: 0, height: 1 },
+        textShadowRadius: 3,
+    },
     lockSliderRow: {
         flexDirection: 'row',
         flexWrap: 'wrap',
@@ -1210,6 +1363,16 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontWeight: 'bold',
         fontSize: 16,
+    },
+    // ── LockPill row (HomeAccess-style pills below scenes) ──
+    lockPillsRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 10,
+        marginBottom: 4,
+    },
+    lockPillCell: {
+        width: '48%',
     },
     // ── Automations ──
     automationSection: {
@@ -1310,6 +1473,43 @@ const styles = StyleSheet.create({
     scriptChipTextActive: {
         color: '#fff',
     },
+    // QuickScenes exact styles copied from QuickScenes.jsx modal.row definitions
+    row: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: 'rgba(255,255,255,0.03)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.06)',
+        borderRadius: 14,
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        marginBottom: 8,
+    },
+    rowSelected: {
+        backgroundColor: 'rgba(137,71,202,0.08)',
+        borderColor: 'rgba(137,71,202,0.35)',
+    },
+    rowLabel: {
+        flex: 1,
+        color: '#ededf5',
+        fontSize: 14,
+        fontFamily: CF.medium,
+        letterSpacing: 0.1,
+    },
+    checkCircle: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        borderWidth: 1.5,
+        borderColor: 'rgba(255,255,255,0.2)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'transparent',
+    },
+    checkCircleOn: {
+        backgroundColor: '#8947ca',
+        borderColor: '#8947ca',
+    },
     // ── Media Overlays ──
     fullOverlay: {
         ...StyleSheet.absoluteFillObject,
@@ -1398,5 +1598,11 @@ const styles = StyleSheet.create({
         bottom: 0,
         right: 0,
         width: '50%',
+    },
+    prefButtonContainer: {
+        alignItems: 'stretch',
+        marginTop: 10,
+        marginBottom: 20,
+        width: '100%',
     },
 });

@@ -131,7 +131,7 @@ function ShutterIcon({ size = 18 }) {
 // ─────────────────────────────────────────────────────────────────────────────
 //  LockPill — binary drag + locking/unlocking transit state
 // ─────────────────────────────────────────────────────────────────────────────
-function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, entityState, onToggle, focusKey }) {
+export function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, entityState, onToggle, focusKey }) {
     const inTransit  = !!(isLocking || isUnlocking);
     const disabled   = isPassage; // passage mode — lock is held open, cannot be locked
     const [pillW, setPillW] = useState(0);
@@ -214,11 +214,9 @@ function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, entityS
     }));
 
     const transitColor = isLocking ? C_PURPLE : '#FF3B3B';
-    const pillBg       = isPassage
-        ? 'rgba(255,160,0,0.09)'
-        : '#13132A';
+    const pillBg       = '#13132A';
     const border       = isPassage
-        ? 'rgba(255,160,0,0.55)'
+        ? C_BORDER
         : inTransit
             ? (isLocking ? 'rgba(137,71,202,0.60)' : 'rgba(255,59,59,0.70)')
             : C_BORDER;
@@ -236,15 +234,23 @@ function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, entityS
                 <View style={[styles.pillTrack, { borderColor: border }]} />
 
                 {isPassage ? (
-                    /* ── Passage mode — held open, cannot lock ── */
-                    <View style={styles.passageRow} pointerEvents="none">
-                        <View style={styles.passageDot} />
-                        <View style={{ flex: 1, paddingHorizontal: 8 }}>
+                    /* ── Passage mode — unlocked style, disabled, with badge ── */
+                    <>
+                        <Animated.View style={[styles.pillLabelWrap, { paddingLeft: 14, paddingRight: KNOB + 8 }]} pointerEvents="none">
                             <Text style={styles.pillLabelName} numberOfLines={1}>{name}</Text>
-                            <Text style={styles.passageLabel}>Passage mode</Text>
-                        </View>
-                        <LockOpenIcon size={20} color={C_AMBER} />
-                    </View>
+                            <View style={styles.passageBadge}>
+                                <View style={styles.passageDot} />
+                                <Text style={styles.passageLabel}>Passage mode</Text>
+                            </View>
+                        </Animated.View>
+                        <Animated.View
+                            style={[styles.knob, { transform: [{ translateX: pillW > 0 ? pillW - KNOB : 0 }] }]}
+                            pointerEvents="none"
+                        >
+                            <View style={[StyleSheet.absoluteFill, { borderRadius: KNOB / 2, borderWidth: 2, borderColor: C_PURPLE, backgroundColor: 'transparent' }]} />
+                            <LockOpenIcon size={26} color={C_PURPLE} />
+                        </Animated.View>
+                    </>
                 ) : inTransit ? (
                     <Animated.View style={[styles.garageTransitCenter, transitLabelStyle]} pointerEvents="none">
                         <Text style={[styles.pillLabelName, { color: transitColor, fontWeight: '700', letterSpacing: 0.3 }]}>{transitLabel}</Text>
@@ -556,7 +562,6 @@ function EditModal({
     const [localLocks,  setLocalLocks]  = useState([]);  // string[]
     const [localCovers, setLocalCovers] = useState([]);  // string[]
     const [garages,     setGarages]     = useState([]);
-    const [shutters,    setShutters]    = useState([]);
     const [loading,     setLoading]     = useState(false);
 
     // Drag-to-dismiss + slide-in animation
@@ -611,10 +616,9 @@ function EditModal({
                 .then(r => { if (!r.ok) throw new Error('home-access'); return r.json(); }),
         ])
             .then(([coversData, haData]) => {
-                // Build garage / shutter lists from DB (coverType set in admin Covers page)
+                // Build garage list from DB (coverType set in admin Covers page)
                 const all = coversData.success ? coversData.covers : [];
-                setGarages( all.filter(c => c.coverType === 'garage'));
-                setShutters(all.filter(c => c.coverType === 'shutter'));
+                setGarages(all.filter(c => c.coverType === 'garage'));
 
                 // Seed lock selection
                 const savedLocks = haData.success ? haData.locks : null;
@@ -624,10 +628,10 @@ function EditModal({
                     setLocalLocks(savedLocks);
                 }
 
-                // Seed cover selection
+                // Seed cover selection (garage only)
                 const savedCovers = haData.success ? haData.covers : null;
                 const allCoverIds = all
-                    .filter(c => c.coverType === 'garage' || c.coverType === 'shutter')
+                    .filter(c => c.coverType === 'garage')
                     .map(c => c.entity_id);
                 if (savedCovers === null) {
                     setLocalCovers(allCoverIds);
@@ -664,7 +668,7 @@ function EditModal({
         onClose();
     };
 
-    const isEmpty = allLockEntities.length === 0 && garages.length === 0 && shutters.length === 0;
+    const isEmpty = allLockEntities.length === 0 && garages.length === 0;
 
     return (
         <Modal
@@ -719,22 +723,6 @@ function EditModal({
                                 <View style={mStyles.section}>
                                     <SectionHeader label="GARAGE" icon={DoorOpen} color={C_ORANGE} />
                                     {garages.map(cover => (
-                                        <EntityRow
-                                            key={cover.entity_id}
-                                            entity_id={cover.entity_id}
-                                            name={getName(cover.entity_id)}
-                                            isSelected={localCovers.includes(cover.entity_id)}
-                                            onToggle={toggleCover}
-                                        />
-                                    ))}
-                                </View>
-                            )}
-
-                            {/* ── Shutters ── */}
-                            {shutters.length > 0 && (
-                                <View style={mStyles.section}>
-                                    <SectionHeader label="SHUTTERS" icon={Blinds} color="#9199BA" />
-                                    {shutters.map(cover => (
                                         <EntityRow
                                             key={cover.entity_id}
                                             entity_id={cover.entity_id}
@@ -939,7 +927,6 @@ export default function HomeAccess({
     onConfigSaved,
 }) {
     const garages  = covers.filter(c => c.coverType === 'garage');
-    const shutters = covers.filter(c => c.coverType === 'shutter');
 
     const halfItems = [
         ...locks.map(l => ({ kind: 'lock',   data: l })),
@@ -962,7 +949,7 @@ export default function HomeAccess({
         prevActiveRef.current = isHomeActive;
     }, [isHomeActive]);
 
-    if (halfItems.length === 0 && shutters.length === 0) return null;
+    if (halfItems.length === 0) return null;
 
     return (
         <View style={styles.container}>
@@ -1048,21 +1035,6 @@ export default function HomeAccess({
                         </View>
                     ))}
                 </View>
-
-                {/* Shutter full-width rows */}
-                {shutters.map(shutter => (
-                    <ShutterPill
-                        key={`${shutter.entity_id}-${visibleKey}`}
-                        name={shutter.name || 'Shutter'}
-                        isOpen={shutter.isOpen}
-                        isOpening={shutter.isOpening}
-                        isClosing={shutter.isClosing}
-                        onControl={(action) =>
-                            onControlCover &&
-                            onControlCover(shutter.entity_id, action)
-                        }
-                    />
-                ))}
             </View>
         </View>
     );
@@ -1175,26 +1147,24 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         zIndex: 20,
     },
-    passageRow: {
-        ...StyleSheet.absoluteFillObject,
+    passageBadge: {
         flexDirection: 'row',
         alignItems: 'center',
-        paddingHorizontal: 14,
+        marginTop: 3,
+        gap: 4,
     },
     passageDot: {
-        width: 8,
-        height: 8,
-        borderRadius: 4,
-        backgroundColor: C_AMBER,
-        marginRight: 2,
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: C_PURPLE,
     },
     passageLabel: {
-        color: C_AMBER,
+        color: C_PURPLE,
         fontSize: 10,
         fontFamily: CF.semibold,
         letterSpacing: 0.3,
-        marginTop: 1,
-        opacity: 0.85,
+        opacity: 0.9,
     },
 
     // ── Garage transit UI ────────────────────────────────────────────────────

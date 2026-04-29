@@ -3,54 +3,61 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { ChevronRight } from 'lucide-react-native';
 
 /**
- * SecurityZoneStrip
+ * StatusBadges
  *
  * Shows a pill-shaped row:
- *   ●  ●  ●   Security · N zones armed   >
+ *   ●  ●  ●   Locks · N unlocked   >
  *
- * Dots represent named zones; active zones are cyan/teal, inactive are dim.
- * Tapping opens the SecurityControlModal (via onPress('security')).
+ * Dots represent individual lock entities from Home Assistant.
+ * A dot is lit (orange) when the lock is unlocked, dim when locked.
+ * Tapping navigates to the Home Access section (via onPress('locks')).
  */
-function StatusBadges({ securityState, lightsOn, acOn, doorsOpen, power, onPress, zones = [] }) {
+function StatusBadges({ securityState, lightsOn, acOn, doorsOpen, power, onPress, zones = [], locks = [], lockPassageConfigs = {}, entities = [] }) {
 
-    // Build dot indicators.
-    // Each zone: { name, armed: bool }
-    // If no zones provided, fall back to deriving count from securityState.
-    const resolvedZones = zones.length > 0 ? zones : buildFallbackZones(securityState);
+    // Build a fast entity state lookup for sensors
+    const entityStateMap = {};
+    entities.forEach(e => { entityStateMap[e.entity_id] = e; });
 
-    const armedCount = resolvedZones.filter(z => z.armed).length;
+    // Build dot indicators. Dot is lit if the lock is unlocked OR its linked sensor is on.
+    // Both conditions are checked — either one triggers the alert dot.
+    const lockDots = locks.length > 0
+        ? locks.slice(0, 6).map(l => {
+            const sensorEntityId = lockPassageConfigs[l.entity_id]?.sensor_entity_id;
+            const sensorEntity   = sensorEntityId ? entityStateMap[sensorEntityId] : null;
+            const lockUnlocked   = l.state === 'unlocked' || l.state === 'open';
+            const sensorOn       = sensorEntity?.state === 'on';
+            // Lit if lock is unlocked OR sensor is triggered (either condition)
+            const lit = lockUnlocked || sensorOn;
+            return { name: l.attributes?.friendly_name || l.entity_id, unlocked: lit };
+          })
+        : [
+            { name: 'Lock 1', unlocked: false },
+            { name: 'Lock 2', unlocked: false },
+            { name: 'Lock 3', unlocked: false },
+            { name: 'Lock 4', unlocked: false },
+          ];
 
-    const getStatusLabel = () => {
-        if (!securityState || securityState === 'Unknown') return 'Security';
-        if (securityState === 'disarmed') return 'Disarmed';
-        if (securityState === 'triggered') return '🚨 Triggered';
-        if (securityState === 'armed_away') return 'Armed Away';
-        if (securityState === 'armed_home') return 'Armed Home';
-        if (securityState === 'armed_night') return 'Armed Night';
-        if (securityState === 'arming') return 'Arming…';
-        return 'Security';
-    };
+    const unlockedCount = lockDots.filter(l => l.unlocked).length;
+    const hasUnlocked = unlockedCount > 0;
 
-    const isArmed = securityState && securityState !== 'disarmed' && securityState !== 'Unknown';
-
-    const subLabel = armedCount > 0
-        ? `${armedCount} zone${armedCount !== 1 ? 's' : ''} armed`
-        : 'All zones disarmed';
+    const subLabel = hasUnlocked
+        ? `${unlockedCount} unlocked`
+        : 'All locked';
 
     return (
         <TouchableOpacity
             style={styles.pill}
-            onPress={() => onPress && onPress('security')}
+            onPress={() => onPress && onPress('locks')}
             activeOpacity={0.75}
         >
-            {/* Zone dots — show up to 5 */}
+            {/* Lock dots — show up to 6 */}
             <View style={styles.dotsRow}>
-                {resolvedZones.slice(0, 5).map((zone, i) => (
+                {lockDots.map((lock, i) => (
                     <View
                         key={i}
                         style={[
                             styles.dot,
-                            zone.armed ? styles.dotArmed : styles.dotDisarmed,
+                            lock.unlocked ? styles.dotUnlocked : styles.dotLocked,
                         ]}
                     />
                 ))}
@@ -58,8 +65,8 @@ function StatusBadges({ securityState, lightsOn, acOn, doorsOpen, power, onPress
 
             {/* Label */}
             <Text style={styles.label}>
-                <Text style={[styles.labelBold, isArmed && styles.labelArmed]}>
-                    {getStatusLabel()}
+                <Text style={[styles.labelBold, hasUnlocked && styles.labelUnlocked]}>
+                    Locks
                 </Text>
                 <Text style={styles.labelSep}>{' · '}</Text>
                 <Text style={styles.labelSub}>{subLabel}</Text>
@@ -69,21 +76,6 @@ function StatusBadges({ securityState, lightsOn, acOn, doorsOpen, power, onPress
             <ChevronRight size={16} color="rgba(237,237,245,0.35)" style={styles.chevron} />
         </TouchableOpacity>
     );
-}
-
-/**
- * When no explicit zone list is passed, synthesise a minimal set based
- * on the alarm_control_panel state so the dots still look reasonable.
- */
-function buildFallbackZones(securityState) {
-    const armed = securityState && securityState !== 'disarmed' && securityState !== 'Unknown';
-    // Return 4 fake zones; if armed, mark first 3 as armed
-    return [
-        { name: 'Zone 1', armed: armed },
-        { name: 'Zone 2', armed: armed },
-        { name: 'Zone 3', armed: armed },
-        { name: 'Zone 4', armed: false },
-    ];
 }
 
 const styles = StyleSheet.create({
@@ -110,10 +102,10 @@ const styles = StyleSheet.create({
         height: 8,
         borderRadius: 4,
     },
-    dotArmed: {
-        backgroundColor: '#26C6DA', // cyan-teal — matches screenshot
+    dotUnlocked: {
+        backgroundColor: '#26C6DA', // cyan-teal — unlocked
     },
-    dotDisarmed: {
+    dotLocked: {
         backgroundColor: 'rgba(237,237,245,0.18)',
     },
     label: {
@@ -124,8 +116,8 @@ const styles = StyleSheet.create({
         color: 'rgba(237,237,245,0.9)',
         fontWeight: '600',
     },
-    labelArmed: {
-        color: '#ededf5',
+    labelUnlocked: {
+        color: '#26C6DA',
     },
     labelSep: {
         color: 'rgba(237,237,245,0.3)',

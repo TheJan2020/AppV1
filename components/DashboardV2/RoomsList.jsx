@@ -129,12 +129,16 @@ function RoomsList({
                     </View>
                 )}
 
-                <View style={[styles.textContainer, { flexDirection: 'row', alignItems: 'center' }]}>
+                <LinearGradient
+                    colors={['transparent', 'rgba(0,0,0,0.90)']}
+                    locations={[0, 1]}
+                    style={styles.textContainer}
+                >
                     <Text style={styles.roomName} numberOfLines={1}>{displayName}</Text>
                     {room.hasPresenceSensor && (
                         <Satellite size={14} color="#4cd137" style={{ marginLeft: 6 }} />
                     )}
-                </View>
+                </LinearGradient>
 
                 {/* Left Status - Sensors */}
                 <View style={styles.leftStatusRow}>
@@ -239,8 +243,8 @@ const styles = StyleSheet.create({
         paddingRight: 20,
     },
     card: {
-        width: 174,
-        height: 198,
+        width: 145,
+        height: 150,
         alignSelf: 'flex-start',
         borderRadius: 16,
         overflow: 'hidden',
@@ -274,18 +278,18 @@ const styles = StyleSheet.create({
         left: 0,
         right: 0,
         bottom: 0,
-        height: '70%',
+        height: '45%',
     },
     textContainer: {
         position: 'absolute',
         bottom: 0,
         left: 0,
         right: 0,
-        height: 50,
-        backgroundColor: 'rgba(0,0,0,0.55)',
+        height: 70,
         flexDirection: 'row',
-        alignItems: 'center',
+        alignItems: 'flex-end',
         paddingHorizontal: 10,
+        paddingBottom: 10,
     },
     roomName: {
         color: 'white',
