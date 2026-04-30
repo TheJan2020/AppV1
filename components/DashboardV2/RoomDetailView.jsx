@@ -635,11 +635,275 @@ export default function RoomDetailView({
                     contentContainerStyle={styles.content}
                     scrollEventThrottle={16}
                 >
+                    {/* ── 1. Apply Preferences — always at the top ── */}
+                    <View style={styles.prefButtonContainer}>
+                        <ActivatePreferencesButton
+                            roomName={formatRoomName(room.name)}
+                            onActivate={handleActivatePreferences}
+                            onPreferencesLoaded={setPreferences}
+                            logoSource={require('../../assets/logo_for_prefrences.png')}
+                        />
+                    </View>
 
-                    {/* Preference button is rendered below the scenes to match design */}
+                    {/* ── 2. Scenes ── */}
+                    {scripts.length > 0 && (
+                        <View>
+                            <View style={styles.divider} />
+                            <Text style={styles.roomSectionHeading}>SCENES</Text>
+                            <View style={styles.grid}>
+                                {scripts.map(s => {
+                                    const scene = { id: s.entity_id, label: s.displayName };
+                                    return (
+                                        <View key={scene.id} style={{ width: cardWidth }}>
+                                            <SceneCard id={scene.id} label={scene.label} onPress={(id) => {
+                                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                                if (onToggle) onToggle('script', 'turn_on', { entity_id: id });
+                                            }} />
+                                        </View>
+                                    );
+                                })}
+                            </View>
+                        </View>
+                    )}
 
+                    {/* ── 3. Home Access (locks) ── */}
+                    {lockEntities.length > 0 && (
+                        <View>
+                            <View style={styles.divider} />
+                            <Text style={styles.roomSectionHeading}>HOME ACCESS</Text>
+                            <View style={styles.lockPillsRow}>
+                                {lockEntities.map(lock => {
+                                    const isUnlocked = lock.stateObj.state === 'unlocked' || lock.stateObj.state === 'open';
+                                    return (
+                                        <View key={lock.entity_id} style={styles.lockPillCell}>
+                                            <LockPill
+                                                name={lock.displayName || lock.entity_id}
+                                                isUnlocked={isUnlocked}
+                                                isLocking={lock.stateObj.state === 'locking'}
+                                                isUnlocking={lock.stateObj.state === 'unlocking'}
+                                                isPassage={false}
+                                                entityState={lock.stateObj.state}
+                                                focusKey={lock.entity_id}
+                                                onToggle={() => {
+                                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                                                    if (onToggle) onToggle('lock', isUnlocked ? 'lock' : 'unlock', { entity_id: lock.entity_id });
+                                                }}
+                                            />
+                                        </View>
+                                    );
+                                })}
+                            </View>
+                        </View>
+                    )}
+
+                    <View style={styles.divider} />
+
+                    {/* ── 4. Climate chart ── */}
+                    {(mainTemp || mainHumidity) && (
+                        <RoomClimateChart
+                            tempEntityId={mainTemp?.entity_id}
+                            humidityEntityId={mainHumidity?.entity_id}
+                            adminUrl={adminUrl}
+                        />
+                    )}
+
+                    {/* ── 3. Lights + Fans ── */}
+                    {(() => {
+                        const actualLights = actualLightEntities;
+                        const hasDevices = actualLights.length > 0 || fans.length > 0;
+                        if (!hasDevices) return (
+                            <View style={styles.emptyState}>
+                                <Lightbulb size={40} color={Colors.textDim} />
+                                <Text style={styles.emptyText}>No devices found in this room.</Text>
+                            </View>
+                        );
+                        return (
+                            <>
+                                {actualLights.length > 0 && (
+                                    <LightsGroupCard
+                                        lights={actualLights}
+                                        lightMappings={lightMappings}
+                                        adminUrl={adminUrl}
+                                        roomName={room.name}
+                                        onToggle={(id) => {
+                                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                            if (onToggle) onToggle('light', 'toggle', { entity_id: id });
+                                        }}
+                                        onBrightnessChange={handleBrightness}
+                                        onColorTempChange={handleColorTemp}
+                                        onRgbChange={handleRgb}
+                                        onLongPress={(l) => {
+                                            const m = lightMappings.find(m => m.entity_id === l.entity_id);
+                                            setSelectedLight({ ...l, colorCapability: m?.colorCapability || null });
+                                        }}
+                                    />
+                                )}
+                                {fans.length > 0 && (
+                                    <View style={styles.grid}>
+                                        {fans.map((fan) => (
+                                            <View key={fan.entity_id} style={{ width: cardWidth }}>
+                                                <FanCard
+                                                    fan={fan}
+                                                    needsChange={checkNeedsChange(fan.entity_id)}
+                                                    onToggle={(id) => {
+                                                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                                        if (onToggle) onToggle('fan', 'toggle', { entity_id: id });
+                                                    }}
+                                                />
+                                            </View>
+                                        ))}
+                                    </View>
+                                )}
+                            </>
+                        );
+                    })()}
+
+                    {/* ── 4. Cameras ── */}
+                    {cameras.length > 0 && (
+                        <View>
+                            <View style={styles.divider} />
+                            <Text style={styles.roomSectionHeading}>CAMERAS</Text>
+                            <View style={styles.grid}>
+                                {cameras.map(cam => {
+                                    const stateObj = cam.stateObj || {};
+                                    const attrs = stateObj.attributes || {};
+                                    const name = attrs.friendly_name || cam.displayName || cam.entity_id;
+                                    const pictureUrl = attrs.entity_picture
+                                        ? `${(haUrl || '').replace(/\/$/, '')}${attrs.entity_picture}`
+                                        : null;
+                                    const isUnavailable = stateObj.state === 'unavailable';
+                                    const cameraName = cam.entity_id.replace('camera.', '');
+                                    const motionEntityId = `binary_sensor.${cameraName}`;
+                                    const motionSensor = allEntities?.find(e => e.entity_id === motionEntityId);
+                                    const hasMotion = motionSensor?.state === 'on';
+                                    return (
+                                        <View key={cam.entity_id} style={{ width: cardWidth }}>
+                                            <View style={styles.cameraCard}>
+                                                {pictureUrl && !isUnavailable ? (
+                                                    <Image
+                                                        source={{ uri: pictureUrl, headers: { Authorization: `Bearer ${haToken}` } }}
+                                                        style={styles.cameraThumb}
+                                                        resizeMode="cover"
+                                                    />
+                                                ) : (
+                                                    <View style={[styles.cameraThumb, styles.cameraThumbPlaceholder]}>
+                                                        <Text style={styles.cameraOffText}>{isUnavailable ? 'Unavailable' : 'No feed'}</Text>
+                                                    </View>
+                                                )}
+                                                <View style={styles.cameraGradientOverlay} />
+                                                {!isUnavailable && (
+                                                    <View style={styles.cameraLiveBadge}>
+                                                        <Text style={styles.cameraLiveText}>LIVE</Text>
+                                                    </View>
+                                                )}
+                                                {hasMotion && (
+                                                    <View style={styles.cameraMotionBadge}>
+                                                        <Text style={styles.cameraMotionText}>MOTION</Text>
+                                                    </View>
+                                                )}
+                                                <Text style={styles.cameraCardName} numberOfLines={1}>{name}</Text>
+                                            </View>
+                                        </View>
+                                    );
+                                })}
+                            </View>
+                        </View>
+                    )}
+
+                    {/* ── 5. Covers ── */}
+                    {covers.length > 0 && (
+                        <View>
+                            <View style={styles.divider} />
+                            <CoversGroupCard
+                                covers={covers}
+                                allEntities={allEntities}
+                                onUpdate={(id, domain, service, data) => {
+                                    if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
+                                }}
+                            />
+                        </View>
+                    )}
+
+                    {/* ── 6. Climates ── */}
+                    {climates.length > 0 && (
+                        <View>
+                            <View style={styles.divider} />
+                            {climates.map(climate => (
+                                <ClimateCard
+                                    key={climate.entity_id}
+                                    climate={climate}
+                                    needsChange={checkNeedsChange(climate.entity_id)}
+                                    onUpdate={(id, domain, service, data) => {
+                                        if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
+                                    }}
+                                />
+                            ))}
+                        </View>
+                    )}
+
+                    {/* ── 7. Media ── */}
+                    {medias.length > 0 && (
+                        <View style={{ marginBottom: 20 }}>
+                            <View style={styles.divider} />
+                            {medias
+                                .filter(m => {
+                                    const mapping = mediaMappings.find(map => map.entity_id === m.entity_id);
+                                    return !mapping || !mapping.parentId;
+                                })
+                                .map(media => {
+                                    const children = medias.filter(c => {
+                                        const mapping = mediaMappings.find(map => map.entity_id === c.entity_id);
+                                        return mapping && mapping.parentId === media.entity_id;
+                                    });
+                                    const mapping = mediaMappings.find(m => m.entity_id === media.entity_id);
+                                    return (
+                                        <MediaCard
+                                            key={media.entity_id}
+                                            player={media}
+                                            childPlayers={children}
+                                            mapping={mapping}
+                                            mediaMappings={mediaMappings}
+                                            needsChange={checkNeedsChange(media.entity_id)}
+                                            onUpdate={(id, domain, service, data) => {
+                                                if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
+                                            }}
+                                            adminUrl={adminUrl}
+                                            haUrl={haUrl}
+                                            haToken={haToken}
+                                            onShowSourceOverlay={setSourceOverlay}
+                                            onShowVolumeOverlay={setVolumeOverlay}
+                                        />
+                                    );
+                                })}
+                        </View>
+                    )}
+
+                    {/* ── 9. Switches ── */}
+                    {switches.length > 0 && (
+                        <View>
+                            <View style={styles.divider} />
+                            <Text style={styles.roomSectionHeading}>SWITCHES</Text>
+                            <View style={styles.grid}>
+                                {switches.map(sw => (
+                                    <View key={sw.entity_id} style={{ width: cardWidth }}>
+                                        <SwitchCard
+                                            switchEntity={sw}
+                                            needsChange={checkNeedsChange(sw.entity_id)}
+                                            onToggle={(id) => {
+                                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                                if (onToggle) onToggle('switch', 'toggle', { entity_id: id });
+                                            }}
+                                        />
+                                    </View>
+                                ))}
+                            </View>
+                        </View>
+                    )}
+
+                    {/* ── 11. Automations — at the end ── */}
                     {automations.length > 0 && (
                         <View style={styles.automationSection}>
+                            <View style={styles.divider} />
                             <TouchableOpacity
                                 style={styles.automationToggleBtn}
                                 onPress={() => {
@@ -682,288 +946,7 @@ export default function RoomDetailView({
                         </View>
                     )}
 
-                    {(mainTemp || mainHumidity) && (
-                        <RoomClimateChart
-                            tempEntityId={mainTemp?.entity_id}
-                            humidityEntityId={mainHumidity?.entity_id}
-                            adminUrl={adminUrl}
-                        />
-                    )}
-
-                    {(scripts.length > 0 || lockEntities.length > 0) && (
-                        <View>
-                            {/* Render scripts/scenes as the same card used on home QuickScenes. Use the already-filtered `scripts` prop. */}
-                            {scripts.length > 0 && (
-                                <View style={styles.grid}>
-                                    {scripts.map(s => {
-                                        const scene = { id: s.entity_id, label: s.displayName };
-                                        return (
-                                            <View key={scene.id} style={{ width: cardWidth }}>
-                                                <SceneCard id={scene.id} label={scene.label} onPress={(id) => {
-                                                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                                    if (onToggle) onToggle('script', 'turn_on', { entity_id: id });
-                                                }} />
-                                            </View>
-                                        );
-                                    })}
-                                </View>
-                            )}
-
-                            {/* ── Lock pills — same drag-knob UI as home dashboard, shown above Apply Preferences ── */}
-                            {lockEntities.length > 0 && (
-                                <View style={[styles.lockPillsRow, scripts.length > 0 && { marginTop: 10 }]}>
-                                    {lockEntities.map(lock => {
-                                        const isUnlocked = lock.stateObj.state === 'unlocked' || lock.stateObj.state === 'open';
-                                        return (
-                                            <View key={lock.entity_id} style={styles.lockPillCell}>
-                                                <LockPill
-                                                    name={lock.displayName || lock.entity_id}
-                                                    isUnlocked={isUnlocked}
-                                                    isLocking={lock.stateObj.state === 'locking'}
-                                                    isUnlocking={lock.stateObj.state === 'unlocking'}
-                                                    isPassage={false}
-                                                    entityState={lock.stateObj.state}
-                                                    focusKey={lock.entity_id}
-                                                    onToggle={() => {
-                                                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                                                        if (onToggle) onToggle('lock', isUnlocked ? 'lock' : 'unlock', { entity_id: lock.entity_id });
-                                                    }}
-                                                />
-                                            </View>
-                                        );
-                                    })}
-                                </View>
-                            )}
-
-                            <View style={styles.divider} />
-                            {/* Activate Preferences button styled like the screenshot */}
-                            <View style={styles.prefButtonContainer}>
-                                <ActivatePreferencesButton
-                                    roomName={formatRoomName(room.name)}
-                                    onActivate={handleActivatePreferences}
-                                    onPreferencesLoaded={setPreferences}
-                                    logoSource={require('../../assets/logo_for_prefrences.png')}
-                                />
-                            </View>
-                        </View>
-                    )}
-
-                    {/* No scripts or locks but still show preferences if needed */}
-                    {scripts.length === 0 && lockEntities.length === 0 && (
-                        <View>
-                            <View style={styles.divider} />
-                            <View style={styles.prefButtonContainer}>
-                                <ActivatePreferencesButton
-                                    roomName={formatRoomName(room.name)}
-                                    onActivate={handleActivatePreferences}
-                                    onPreferencesLoaded={setPreferences}
-                                    logoSource={require('../../assets/logo_for_prefrences.png')}
-                                />
-                            </View>
-                        </View>
-                    )}
-
-                    {(() => {
-                        const actualLights = actualLightEntities;
-                        const locks = lockEntities;
-                        const hasDevices = actualLights.length > 0 || fans.length > 0 || doorSensors.length > 0;
-
-                        if (!hasDevices) {
-                            return (
-                                <View style={styles.emptyState}>
-                                    <Lightbulb size={40} color={Colors.textDim} />
-                                    <Text style={styles.emptyText}>No devices found in this room.</Text>
-                                </View>
-                            );
-                        }
-
-                        return (
-                            <>
-                                {/* ── Lights group card (dots + slider + expandable individual cards) ── */}
-                                {actualLights.length > 0 && (
-                                    <LightsGroupCard
-                                        lights={actualLights}
-                                        lightMappings={lightMappings}
-                                        adminUrl={adminUrl}
-                                        roomName={room.name}
-                                        onToggle={(id, state) => {
-                                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                            if (onToggle) onToggle('light', 'toggle', { entity_id: id });
-                                        }}
-                                        onBrightnessChange={handleBrightness}
-                                        onColorTempChange={handleColorTemp}
-                                        onRgbChange={handleRgb}
-                                        onLongPress={(l) => {
-                                            const m = lightMappings.find(m => m.entity_id === l.entity_id);
-                                            setSelectedLight({ ...l, colorCapability: m?.colorCapability || null });
-                                        }}
-                                    />
-                                )}
-
-                                {/* ── Fans (keep existing cards) ── */}
-                                {fans.length > 0 && (
-                                    <View style={styles.grid}>
-                                        {fans.map((fan) => (
-                                            <View key={fan.entity_id} style={{ width: cardWidth }}>
-                                                <FanCard
-                                                    fan={fan}
-                                                    needsChange={checkNeedsChange(fan.entity_id)}
-                                                    onToggle={(id, state) => {
-                                                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                                        if (onToggle) onToggle('fan', 'toggle', { entity_id: id });
-                                                    }}
-                                                />
-                                            </View>
-                                        ))}
-                                    </View>
-                                )}
-                            </>
-                        );
-                    })()}
-
-                    {cameras.length > 0 && (
-                        <View>
-                            <View style={styles.divider} />
-                            <Text style={styles.sectionTitle}>Cameras</Text>
-                            <View style={styles.grid}>
-                                {cameras.map(cam => {
-                                    const stateObj = cam.stateObj || {};
-                                    const attrs = stateObj.attributes || {};
-                                    const name = attrs.friendly_name || cam.displayName || cam.entity_id;
-                                    const pictureUrl = attrs.entity_picture
-                                        ? `${(haUrl || '').replace(/\/$/, '')}${attrs.entity_picture}`
-                                        : null;
-                                    const isUnavailable = stateObj.state === 'unavailable';
-                                    const cameraName = cam.entity_id.replace('camera.', '');
-                                    const motionEntityId = `binary_sensor.${cameraName}`;
-                                    const motionSensor = allEntities?.find(e => e.entity_id === motionEntityId);
-                                    const hasMotion = motionSensor?.state === 'on';
-
-                                    return (
-                                        <View key={cam.entity_id} style={{ width: cardWidth }}>
-                                            <View style={styles.cameraCard}>
-                                                {pictureUrl && !isUnavailable ? (
-                                                    <Image
-                                                        source={{ uri: pictureUrl, headers: { Authorization: `Bearer ${haToken}` } }}
-                                                        style={styles.cameraThumb}
-                                                        resizeMode="cover"
-                                                    />
-                                                ) : (
-                                                    <View style={[styles.cameraThumb, styles.cameraThumbPlaceholder]}>
-                                                        <Text style={styles.cameraOffText}>{isUnavailable ? 'Unavailable' : 'No feed'}</Text>
-                                                    </View>
-                                                )}
-                                                {/* Gradient overlay */}
-                                                <View style={styles.cameraGradientOverlay} />
-                                                {/* LIVE badge */}
-                                                {!isUnavailable && (
-                                                    <View style={styles.cameraLiveBadge}>
-                                                        <Text style={styles.cameraLiveText}>LIVE</Text>
-                                                    </View>
-                                                )}
-                                                {/* MOTION badge */}
-                                                {hasMotion && (
-                                                    <View style={styles.cameraMotionBadge}>
-                                                        <Text style={styles.cameraMotionText}>MOTION</Text>
-                                                    </View>
-                                                )}
-                                                {/* Name at bottom */}
-                                                <Text style={styles.cameraCardName} numberOfLines={1}>{name}</Text>
-                                            </View>
-                                        </View>
-                                    );
-                                })}
-                            </View>
-                        </View>
-                    )}
-
-                    {covers.length > 0 && (
-                        <View>
-                            <View style={styles.divider} />
-                            <CoversGroupCard
-                                covers={covers}
-                                allEntities={allEntities}
-                                onUpdate={(id, domain, service, data) => {
-                                    if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
-                                }}
-                            />
-                        </View>
-                    )}
-
-                    {climates.length > 0 && (
-                        <View>
-                            <View style={styles.divider} />
-                            {climates.map(climate => (
-                                <ClimateCard
-                                    key={climate.entity_id}
-                                    climate={climate}
-                                    needsChange={checkNeedsChange(climate.entity_id)}
-                                    onUpdate={(id, domain, service, data) => {
-                                        if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
-                                    }}
-                                />
-                            ))}
-                        </View>
-                    )}
-
-                    {medias.length > 0 && (
-                        <View style={{ marginBottom: 40 }}>
-                            <View style={styles.divider} />
-                            {medias
-                                .filter(m => {
-                                    const mapping = mediaMappings.find(map => map.entity_id === m.entity_id);
-                                    return !mapping || !mapping.parentId;
-                                })
-                                .map(media => {
-                                    const children = medias.filter(c => {
-                                        const mapping = mediaMappings.find(map => map.entity_id === c.entity_id);
-                                        return mapping && mapping.parentId === media.entity_id;
-                                    });
-
-                                    const mapping = mediaMappings.find(m => m.entity_id === media.entity_id);
-
-                                    return (
-                                        <MediaCard
-                                            key={media.entity_id}
-                                            player={media}
-                                            childPlayers={children}
-                                            mapping={mapping}
-                                            mediaMappings={mediaMappings}
-                                            needsChange={checkNeedsChange(media.entity_id)}
-                                            onUpdate={(id, domain, service, data) => {
-                                                if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
-                                            }}
-                                            adminUrl={adminUrl}
-                                            haUrl={haUrl}
-                                            haToken={haToken}
-                                            onShowSourceOverlay={setSourceOverlay}
-                                            onShowVolumeOverlay={setVolumeOverlay}
-                                        />
-                                    );
-                                })}
-                        </View>
-                    )}
-
-                    {switches.length > 0 && (
-                        <View>
-                            <View style={styles.divider} />
-                            <Text style={styles.sectionTitle}>Switches</Text>
-                            <View style={styles.grid}>
-                                {switches.map(sw => (
-                                    <View key={sw.entity_id} style={{ width: cardWidth }}>
-                                        <SwitchCard
-                                            switchEntity={sw}
-                                            needsChange={checkNeedsChange(sw.entity_id)}
-                                            onToggle={(id, state) => {
-                                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                                if (onToggle) onToggle('switch', 'toggle', { entity_id: id });
-                                            }}
-                                        />
-                                    </View>
-                                ))}
-                            </View>
-                        </View>
-                    )}
+                    <View style={{ height: 40 }} />
                 </ScrollView>
             </View>
 
@@ -1267,6 +1250,14 @@ const styles = StyleSheet.create({
         fontSize: 18,
         fontWeight: 'bold',
         marginBottom: 12
+    },
+    roomSectionHeading: {
+        color: '#9199BA',
+        fontSize: 12,
+        fontFamily: CF.semibold,
+        letterSpacing: 1.4,
+        marginBottom: 12,
+        marginHorizontal: 2,
     },
     // ── Camera cards ──
     cameraCard: {

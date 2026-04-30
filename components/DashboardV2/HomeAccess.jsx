@@ -288,12 +288,66 @@ export function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, 
 // ─────────────────────────────────────────────────────────────────────────────
 //  GaragePill — drag when idle, progress bar + stop when in transit
 // ─────────────────────────────────────────────────────────────────────────────
-function GaragePill({ name, isOpen, isOpening, isClosing, onControl, focusKey, travelMs = TRAVEL_MS }) {
+function GaragePill({
+    name, isOpen, isOpening, isClosing, onControl, focusKey, travelMs = TRAVEL_MS,
+    // Lifted transit state — survives key-based remounts (screen navigation)
+    savedTransit,       // { direction: 'opening'|'closing', startedAt: number } | null
+    onTransitStart,     // (direction, startedAt) => void
+    onTransitEnd,       // () => void
+}) {
     const [localTransit, setLocalTransit] = useState(null);
     const timerRef = useRef(null);
 
-    const inTransit   = !!(localTransit || isOpening || isClosing);
-    const goingUp     = localTransit === 'opening' || isOpening;
+    // On mount: restore in-progress transit from parent (survives remount)
+    useEffect(() => {
+        if (savedTransit) {
+            const elapsed   = Date.now() - savedTransit.startedAt;
+            const remaining = travelMs - elapsed;
+            if (remaining > 500) {
+                setLocalTransit(savedTransit.direction);
+                clearTimeout(timerRef.current);
+                timerRef.current = setTimeout(() => {
+                    setLocalTransit(null);
+                    onTransitEnd && onTransitEnd();
+                }, remaining);
+            } else {
+                // Transit already done while away — clear it
+                onTransitEnd && onTransitEnd();
+            }
+        }
+        return () => clearTimeout(timerRef.current);
+    }, []); // intentionally only on mount
+
+    // Keep in sync with HA state (isOpening/isClosing from WebSocket)
+    useEffect(() => {
+        if (isOpening && localTransit !== 'opening') {
+            clearTimeout(timerRef.current);
+            const now = Date.now();
+            setLocalTransit('opening');
+            onTransitStart && onTransitStart('opening', now);
+            timerRef.current = setTimeout(() => {
+                setLocalTransit(null);
+                onTransitEnd && onTransitEnd();
+            }, travelMs);
+        } else if (isClosing && localTransit !== 'closing') {
+            clearTimeout(timerRef.current);
+            const now = Date.now();
+            setLocalTransit('closing');
+            onTransitStart && onTransitStart('closing', now);
+            timerRef.current = setTimeout(() => {
+                setLocalTransit(null);
+                onTransitEnd && onTransitEnd();
+            }, travelMs);
+        } else if (!isOpening && !isClosing && localTransit && !savedTransit) {
+            // HA confirmed done and no saved transit pending restore
+            clearTimeout(timerRef.current);
+            setLocalTransit(null);
+            onTransitEnd && onTransitEnd();
+        }
+    }, [isOpening, isClosing]);
+
+    const inTransit = !!(localTransit || isOpening || isClosing);
+    const goingUp   = localTransit === 'opening' || isOpening;
 
     const [pillW, setPillW] = useState(0);
     const translateX        = useSharedValue(0);
@@ -339,9 +393,15 @@ function GaragePill({ name, isOpen, isOpening, isClosing, onControl, focusKey, t
 
     const startTransit = (direction) => {
         clearTimeout(timerRef.current);
+        const now = Date.now();
         setLocalTransit(direction);
+        onTransitStart && onTransitStart(direction, now);
         onControl(direction === 'opening' ? 'open_cover' : 'close_cover');
-        timerRef.current = setTimeout(() => setLocalTransit(null), travelMs);
+        // Fallback: clear local transit after travelMs + 2s if HA goes silent
+        timerRef.current = setTimeout(() => {
+            setLocalTransit(null);
+            onTransitEnd && onTransitEnd();
+        }, travelMs + 2000);
     };
 
     const pan = Gesture.Pan()
@@ -935,6 +995,22 @@ export default function HomeAccess({
 
     const [editVisible, setEditVisible] = useState(false);
 
+    // Lifted garage transit state — keyed by entity_id so it survives GaragePill
+    // remounts caused by visibleKey changes (screen navigation).
+    // Shape: { [entity_id]: { direction: 'opening'|'closing', startedAt: number } }
+    const [garageTransits, setGarageTransits] = useState({});
+
+    const handleTransitStart = (entity_id, direction, startedAt) => {
+        setGarageTransits(prev => ({ ...prev, [entity_id]: { direction, startedAt } }));
+    };
+    const handleTransitEnd = (entity_id) => {
+        setGarageTransits(prev => {
+            const next = { ...prev };
+            delete next[entity_id];
+            return next;
+        });
+    };
+
     // Each time the home tab becomes visible, increment visibleKey.
     // This is passed into the pill `key` props to force a full native remount,
     // re-attaching RNGH gesture handlers to fresh native views.
@@ -1026,6 +1102,11 @@ export default function HomeAccess({
                                     isOpening={item.data.isOpening}
                                     isClosing={item.data.isClosing}
                                     travelMs={item.data.garageDurationMs || TRAVEL_MS}
+                                    savedTransit={garageTransits[item.data.entity_id] || null}
+                                    onTransitStart={(direction, startedAt) =>
+                                        handleTransitStart(item.data.entity_id, direction, startedAt)
+                                    }
+                                    onTransitEnd={() => handleTransitEnd(item.data.entity_id)}
                                     onControl={(action) =>
                                         onControlCover &&
                                         onControlCover(item.data.entity_id, action)

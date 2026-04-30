@@ -1,8 +1,50 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { WebView } from 'react-native-webview';
 
+// Injected JS: detects video/stream errors inside the WebView page and posts messages back
+const INJECTED_JS = `
+  (function() {
+    function postMsg(msg) {
+      window.ReactNativeWebView && window.ReactNativeWebView.postMessage(msg);
+    }
+    function attachVideoListeners(v) {
+      if (v._rn_attached) return;
+      v._rn_attached = true;
+      v.addEventListener('playing', function() { postMsg('stream_ok'); });
+      v.addEventListener('error', function() { postMsg('stream_error'); });
+      v.addEventListener('stalled', function() {
+        setTimeout(function() { if (v.readyState < 3) postMsg('stream_error'); }, 3000);
+      });
+    }
+    function checkErrorText() {
+      var text = document.body ? document.body.innerText : '';
+      if (text.indexOf('check error') !== -1 || text.indexOf('frames have been received') !== -1) {
+        postMsg('stream_error');
+      }
+    }
+    var observer = new MutationObserver(function() {
+      document.querySelectorAll('video').forEach(attachVideoListeners);
+      checkErrorText();
+    });
+    function init() {
+      document.querySelectorAll('video').forEach(attachVideoListeners);
+      if (document.body) observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+      checkErrorText();
+    }
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+    setInterval(checkErrorText, 2500);
+  })();
+  true;
+`;
+
 const LiveCamera = ({ cam, service }) => {
+    const [hasError, setHasError] = useState(false);
+
     if (!service || !cam) {
         return (
             <View style={styles.cameraWrapper}>
@@ -14,7 +56,7 @@ const LiveCamera = ({ cam, service }) => {
         );
     }
 
-        const streamUrl = service.getStreamUrl(cam.name);
+    const streamUrl = service.getStreamUrl(cam.name);
 
     return (
         <View style={styles.cameraWrapper}>
@@ -27,7 +69,24 @@ const LiveCamera = ({ cam, service }) => {
                     mediaPlaybackRequiresUserAction={false}
                     originWhitelist={['*']}
                     scalesPageToFit={true}
+                    injectedJavaScript={INJECTED_JS}
+                    onMessage={(e) => {
+                        const msg = e.nativeEvent.data;
+                        if (msg === 'stream_error') setHasError(true);
+                        else if (msg === 'stream_ok') setHasError(false);
+                    }}
+                    onError={() => setHasError(true)}
+                    onHttpError={() => setHasError(true)}
+                    onLoad={() => setHasError(false)}
+                    onLoadStart={() => setHasError(false)}
                 />
+                {/* Status badge — bottom-left overlay */}
+                <View style={[styles.liveBadge, hasError && styles.liveBadgeError]}>
+                    <View style={[styles.liveDot, hasError && styles.liveDotError]} />
+                    <Text style={[styles.liveText, hasError && styles.liveTextError]}>
+                        {hasError ? 'Error' : 'Live'}
+                    </Text>
+                </View>
             </View>
         </View>
     );
@@ -118,7 +177,43 @@ const styles = StyleSheet.create({
         color: 'rgba(255, 255, 255, 0.8)',
         fontSize: 13,
         fontWeight: '400',
-    }
+    },
+    liveBadge: {
+        position: 'absolute',
+        bottom: 8,
+        left: 8,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 20,
+        backgroundColor: 'rgba(0,0,0,0.55)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+    },
+    liveBadgeError: {
+        borderColor: 'rgba(239,83,80,0.4)',
+        backgroundColor: 'rgba(239,83,80,0.15)',
+    },
+    liveDot: {
+        width: 6,
+        height: 6,
+        borderRadius: 3,
+        backgroundColor: '#4CAF50',
+    },
+    liveDotError: {
+        backgroundColor: '#EF5350',
+    },
+    liveText: {
+        color: '#fff',
+        fontSize: 11,
+        fontWeight: '600',
+        letterSpacing: 0.4,
+    },
+    liveTextError: {
+        color: '#EF5350',
+    },
 });
 
 export default memo(CamerasList);
