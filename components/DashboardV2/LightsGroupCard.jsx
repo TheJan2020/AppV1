@@ -17,9 +17,12 @@ import {
     PanResponder, LayoutAnimation, Platform, UIManager, Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Lightbulb, Power, ChevronDown, ChevronUp } from 'lucide-react-native';
+import { Lightbulb, Power, ChevronDown, ChevronUp, Bookmark, BookmarkCheck, Zap, Sun } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { SvgUri } from 'react-native-svg';
+import * as SecureStore from 'expo-secure-store';
+import { getAdminUrl } from '../../utils/storage';
+import LightControlModal from './LightControlModal';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -110,6 +113,7 @@ function HSlider({
     onChange, onRelease,
     trackBg, showFill = false,
     thumbColor = '#3A7BD5', thumbBorder = false, showBubble = false,
+    disabled = false,
 }) {
     // Animated values — setValue() bypasses React render cycle entirely
     const thumbAnim = useRef(new Animated.Value(0)).current;
@@ -124,6 +128,10 @@ function HSlider({
     const isDragging  = useRef(false);
     const [dragging, setDragging]     = useState(false);
     const [bubblePct, setBubblePct]   = useState(Math.round((value / max) * 100));
+
+    // Keep disabled in a ref so PanResponder closure always reads the latest value
+    const disabledRef = useRef(disabled);
+    disabledRef.current = disabled;
 
     // Keep callbacks fresh inside the stable PanResponder closure
     const maxRef      = useRef(max);
@@ -159,10 +167,10 @@ function HSlider({
     }, [trackW]);
 
     const pan = useRef(PanResponder.create({
-        onStartShouldSetPanResponder:        () => true,
-        onStartShouldSetPanResponderCapture: () => true,
-        onMoveShouldSetPanResponder:         () => true,
-        onMoveShouldSetPanResponderCapture:  () => true,
+        onStartShouldSetPanResponder:        () => !disabledRef.current,
+        onStartShouldSetPanResponderCapture: () => !disabledRef.current,
+        onMoveShouldSetPanResponder:         () => !disabledRef.current,
+        onMoveShouldSetPanResponderCapture:  () => !disabledRef.current,
         onPanResponderTerminateRequest:      () => false,   // never surrender mid-drag
 
         onPanResponderGrant: (e) => {
@@ -252,13 +260,22 @@ function HSlider({
                     borderColor:     thumbBorder ? 'rgba(255,255,255,0.9)' : 'transparent',
                 },
                 dragging && { shadowOpacity: 1, shadowRadius: 16 },
+                disabled && { backgroundColor: '#444' },
             ]} />
+
+            {/* Disabled overlay — blocks interaction visually */}
+            {disabled && (
+                <View
+                    pointerEvents="none"
+                    style={[StyleSheet.absoluteFillObject, { borderRadius: 6, backgroundColor: 'rgba(0,0,0,0.35)' }]}
+                />
+            )}
         </View>
     );
 }
 
 // ── Convenience wrappers ──────────────────────────────────────────────────
-function BrightnessSlider({ value, onChange, onRelease }) {
+function BrightnessSlider({ value, onChange, onRelease, disabled = false }) {
     return (
         <HSlider
             value={value} max={255} minVal={1}
@@ -267,30 +284,42 @@ function BrightnessSlider({ value, onChange, onRelease }) {
             showFill
             thumbColor="#3A7BD5"
             showBubble
+            disabled={disabled}
         />
     );
 }
 
-function SpectrumSlider({ value, colors, thumbColor, label, onChange, onRelease }) {
+function SpectrumSlider({ value, colors, thumbColor, label, onChange, onRelease, active = true, onIconPress }) {
+    // active = true  → sun is in control  → icon purple + large, slider disabled
+    // active = false → manual mode         → icon gray, slider enabled
     return (
-        <View style={styles.spectrumRow}>
-            <Text style={styles.spectrumLabel}>{label}</Text>
-            <View style={{ flex: 1 }}>
-                <HSlider
-                    value={value} max={100} minVal={0}
-                    onChange={onChange} onRelease={onRelease}
-                    trackBg={
-                        <LinearGradient
-                            colors={colors}
-                            start={{ x: 0, y: 0.5 }}
-                            end={{ x: 1, y: 0.5 }}
-                            style={styles.spectrumTrack}
-                        />
-                    }
-                    thumbColor={thumbColor}
-                    thumbBorder
+        <View style={styles.spectrumBlock}>
+            <TouchableOpacity
+                onPress={onIconPress}
+                activeOpacity={0.6}
+                style={styles.spectrumIconPlain}
+            >
+                <Sun
+                    size={26}
+                    color={active ? '#7B2FBE' : 'rgba(255,255,255,0.25)'}
+                    fill={active ? '#7B2FBE' : 'rgba(255,255,255,0.25)'}
                 />
-            </View>
+            </TouchableOpacity>
+            <HSlider
+                value={value} max={100} minVal={0}
+                onChange={onChange} onRelease={onRelease}
+                trackBg={
+                    <LinearGradient
+                        colors={colors}
+                        start={{ x: 0, y: 0.5 }}
+                        end={{ x: 1, y: 0.5 }}
+                        style={[styles.spectrumTrack, active && { opacity: 0.25 }]}
+                    />
+                }
+                thumbColor={active ? 'rgba(255,255,255,0.2)' : thumbColor}
+                thumbBorder
+                disabled={active}
+            />
         </View>
     );
 }
@@ -317,7 +346,7 @@ function hueToRgb(h) {
     return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
 }
 
-function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessChange, onLongPress, masterBrightness }) {
+function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessChange, onLongPress, onColorTap, masterBrightness }) {
     const isOn      = light.stateObj.state === 'on';
     const mappedCap = mapping?.colorCapability || 'normal';
     const attrs     = light.stateObj?.attributes || {};
@@ -358,18 +387,22 @@ function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessCha
     const startBrightness  = useRef(haBrightness);
     const latestBrightness = useRef(haBrightness);
     const isTap            = useRef(true);  // cleared once movement > threshold
+    const longPressTimer   = useRef(null);  // fires color modal after 500ms hold
+    const longPressTriggered = useRef(false); // prevent release from toggling after long press
 
     // Refs so closures never go stale
     const isOnRef          = useRef(isOn);
     const hasBrightRef     = useRef(hasBrightness);
     const onBrightRef      = useRef(onBrightnessChange);
     const onToggleRef      = useRef(onToggle);
+    const onColorTapRef    = useRef(onColorTap);
     const entityRef        = useRef(light.entity_id);
     const stateRef         = useRef(light.stateObj.state);
     isOnRef.current        = isOn;
     hasBrightRef.current   = hasBrightness;
     onBrightRef.current    = onBrightnessChange;
     onToggleRef.current    = onToggle;
+    onColorTapRef.current  = onColorTap;
     entityRef.current      = light.entity_id;
     stateRef.current       = light.stateObj.state;
 
@@ -392,11 +425,28 @@ function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessCha
         onMoveShouldSetPanResponder:         () => true,
 
         onPanResponderGrant: (e) => {
-            isDragging.current       = true;
-            isTap.current            = true;   // assume tap until proven otherwise
-            startPageX.current       = e.nativeEvent.pageX;
-            startPageY.current       = e.nativeEvent.pageY;
-            startBrightness.current  = latestBrightness.current;
+            isDragging.current         = true;
+            isTap.current              = true;
+            longPressTriggered.current = false;
+            startPageX.current         = e.nativeEvent.pageX;
+            startPageY.current         = e.nativeEvent.pageY;
+            startBrightness.current    = latestBrightness.current;
+
+            // Start long-press timer — fires color modal after 500ms if finger hasn't moved
+            if (longPressTimer.current) clearTimeout(longPressTimer.current);
+            longPressTimer.current = setTimeout(() => {
+                if (isTap.current) {
+                    // Still holding without movement → open color modal
+                    longPressTriggered.current = true;
+                    isDragging.current = false;
+                    setIsDragging(false);
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    const cap = effectiveCapability;
+                    if ((cap === 'cct' || cap === 'rgb') && onColorTapRef.current) {
+                        onColorTapRef.current(light, cap);
+                    }
+                }
+            }, 500);
         },
 
         onPanResponderMove: (e) => {
@@ -406,6 +456,11 @@ function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessCha
             // Only treat as brightness drag once the finger clearly moved horizontally
             if (Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy)) {
                 isTap.current = false;
+                // Cancel long-press since we're dragging
+                if (longPressTimer.current) {
+                    clearTimeout(longPressTimer.current);
+                    longPressTimer.current = null;
+                }
                 if (!hasBrightRef.current || !isOnRef.current) return;
                 if (!cardW.current) return;
                 const v = Math.max(1, Math.min(255,
@@ -419,12 +474,20 @@ function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessCha
         onPanResponderRelease: (e) => {
             isDragging.current = false;
             setIsDragging(false);
+            if (longPressTimer.current) {
+                clearTimeout(longPressTimer.current);
+                longPressTimer.current = null;
+            }
+            if (longPressTriggered.current) {
+                // Long press already fired — do nothing on release
+                return;
+            }
             if (isTap.current) {
-                // Was a tap — trigger toggle
+                // Quick tap → always toggle
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                 onToggleRef.current?.(entityRef.current, stateRef.current);
             } else if (hasBrightRef.current && isOnRef.current) {
-                // Was a brightness swipe — send single HA call
+                // Brightness drag ended — send single HA call
                 onBrightRef.current?.(entityRef.current, Math.round(latestBrightness.current));
             }
         },
@@ -432,6 +495,10 @@ function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessCha
         onPanResponderTerminate: () => {
             isDragging.current = false;
             setIsDragging(false);
+            if (longPressTimer.current) {
+                clearTimeout(longPressTimer.current);
+                longPressTimer.current = null;
+            }
         },
     })).current;
 
@@ -480,51 +547,204 @@ function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessCha
 // ── Main component ────────────────────────────────────────────────────────
 export default function LightsGroupCard({
     lights = [], lightMappings = [], adminUrl, roomName = '',
-    onToggle, onBrightnessChange, onColorTempChange, onRgbChange, onLongPress,
+    onToggle, onBrightnessChange, onColorTempChange, onRgbChange, onLongPress, onTurnOn,
 }) {
     // Show master controls if the room is named "Master Controller"
     // OR if any light entity in the room has "master_controller" in its entity_id
     const isMasterController =
         roomName.toLowerCase().includes('master controller') ||
         lights.some(l => l.entity_id.toLowerCase().includes('master_controller'));
-    const [expanded, setExpanded] = useState(false);
 
-    // ── Determine which master controls to show ───────────────────────────
+    // ── effectiveCap must be declared first — used by all callbacks below ─
     const effectiveCap = (l) => {
         const m     = lightMappings.find(m => m.entity_id === l.entity_id);
         const cap   = m?.colorCapability || 'normal';
         const attrs = l.stateObj?.attributes || {};
-
-        // 1. Admin mapping takes priority (if explicitly set to non-normal)
         if (cap !== 'normal') return cap;
-
-        // 2. Use supported_color_modes from HA (most reliable)
         const modes = attrs.supported_color_modes || [];
         const hasRGBMode = modes.some(m => ['rgb', 'rgbw', 'rgbww', 'hs', 'xy'].includes(m));
         const hasCCTMode = modes.some(m => ['color_temp'].includes(m));
-        if (hasRGBMode && hasCCTMode) return 'rgb'; // prefer rgb if it supports both
+        if (hasRGBMode && hasCCTMode) return 'rgb';
         if (hasRGBMode) return 'rgb';
         if (hasCCTMode) return 'cct';
-
-        // 3. Fall back to live attribute detection
         if (attrs.color_mode === 'color_temp' || attrs.color_temp_kelvin) return 'cct';
         if (attrs.brightness !== undefined) return 'dimmable';
         return 'normal';
     };
+
+    const [expanded, setExpanded] = useState(false);
+    const [colorModalLight, setColorModalLight] = useState(null); // { light, colorCapability }
+    const [cctActive, setCctActive] = useState(true);
+    const [rgbActive, setRgbActive] = useState(true);
+
+    // ── Light Scene (Save / Restore) ──────────────────────────────────────
+    const sceneKey = `light_scene_${roomName.toLowerCase().replace(/\s+/g, '_')}`;
+    const [savedScene, setSavedScene] = useState(null); // array of { entity_id, brightness, rgb_color, color_temp_kelvin }
+    const [saveFeedback, setSaveFeedback] = useState(false); // brief "Saved!" flash
+
+    // Load saved scene on mount / room change — try backend first, fall back to SecureStore
+    useEffect(() => {
+        let cancelled = false;
+        (async () => {
+            try {
+                const adminUrl = await getAdminUrl();
+                if (adminUrl) {
+                    const res = await fetch(
+                        `${adminUrl}/api/light-scenes?room=${encodeURIComponent(roomName)}`
+                    );
+                    if (res.ok) {
+                        const json = await res.json();
+                        if (!cancelled && json.success && json.scene?.lights?.length) {
+                            setSavedScene(json.scene.lights);
+                            // Keep SecureStore in sync for offline fallback
+                            await SecureStore.setItemAsync(sceneKey, JSON.stringify(json.scene.lights));
+                            return;
+                        }
+                    }
+                }
+            } catch (_) {}
+
+            // Fallback: SecureStore (offline / no backend)
+            try {
+                const raw = await SecureStore.getItemAsync(sceneKey);
+                if (!cancelled && raw) setSavedScene(JSON.parse(raw));
+            } catch (_) {}
+        })();
+        return () => { cancelled = true; };
+    }, [sceneKey, roomName]);
+
+    // Snapshot current ON lights and persist to backend + SecureStore
+    const handleSaveScene = useCallback(async () => {
+        const scene = lights
+            .filter(l => isMasterController
+                ? true  // master controller room: include the master entity itself
+                : !l.entity_id.toLowerCase().includes('master_controller')
+            )
+            .filter(l => l.stateObj.state === 'on')
+            .map(l => {
+                const attrs = l.stateObj?.attributes || {};
+                const cap = effectiveCap(l);
+                const entry = { entity_id: l.entity_id };
+                // brightness — for dimmable, cct, rgb lights
+                if (attrs.brightness != null) entry.brightness = attrs.brightness;
+                // rgb_color — only for rgb capable lights
+                if (cap === 'rgb' && Array.isArray(attrs.rgb_color)) entry.rgb_color = attrs.rgb_color;
+                // color_temp_kelvin — only for cct capable lights
+                if ((cap === 'cct' || cap === 'rgb') && attrs.color_temp_kelvin != null)
+                    entry.color_temp_kelvin = attrs.color_temp_kelvin;
+                // on/off only lights: no extra fields, that's fine
+                return entry;
+            });
+
+        // Always save locally first (instant, works offline)
+        await SecureStore.setItemAsync(sceneKey, JSON.stringify(scene));
+        setSavedScene(scene);
+        setSaveFeedback(true);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setTimeout(() => setSaveFeedback(false), 2000);
+
+        // Then persist to backend (fire-and-forget, don't block UI)
+        try {
+            const adminUrl = await getAdminUrl();
+            if (adminUrl) {
+                await fetch(`${adminUrl}/api/light-scenes`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ room_name: roomName, lights: scene }),
+                });
+            }
+        } catch (err) {
+            console.warn('[LightsGroupCard] Could not save scene to backend:', err);
+        }
+    }, [lights, sceneKey, roomName, lightMappings]);
+
+    // ── Auto-snapshot: captures state before group-off so we can restore it ──
+    // This is separate from the manually saved scene (Bookmark button).
+    // It is updated every time the user hits the master toggle to turn everything off.
+    const autoSnapshot = useRef(null); // array of { entity_id, brightness, rgb_color, color_temp_kelvin }
+
+    // Restore saved scene: turn on each light with its saved settings
+    const handleRestoreScene = useCallback(() => {
+        if (!savedScene?.length) return;
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        savedScene.forEach(entry => {
+            const { entity_id, brightness, rgb_color, color_temp_kelvin } = entry;
+
+            // In regular rooms skip the master controller entity — it controls all lights at once
+            if (!isMasterController && entity_id.toLowerCase().includes('master_controller')) return;
+
+            const params = {};
+            if (brightness != null)        params.brightness = brightness;
+            if (rgb_color)                 params.rgb_color = rgb_color;
+            if (color_temp_kelvin != null) params.color_temp_kelvin = color_temp_kelvin;
+
+            if (onTurnOn) {
+                // Preferred: single call that turns on + sets all params at once
+                onTurnOn(entity_id, params);
+            } else {
+                // Fallback: turn on first, then set attributes after short delay
+                const currentLight = lights.find(l => l.entity_id === entity_id);
+                if (currentLight?.stateObj?.state !== 'on') {
+                    onToggle?.(entity_id);
+                }
+                if (brightness != null)        setTimeout(() => onBrightnessChange?.(entity_id, brightness), 400);
+                if (color_temp_kelvin != null)  setTimeout(() => onColorTempChange?.(entity_id, color_temp_kelvin), 400);
+                if (rgb_color)                  setTimeout(() => onRgbChange?.(entity_id, rgb_color), 400);
+            }
+        });
+    }, [savedScene, onTurnOn, onToggle, onBrightnessChange, onColorTempChange, onRgbChange, lights]);
+
+    // ── Derived capability flags ──────────────────────────────────────────
     const hasCCT = lights.some(l => effectiveCap(l) === 'cct');
     const hasRGB = lights.some(l => effectiveCap(l) === 'rgb');
+    const hasDimmable = lights.some(l => ['dimmable', 'cct', 'rgb'].includes(effectiveCap(l)));
+
+    // For master controller rooms: only show CCT/RGB sliders if the master
+    // controller entity itself supports those capabilities.
+    const masterControllerEntity = lights.find(l =>
+        l.entity_id.toLowerCase().includes('master_controller') ||
+        l.displayName?.toLowerCase().includes('master controller')
+    );
+    const masterHasCCT = masterControllerEntity ? effectiveCap(masterControllerEntity) === 'cct' || effectiveCap(masterControllerEntity) === 'rgb' : hasCCT;
+    const masterHasRGB = masterControllerEntity ? effectiveCap(masterControllerEntity) === 'rgb' : hasRGB;
+
+    // ── Last-known brightness per light ──────────────────────────────────
+    // Updated whenever a light is ON and has brightness.
+    // This means: even after a light turns off, we remember its last value.
+    // So proportional scaling always uses the most recent real brightness,
+    // not a stale value from when the component mounted.
+    const lastKnownBrightness = useRef({}); // { entity_id: number (0-255) }
+
+    useEffect(() => {
+        lights.forEach(l => {
+            const b = l.stateObj?.attributes?.brightness;
+            if (l.stateObj?.state === 'on' && b != null) {
+                lastKnownBrightness.current[l.entity_id] = b;
+            }
+        });
+    }, [lights]);
 
     // ── Avg brightness ────────────────────────────────────────────────────
+    // Only averages ON lights that have a brightness attribute (dimmable/cct/rgb).
+    // Excludes master_controller entities — they report their own brightness which
+    // would skew the average (they're the controller, not a real light).
+    // Non-dimmable on/off lights are excluded so they don't skew the bar.
     const avgBrightness = () => {
-        const on = lights.filter(l => l.stateObj.state === 'on');
-        if (!on.length) return 128;
-        return on.reduce((s, l) => s + (l.stateObj.attributes?.brightness ?? 200), 0) / on.length;
+        const dimmableOn = lights.filter(l =>
+            l.stateObj.state === 'on' &&
+            l.stateObj.attributes?.brightness != null &&
+            !l.entity_id.toLowerCase().includes('master_controller') &&
+            !l.displayName?.toLowerCase().includes('master controller')
+        );
+        if (!dimmableOn.length) return 0;
+        return dimmableOn.reduce((s, l) => s + l.stateObj.attributes.brightness, 0) / dimmableOn.length;
     };
     const [masterBrightness, setMasterBrightness] = useState(avgBrightness);
     // Only non-null while the master slider is being actively dragged
     const [activeMasterBrightness, setActiveMasterBrightness] = useState(null);
 
-    // Block HA re-sync for 2s after user drags any slider (prevents slider snapping back)
+    // Block HA re-sync for 2s after user drags master slider (prevents slider snapping back)
+    // Individual light changes are NOT blocked — master slider always reflects live state
     const brightnessBlocked = useRef(false);
     const brightnessBlockTimer = useRef(null);
     const cctBlocked = useRef(false);
@@ -542,75 +762,163 @@ export default function LightsGroupCard({
         if (!brightnessBlocked.current) setMasterBrightness(avgBrightness());
     }, [lights]);
 
-    // ── Avg CCT (pct 0-100 along 2700–6500K) ─────────────────────────────
-    const avgCCTPct = () => {
-        const cctLights = lights.filter(l => effectiveCap(l) === 'cct' && l.stateObj?.attributes?.color_temp_kelvin);
-        if (!cctLights.length) return 30; // default: warm-ish
-        const avgK = cctLights.reduce((s, l) => s + l.stateObj.attributes.color_temp_kelvin, 0) / cctLights.length;
-        return kelvinToPct(avgK);
+    // ── CCT from master controller entity ────────────────────────────────
+    // Reads live color_temp_kelvin from the master_controller entity.
+    // Falls back to a warm default if the master has no CCT state yet.
+    const masterCCTPctFromEntity = () => {
+        const mc = lights.find(l =>
+            l.entity_id.toLowerCase().includes('master_controller') ||
+            l.displayName?.toLowerCase().includes('master controller')
+        );
+        const k = mc?.stateObj?.attributes?.color_temp_kelvin;
+        return k ? kelvinToPct(k) : 30; // default: warm-ish
     };
-    const [masterCCTPct, setMasterCCTPct] = useState(avgCCTPct);
+    const [masterCCTPct, setMasterCCTPct] = useState(masterCCTPctFromEntity);
     useEffect(() => {
-        if (!cctBlocked.current) setMasterCCTPct(avgCCTPct());
+        if (!cctBlocked.current) setMasterCCTPct(masterCCTPctFromEntity());
     }, [lights]);
 
-    // ── Avg RGB hue (0-360) ───────────────────────────────────────────────
-    const avgRGBHuePct = () => {
-        const rgbLights = lights.filter(l => effectiveCap(l) === 'rgb' && l.stateObj?.attributes?.rgb_color);
-        if (!rgbLights.length) return 70; // default purple-ish
-        // Average hue from rgb_color
-        const avgR = rgbLights.reduce((s, l) => s + l.stateObj.attributes.rgb_color[0], 0) / rgbLights.length;
-        const avgG = rgbLights.reduce((s, l) => s + l.stateObj.attributes.rgb_color[1], 0) / rgbLights.length;
-        const avgB = rgbLights.reduce((s, l) => s + l.stateObj.attributes.rgb_color[2], 0) / rgbLights.length;
-        // rgb → hue
-        const r = avgR / 255, g = avgG / 255, b = avgB / 255;
-        const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    // ── RGB hue from master controller entity ─────────────────────────────
+    // Reads live rgb_color from the master_controller entity.
+    // Falls back to a purple-ish default if not available.
+    const masterRGBPctFromEntity = () => {
+        const mc = lights.find(l =>
+            l.entity_id.toLowerCase().includes('master_controller') ||
+            l.displayName?.toLowerCase().includes('master controller')
+        );
+        const rgb = mc?.stateObj?.attributes?.rgb_color;
+        if (!rgb) return 70; // default purple-ish
+        const [rv, gv, bv] = [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255];
+        const max = Math.max(rv, gv, bv), min = Math.min(rv, gv, bv), d = max - min;
         let h = 0;
         if (d > 0) {
-            if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
-            else if (max === g) h = ((b - r) / d + 2) / 6;
-            else h = ((r - g) / d + 4) / 6;
+            if (max === rv)       h = ((gv - bv) / d + (gv < bv ? 6 : 0)) / 6;
+            else if (max === gv)  h = ((bv - rv) / d + 2) / 6;
+            else                  h = ((rv - gv) / d + 4) / 6;
         }
-        return h * 100; // pct 0-100
+        return h * 100;
     };
-    const [masterRGBPct, setMasterRGBPct] = useState(avgRGBHuePct);
+    const [masterRGBPct, setMasterRGBPct] = useState(masterRGBPctFromEntity);
     useEffect(() => {
-        if (!rgbBlocked.current) setMasterRGBPct(avgRGBHuePct());
+        if (!rgbBlocked.current) setMasterRGBPct(masterRGBPctFromEntity());
     }, [lights]);
 
     // ── Handlers ──────────────────────────────────────────────────────────
-    const onLightsCount = lights.filter(l => l.stateObj.state === 'on').length;
+    const onLightsCount = lights.filter(l =>
+        l.stateObj.state === 'on' &&
+        !l.entity_id.toLowerCase().includes('master_controller') &&
+        !l.displayName?.toLowerCase().includes('master controller')
+    ).length;
 
     const handleBrightnessRelease = useCallback((rounded) => {
         blockSync(brightnessBlocked, brightnessBlockTimer);
-        lights.forEach(l => {
-            if (l.stateObj.state !== 'on') return;
-            const cap = effectiveCap(l);
-            if (['dimmable', 'cct', 'rgb'].includes(cap))
-                onBrightnessChange?.(l.entity_id, rounded);
-        });
+
+        // Only operate on dimmable ON lights (exclude master controllers)
+        const dimmableLights = lights.filter(l =>
+            l.stateObj.state === 'on' &&
+            ['dimmable', 'cct', 'rgb'].includes(effectiveCap(l)) &&
+            !l.entity_id.toLowerCase().includes('master_controller') &&
+            !l.displayName?.toLowerCase().includes('master controller')
+        );
+
+        if (!dimmableLights.length) return;
+
+        // Use lastKnownBrightness so we always have the most recent real value.
+        const getBrightness = (l) =>
+            lastKnownBrightness.current[l.entity_id] ??
+            l.stateObj?.attributes?.brightness ??
+            255;
+
+        // Calculate current average brightness (0-255)
+        const currentAvg = dimmableLights.reduce((s, l) => s + getBrightness(l), 0) / dimmableLights.length;
+
+        // Hard limits: snap all to max or min directly
+        if (rounded >= 255) {
+            dimmableLights.forEach(l => onBrightnessChange?.(l.entity_id, 255));
+            return;
+        }
+        if (rounded <= 1) {
+            dimmableLights.forEach(l => onBrightnessChange?.(l.entity_id, 1));
+            return;
+        }
+
+        // ── Equal-delta with overflow redistribution ─────────────────────
+        // 1. Apply the same delta to every light so relative differences
+        //    are preserved (moving slider up/down feels uniform).
+        // 2. Any light that would go above 255 or below 1 is capped, and
+        //    its overflow/underflow is spread equally across the remaining
+        //    uncapped lights — repeated until nothing overflows.
+        //    This guarantees the new average equals `rounded` without
+        //    ever sending one light to an extreme while others don't move.
+
+        const perLight = (rounded - currentAvg); // same delta for everyone
+
+        const work = dimmableLights.map(l => ({
+            entity_id: l.entity_id,
+            newVal: getBrightness(l) + perLight,
+            capped: false,
+        }));
+
+        // Iteratively redistribute any overflow / underflow
+        for (let iter = 0; iter < 20; iter++) {
+            let overflow = 0;
+            work.forEach(item => {
+                if (item.capped) return;
+                if (item.newVal > 255) {
+                    overflow += item.newVal - 255;
+                    item.newVal = 255;
+                    item.capped = true;
+                } else if (item.newVal < 1) {
+                    overflow += item.newVal - 1;   // negative value
+                    item.newVal = 1;
+                    item.capped = true;
+                }
+            });
+            if (Math.abs(overflow) < 0.5) break;
+            const free = work.filter(w => !w.capped);
+            if (!free.length) break;
+            const extra = overflow / free.length;
+            free.forEach(item => { item.newVal += extra; });
+        }
+
+        work.forEach(item => onBrightnessChange?.(item.entity_id, Math.round(item.newVal)));
     }, [lights, lightMappings, onBrightnessChange]);
 
     const handleCCTRelease = useCallback((pct) => {
         blockSync(cctBlocked, cctBlockTimer);
         const kelvin = pctToKelvin(pct);
-        lights.forEach(l => {
-            if (l.stateObj.state !== 'on') return;
-            if (effectiveCap(l) === 'cct')
-                onColorTempChange?.(l.entity_id, kelvin);
-        });
-    }, [lights, lightMappings, onColorTempChange]);
+        if (isMasterController) {
+            const mc = lights.find(l =>
+                l.entity_id.toLowerCase().includes('master_controller') ||
+                l.displayName?.toLowerCase().includes('master controller')
+            );
+            if (mc) onColorTempChange?.(mc.entity_id, kelvin);
+        } else {
+            lights.forEach(l => {
+                if (l.stateObj.state !== 'on') return;
+                const cap = effectiveCap(l);
+                if (cap === 'cct' || cap === 'rgb') onColorTempChange?.(l.entity_id, kelvin);
+            });
+        }
+    }, [lights, lightMappings, onColorTempChange, isMasterController]);
 
     const handleRGBRelease = useCallback((pct) => {
         blockSync(rgbBlocked, rgbBlockTimer);
         const hue = (pct / 100) * 360;
         const rgb = hueToRgb(hue);
-        lights.forEach(l => {
-            if (l.stateObj.state !== 'on') return;
-            if (effectiveCap(l) === 'rgb')
-                onRgbChange?.(l.entity_id, rgb);
-        });
-    }, [lights, lightMappings, onRgbChange]);
+        if (isMasterController) {
+            const mc = lights.find(l =>
+                l.entity_id.toLowerCase().includes('master_controller') ||
+                l.displayName?.toLowerCase().includes('master controller')
+            );
+            if (mc) onRgbChange?.(mc.entity_id, rgb);
+        } else {
+            lights.forEach(l => {
+                if (l.stateObj.state !== 'on') return;
+                if (effectiveCap(l) === 'rgb') onRgbChange?.(l.entity_id, rgb);
+            });
+        }
+    }, [lights, lightMappings, onRgbChange, isMasterController]);
 
     const toggle = () => {
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -636,12 +944,70 @@ export default function LightsGroupCard({
         l.entity_id.toLowerCase().includes('master_controller') ||
         l.displayName?.toLowerCase().includes('master controller')
     );
-    const masterIsOn = masterLight?.stateObj?.state === 'on';
+    const masterIsOn = masterLight
+        ? masterLight?.stateObj?.state === 'on'
+        : lights.some(l => l.stateObj?.state === 'on');
 
     const handleMasterToggle = () => {
-        if (!masterLight) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        onToggle?.(masterLight.entity_id, masterLight.stateObj.state);
+
+        // ── Master controller logic (temporarily disabled) ────────────────
+        // if (masterLight) {
+        //     onToggle?.(masterLight.entity_id);
+        //     return;
+        // }
+        // ─────────────────────────────────────────────────────────────────
+
+        // Operate on all individual lights (exclude master_controller entities)
+        const controllableLights = lights.filter(
+            l => !l.entity_id.toLowerCase().includes('master_controller')
+        );
+        const anyOn = controllableLights.some(l => l.stateObj?.state === 'on');
+
+        if (anyOn) {
+            // ── Snapshot all ON lights before turning them off ────────────
+            autoSnapshot.current = controllableLights
+                .filter(l => l.stateObj?.state === 'on')
+                .map(l => {
+                    const attrs = l.stateObj?.attributes || {};
+                    const cap = effectiveCap(l);
+                    const entry = { entity_id: l.entity_id };
+                    if (attrs.brightness != null) entry.brightness = attrs.brightness;
+                    if (cap === 'rgb' && Array.isArray(attrs.rgb_color)) entry.rgb_color = attrs.rgb_color;
+                    if ((cap === 'cct' || cap === 'rgb') && attrs.color_temp_kelvin != null)
+                        entry.color_temp_kelvin = attrs.color_temp_kelvin;
+                    return entry;
+                });
+
+            // Turn OFF all lights that are currently on
+            controllableLights
+                .filter(l => l.stateObj?.state === 'on')
+                .forEach(l => onToggle?.(l.entity_id));
+        } else {
+            // All off → priority: 1) manually saved scene  2) auto-snapshot  3) just turn all on
+            const sceneToRestore = savedScene?.length ? savedScene : autoSnapshot.current;
+            if (sceneToRestore?.length) {
+                sceneToRestore.forEach(entry => {
+                    const { entity_id, brightness, rgb_color, color_temp_kelvin } = entry;
+                    if (entity_id.toLowerCase().includes('master_controller')) return;
+                    const params = {};
+                    if (brightness != null)        params.brightness = brightness;
+                    if (rgb_color)                 params.rgb_color = rgb_color;
+                    if (color_temp_kelvin != null)  params.color_temp_kelvin = color_temp_kelvin;
+                    if (onTurnOn) {
+                        onTurnOn(entity_id, params);
+                    } else {
+                        const currentLight = lights.find(l => l.entity_id === entity_id);
+                        if (currentLight?.stateObj?.state !== 'on') onToggle?.(entity_id);
+                        if (brightness != null)        setTimeout(() => onBrightnessChange?.(entity_id, brightness), 400);
+                        if (color_temp_kelvin != null)  setTimeout(() => onColorTempChange?.(entity_id, color_temp_kelvin), 400);
+                        if (rgb_color)                  setTimeout(() => onRgbChange?.(entity_id, rgb_color), 400);
+                    }
+                });
+            } else {
+                controllableLights.forEach(l => onToggle?.(l.entity_id));
+            }
+        }
     };
 
     return (
@@ -659,27 +1025,58 @@ export default function LightsGroupCard({
                 <View style={styles.onBadge}>
                     <Text style={styles.onBadgeText}>{onLightsCount} On</Text>
                 </View>
+
+                <View style={styles.sceneButtons}>
+                    {/* Restore button — only shown when a scene is saved */}
+                    {savedScene?.length > 0 && (
+                        <TouchableOpacity
+                            style={styles.restoreBtn}
+                            onPress={handleRestoreScene}
+                            activeOpacity={0.75}
+                        >
+                            <Zap size={13} color="#44C8CA" />
+                            <Text style={styles.restoreBtnText}>Restore</Text>
+                        </TouchableOpacity>
+                    )}
+                    {/* Save scene button */}
+                    <TouchableOpacity
+                        style={[styles.saveSceneBtn, saveFeedback && styles.saveSceneBtnActive]}
+                        onPress={handleSaveScene}
+                        activeOpacity={0.7}
+                    >
+                        {saveFeedback
+                            ? <BookmarkCheck size={18} color="#8947ca" />
+                            : <Bookmark size={18} color={savedScene?.length ? '#8947ca' : 'rgba(255,255,255,0.35)'} />
+                        }
+                    </TouchableOpacity>
+                </View>
             </View>
 
             {/* Dots */}
-            <DotsRow lights={lights} />
+            <DotsRow lights={lights.filter(l =>
+                !l.entity_id.toLowerCase().includes('master_controller') &&
+                !l.displayName?.toLowerCase().includes('master controller')
+            )} />
 
-            {/* Master brightness slider — only in Master Controller rooms */}
-            {isMasterController && (
-                <View style={styles.sliderSection}>
-                    <Text style={styles.spectrumLabel}>☀</Text>
-                    <View style={styles.sliderWrapOuter}>
-                        <BrightnessSlider
-                            value={masterBrightness}
-                            onChange={(v) => { setMasterBrightness(v); setActiveMasterBrightness(v); }}
-                            onRelease={(v) => { setActiveMasterBrightness(null); handleBrightnessRelease(v); }}
-                        />
+            {/* Brightness slider — shown for any room with dimmable/CCT/RGB lights */}
+            {hasDimmable && (
+                <View style={styles.spectrumBlock}>
+                    <View style={styles.brightnessIconRow}>
+                        <Text style={styles.brightnessAvgLabel}>
+                            {Math.round((masterBrightness / 255) * 100)}%
+                        </Text>
                     </View>
+                    <BrightnessSlider
+                        value={masterBrightness}
+                        onChange={(v) => { setMasterBrightness(v); setActiveMasterBrightness(v); }}
+                        onRelease={(v) => { setActiveMasterBrightness(null); handleBrightnessRelease(v); }}
+                        disabled={onLightsCount === 0}
+                    />
                 </View>
             )}
 
-            {/* Master CCT slider — only in Master Controller rooms with CCT lights */}
-            {isMasterController && hasCCT && (
+            {/* CCT slider — shown for any room with CCT lights */}
+            {hasCCT && (
                 <SpectrumSlider
                     label="CCT"
                     value={masterCCTPct}
@@ -687,11 +1084,16 @@ export default function LightsGroupCard({
                     thumbColor={cctThumbColor}
                     onChange={setMasterCCTPct}
                     onRelease={handleCCTRelease}
+                    active={cctActive}
+                    onIconPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        setCctActive(v => !v);
+                    }}
                 />
             )}
 
-            {/* Master RGB slider — only in Master Controller rooms with RGB lights */}
-            {isMasterController && hasRGB && (
+            {/* RGB slider — shown for any room with RGB lights */}
+            {hasRGB && (
                 <SpectrumSlider
                     label="RGB"
                     value={masterRGBPct}
@@ -703,6 +1105,11 @@ export default function LightsGroupCard({
                     thumbColor={rgbThumbColor}
                     onChange={setMasterRGBPct}
                     onRelease={handleRGBRelease}
+                    active={rgbActive}
+                    onIconPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        setRgbActive(v => !v);
+                    }}
                 />
             )}
 
@@ -728,11 +1135,39 @@ export default function LightsGroupCard({
                                 onToggle={onToggle}
                                 onBrightnessChange={onBrightnessChange}
                                 onLongPress={onLongPress}
+                                onColorTap={(tappedLight, detectedCapability) => {
+                                    const m = lightMappings.find(m => m.entity_id === tappedLight.entity_id);
+                                    const cap = detectedCapability || m?.colorCapability || null;
+                                    setColorModalLight({ light: tappedLight, colorCapability: cap });
+                                }}
                                 masterBrightness={activeMasterBrightness}
                             />
                         </View>
                     ))}
                 </View>
+            )}
+
+            {/* Per-light color control modal */}
+            {colorModalLight && (
+                <LightControlModal
+                    visible={!!colorModalLight}
+                    onClose={() => setColorModalLight(null)}
+                    light={colorModalLight.light}
+                    colorCapability={colorModalLight.colorCapability}
+                    onUpdate={(entityId, payload) => {
+                        if (payload.toggle) {
+                            onToggle?.(entityId, colorModalLight.light.stateObj.state);
+                            return;
+                        }
+                        if (payload.brightness !== undefined) {
+                            onBrightnessChange?.(entityId, payload.brightness);
+                        } else if (payload.kelvin !== undefined) {
+                            onColorTempChange?.(entityId, payload.kelvin);
+                        } else if (payload.rgb_color !== undefined) {
+                            onRgbChange?.(entityId, payload.rgb_color);
+                        }
+                    }}
+                />
             )}
         </View>
     );
@@ -772,6 +1207,29 @@ const styles = StyleSheet.create({
         paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20,
     },
     onBadgeText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+    sceneButtons: {
+        flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 8,
+    },
+    saveSceneBtn: {
+        width: 36, height: 36, borderRadius: 18,
+        backgroundColor: 'rgba(255,255,255,0.07)',
+        alignItems: 'center', justifyContent: 'center',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.1)',
+    },
+    saveSceneBtnActive: {
+        backgroundColor: 'rgba(137,71,202,0.2)',
+        borderColor: '#8947ca',
+    },
+    restoreBtn: {
+        flexDirection: 'row', alignItems: 'center', gap: 5,
+        paddingHorizontal: 11, paddingVertical: 7,
+        borderRadius: 16,
+        backgroundColor: 'rgba(68,200,202,0.12)',
+        borderWidth: 1, borderColor: 'rgba(68,200,202,0.3)',
+    },
+    restoreBtnText: {
+        color: '#44C8CA', fontSize: 12, fontWeight: '600',
+    },
 
     // Dots
     dotsRow: {
@@ -828,7 +1286,52 @@ const styles = StyleSheet.create({
     },
     sliderWrapOuter: { flex: 1 },
 
-    // Spectrum rows
+    // Spectrum / slider blocks — icon sits above the track
+    spectrumBlock: {
+        flexDirection: 'column',
+        marginBottom: 12,
+    },
+    spectrumIcon: {
+        marginBottom: 4, marginLeft: 2,
+    },
+    // Sun icon — gradient pill when in control, plain dim when CCT/RGB takes over
+    sunIconBg: {
+        width: 26, height: 26, borderRadius: 13,
+        alignItems: 'center', justifyContent: 'center',
+        marginBottom: 4,
+    },
+    sunIconBgDisabled: {
+        width: 26, height: 26, borderRadius: 13,
+        alignItems: 'center', justifyContent: 'center',
+        marginBottom: 4,
+        backgroundColor: 'rgba(255,255,255,0.05)',
+    },
+    // CCT / RGB icon — no border, just a plain tappable icon
+    spectrumIconPlain: {
+        alignSelf: 'flex-start',
+        marginBottom: 4, paddingHorizontal: 2,
+    },
+    spectrumIconBtn: {
+        alignSelf: 'flex-start',
+        width: 26, height: 26, borderRadius: 13,
+        alignItems: 'center', justifyContent: 'center',
+        marginBottom: 4,
+        backgroundColor: 'rgba(255,255,255,0.07)',
+        borderWidth: 1, borderColor: 'rgba(255,255,255,0.12)',
+    },
+    spectrumIconBtnLinked: {
+        backgroundColor: 'rgba(255,255,255,0.10)',
+        borderWidth: 1.5, borderColor: 'rgba(255,255,255,0.35)',
+    },
+    spectrumIconBtnActive: {
+        backgroundColor: 'rgba(68,200,202,0.18)',
+        borderWidth: 1.5, borderColor: '#44C8CA',
+    },
+    brightnessIconRow: {
+        flexDirection: 'row', alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 4,
+    },
     spectrumRow: {
         flexDirection: 'row', alignItems: 'center',
         marginBottom: 12, gap: 10,
@@ -837,6 +1340,14 @@ const styles = StyleSheet.create({
         color: 'rgba(255,255,255,0.5)',
         fontSize: 11, fontWeight: '600',
         width: 28, textAlign: 'center',
+    },
+    spectrumIconWrap: {
+        width: 28, alignItems: 'center', justifyContent: 'center',
+    },
+    brightnessAvgLabel: {
+        color: 'rgba(255,255,255,0.6)',
+        fontSize: 12, fontWeight: '700',
+        minWidth: 36, textAlign: 'right',
     },
     // Spectrum track (the LinearGradient pill)
     spectrumTrack: {

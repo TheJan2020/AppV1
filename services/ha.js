@@ -62,9 +62,10 @@ export class HAService {
             this.authenticated = false;
             this.socket = null;
 
-            // Reject and clear all pending promises to prevent memory leak
-            this.pending.forEach(({ reject }) => {
-                try { reject(new Error('Connection closed')); } catch (e) { /* ignore */ }
+            // Silently resolve pending promises so callers don't get unhandled rejections.
+            // The reconnect mechanism below will re-establish the connection.
+            this.pending.forEach(({ resolve }) => {
+                try { resolve(null); } catch (e) { /* ignore */ }
             });
             this.pending.clear();
 
@@ -100,9 +101,11 @@ export class HAService {
             this.appStateSubscription = null;
         }
 
-        // Reject and clear all pending promises
-        this.pending.forEach(({ reject }) => {
-            try { reject(new Error('Disconnected')); } catch (e) { /* ignore */ }
+        // Silently resolve pending promises — reject() causes unhandled rejection errors
+        // on call sites (e.g. callService) that don't chain .catch(). Since disconnect()
+        // is called during component cleanup, the result is discarded anyway.
+        this.pending.forEach(({ resolve }) => {
+            try { resolve(null); } catch (e) { /* ignore */ }
         });
         this.pending.clear();
 

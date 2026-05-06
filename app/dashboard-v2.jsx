@@ -25,7 +25,9 @@ import AppleTVRemoteModal from '../components/DashboardV2/AppleTVRemoteModal';
 import RoomsList from '../components/DashboardV2/RoomsList';
 import DraggableRoomList from '../components/DashboardV2/DraggableRoomList';
 import CamerasList from '../components/DashboardV2/CamerasList';
+import FrigateEventsFeed from '../components/DashboardV2/FrigateEventsFeed';
 import HACamerasList from '../components/DashboardV2/HACamerasList';
+import { buildEntityMap } from '../components/DashboardV2/CameraSensorOverlay';
 import TabBar from '../components/DashboardV2/TabBar';
 import TabletSidebar from '../components/DashboardV2/TabletSidebar';
 import useDeviceType from '../hooks/useDeviceType';
@@ -62,6 +64,7 @@ export default function DashboardV2() {
     const [badgeConfig, setBadgeConfig] = useState(null);
     const [currentFloor, setCurrentFloor] = useState(null);
     const [activeTab, setActiveTab] = useState('home');
+    const [cctvView, setCctvView] = useState('cameras'); // 'cameras' | 'events'
     const [frigateCameras, setFrigateCameras] = useState([]); // Frigate State
     const [selectedFrigateCamera, setSelectedFrigateCamera] = useState(null);
     const [showFrigateModal, setShowFrigateModal] = useState(false);
@@ -816,6 +819,9 @@ export default function DashboardV2() {
         return { power: pw, securityState: sec };
     }, [entities, badgeConfig]);
 
+    // Fast entity map for sensor overlays on camera cards
+    const haEntityMap = useMemo(() => buildEntityMap(entities), [entities]);
+
     // ── Notification generation from HA state_changed events ────────────────
     // All notifications are fired directly in the socket subscriber (real-time,
     // with old→new state). No useEffect watchers needed — they would duplicate.
@@ -1416,6 +1422,8 @@ export default function DashboardV2() {
                     service={frigateService.current}
                     initialView={frigateInitialView}
                     onClose={() => setShowFrigateModal(false)}
+                    cameraSensors={badgeConfig?.camera_sensors || {}}
+                    haEntities={entities}
                 />
             )}
 
@@ -1653,8 +1661,9 @@ export default function DashboardV2() {
                             onCameraPress={handleFrigateCameraPress}
                             onAllCamerasPress={() => setActiveTab('cctv')}
                             adminUrl={connectionConfig.adminUrl}
-                            cardHeight={badgeConfig?.camera_card_height || 174}
                             onCamerasUpdated={(ids) => setBadgeConfig(prev => ({ ...prev, selected_cameras: ids }))}
+                            cameraSensors={badgeConfig?.camera_sensors || {}}
+                            haEntities={entities}
                         />
                     </ScrollView>
 
@@ -1738,17 +1747,57 @@ export default function DashboardV2() {
             <View style={[{ flex: 1 }, activeTab !== 'cctv' && { display: 'none' }]}>
                 {activeTab === 'cctv' ? (
                     frigateCameras.length === 0 ? <LoadingSpinner /> : (
-                        <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
-                            <View style={{ marginTop: 60 }}>
+                        <View style={{ flex: 1, marginTop: 60 }}>
+                            {/* Cameras / Events toggle */}
+                            <View style={styles.cctvToggleRow}>
                                 <Text style={styles.sectionTitle}>Security Cameras</Text>
-                                <CamerasList
-                                    frigateCameras={frigateCameras}
-                                    service={frigateService.current}
-                                    onCameraPress={handleFrigateCameraPress}
-                                    columns={columns}
-                                />
+                                <View style={styles.cctvToggle}>
+                                    <TouchableOpacity
+                                        style={[styles.cctvToggleBtn, cctvView === 'cameras' && styles.cctvToggleBtnActive]}
+                                        onPress={() => setCctvView('cameras')}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Text style={[styles.cctvToggleText, cctvView === 'cameras' && styles.cctvToggleTextActive]}>
+                                            Cameras
+                                        </Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity
+                                        style={[styles.cctvToggleBtn, cctvView === 'events' && styles.cctvToggleBtnActive]}
+                                        onPress={() => setCctvView('events')}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Text style={[styles.cctvToggleText, cctvView === 'events' && styles.cctvToggleTextActive]}>
+                                            Events
+                                        </Text>
+                                    </TouchableOpacity>
+                                </View>
                             </View>
-                        </ScrollView>
+
+                            {cctvView === 'cameras' ? (
+                                <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
+                                    <CamerasList
+                                        frigateCameras={frigateCameras}
+                                        service={frigateService.current}
+                                        onCameraPress={handleFrigateCameraPress}
+                                        columns={columns}
+                                        cameraSensors={badgeConfig?.camera_sensors || {}}
+                                        entityMap={haEntityMap}
+                                    />
+                                </ScrollView>
+                            ) : (
+                                <FrigateEventsFeed
+                                    adminUrl={connectionConfig.adminUrl}
+                                    authHeaders={{ Authorization: `Bearer ${connectionConfig.token}` }}
+                                    frigateService={frigateService.current}
+                                    frigateCameras={frigateCameras}
+                                    onEventPress={(event) => {
+                                        // Open camera modal on the camera that detected the event
+                                        const cam = frigateCameras.find(c => (c.name || c.id) === event.camera);
+                                        if (cam) handleFrigateCameraPress(cam);
+                                    }}
+                                />
+                            )}
+                        </View>
                     )
                 ) : null}
             </View>
@@ -1869,6 +1918,37 @@ const styles = StyleSheet.create({
         fontSize: 24,
         fontWeight: 'bold',
         marginBottom: 20,
+    },
+    cctvToggleRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 20,
+        marginBottom: 4,
+    },
+    cctvToggle: {
+        flexDirection: 'row',
+        backgroundColor: 'rgba(255,255,255,0.06)',
+        borderRadius: 22,
+        padding: 3,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+    },
+    cctvToggleBtn: {
+        paddingHorizontal: 16,
+        paddingVertical: 6,
+        borderRadius: 18,
+    },
+    cctvToggleBtnActive: {
+        backgroundColor: 'rgba(137,71,202,0.3)',
+    },
+    cctvToggleText: {
+        color: 'rgba(255,255,255,0.4)',
+        fontSize: 13,
+        fontWeight: '500',
+    },
+    cctvToggleTextActive: {
+        color: '#c49ef0',
     },
     centerContent: {
         alignItems: 'center',

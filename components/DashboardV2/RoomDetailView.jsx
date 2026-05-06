@@ -235,7 +235,12 @@ function LightCard({ light, onToggle, onBrightnessChange, onLongPress, needsChan
             pressScale.value = withSpring(1, { damping: 6, stiffness: 300 });
         });
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        onToggle(light.entity_id, light.stateObj.state);
+        // Color-capable lights: tap opens the color control modal
+        if (hasColorControl) {
+            onLongPress?.(light);
+        } else {
+            onToggle(light.entity_id, light.stateObj.state);
+        }
     };
 
     const iconUrl = (mapping?.lightType?.icon_path && adminUrl) ? `${adminUrl}${mapping.lightType.icon_path}` : null;
@@ -253,11 +258,6 @@ function LightCard({ light, onToggle, onBrightnessChange, onLongPress, needsChan
                         lightCardNeedsChange && { borderColor: '#8947ca', borderWidth: 2 }
                     ]}
                     onPress={handlePress}
-                    onLongPress={hasColorControl ? () => {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
-                        onLongPress(light);
-                    } : undefined}
-                    delayLongPress={500}
                     activeOpacity={0.9}
                 >
                     {supportsBrightness && isOn && (
@@ -383,6 +383,12 @@ export default function RoomDetailView({
     const actualLightEntities = lights.filter(l => !l.entity_id.startsWith('lock.'));
 
     const handleUpdate = (entityId, payload) => {
+        if (payload.toggle) {
+            // Power toggle from modal header
+            const light = lights.find(l => l.entity_id === entityId);
+            if (onToggle) onToggle('light', 'toggle', { entity_id: entityId });
+            return;
+        }
         if (onToggle) onToggle('light', 'turn_on', { entity_id: entityId, ...payload });
     };
 
@@ -635,18 +641,8 @@ export default function RoomDetailView({
                     contentContainerStyle={styles.content}
                     scrollEventThrottle={16}
                 >
-                    {/* ── 1. Apply Preferences — always at the top ── */}
-                    <View style={styles.prefButtonContainer}>
-                        <ActivatePreferencesButton
-                            roomName={formatRoomName(room.name)}
-                            onActivate={handleActivatePreferences}
-                            onPreferencesLoaded={setPreferences}
-                            logoSource={require('../../assets/logo_for_prefrences.png')}
-                        />
-                    </View>
-
-                    {/* ── 2. Scenes ── */}
-                    {scripts.length > 0 && (
+                    {/* ── 1. Scenes + Apply Preferences (always last in the grid) ── */}
+                    {(scripts.length > 0 || showPreferenceButton) && (
                         <View>
                             <View style={styles.divider} />
                             <Text style={styles.roomSectionHeading}>SCENES</Text>
@@ -662,6 +658,16 @@ export default function RoomDetailView({
                                         </View>
                                     );
                                 })}
+                                {/* Apply Preferences — always last */}
+                                {showPreferenceButton && (
+                                    <View style={{ width: cardWidth }}>
+                                        <ActivatePreferencesButton
+                                            roomName={formatRoomName(room.name)}
+                                            onActivate={handleActivatePreferences}
+                                            onPreferencesLoaded={setPreferences}
+                                        />
+                                    </View>
+                                )}
                             </View>
                         </View>
                     )}
@@ -728,6 +734,9 @@ export default function RoomDetailView({
                                         onToggle={(id) => {
                                             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                                             if (onToggle) onToggle('light', 'toggle', { entity_id: id });
+                                        }}
+                                        onTurnOn={(id, params) => {
+                                            if (onToggle) onToggle('light', 'turn_on', { entity_id: id, ...params });
                                         }}
                                         onBrightnessChange={handleBrightness}
                                         onColorTempChange={handleColorTemp}

@@ -32,7 +32,7 @@ function RoomsIcon({ color }) {
 function AIIcon({ color }) {
     return (
         <Image
-            source={require('../../assets/new_ai.png')}
+            source={require('../../assets/ai.png')}
             style={[styles.pngIcon, { opacity: 1 }]}
             tintColor="#FFFFFF"
             resizeMode="contain"

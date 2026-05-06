@@ -1,119 +1,133 @@
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, SectionList, ActivityIndicator } from 'react-native';
-import { BlurView } from 'expo-blur';
+import { View, Text, StyleSheet, TouchableOpacity, Image, FlatList, ActivityIndicator } from 'react-native';
 import { Play } from 'lucide-react-native';
 
-export default function FrigateTimeline({ events, onEventPress, onLoadMore, hasMore, loadingMore, selectedEventId, listRef, adminUrl, authHeaders }) {
+export default function FrigateTimeline({ events, onEventPress, onLoadMore, hasMore, loadingMore, selectedEventId, listRef, adminUrl, authHeaders, listHeader }) {
 
-    // Group events by Date and Hour
-    const sections = useMemo(() => {
-        const grouped = {};
-
-        events.forEach(event => {
-            const date = new Date(event.start_time * 1000);
-            // Force Gregorian/English date
-            const dayKey = date.toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
-
-            if (!grouped[dayKey]) {
-                grouped[dayKey] = [];
-            }
-            grouped[dayKey].push(event);
+    // Deduplicate, group by date, then build flat rows:
+    // - a 'header' row (spans full width)
+    // - 'pair' rows with up to 2 event cards
+    const rows = useMemo(() => {
+        const seen = new Set();
+        const deduped = events.filter(e => {
+            if (!e?.id || seen.has(e.id)) return false;
+            seen.add(e.id);
+            return true;
         });
 
-        return Object.keys(grouped).map(key => ({
-            title: key,
-            data: grouped[key]
-        }));
+        const groups = {};
+        deduped.forEach(event => {
+            const date = new Date(event.start_time * 1000);
+            const dayKey = date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
+            if (!groups[dayKey]) groups[dayKey] = [];
+            groups[dayKey].push(event);
+        });
+
+        const result = [];
+        Object.keys(groups).forEach(day => {
+            result.push({ type: 'header', key: `header_${day}`, title: day });
+            const dayEvents = groups[day];
+            for (let i = 0; i < dayEvents.length; i += 2) {
+                result.push({
+                    type: 'pair',
+                    key: `pair_${dayEvents[i].id}`,
+                    left: dayEvents[i],
+                    right: dayEvents[i + 1] || null,
+                });
+            }
+        });
+        return result;
     }, [events]);
 
-    const renderItem = ({ item, index, section }) => {
-        const date = new Date(item.start_time * 1000);
-        // Manual time formatting to ensure correct separation
+    const renderEventCard = (event) => {
+        if (!event) return <View style={styles.cardPlaceholder} />;
+
+        const date = new Date(event.start_time * 1000);
         const hours = date.getHours();
-        const minutes = date.getMinutes();
+        const minutes = date.getMinutes().toString().padStart(2, '0');
         const amPm = hours >= 12 ? 'PM' : 'AM';
         const hours12 = hours % 12 || 12;
-        const minutesStr = minutes.toString().padStart(2, '0');
-        const timeOnly = `${hours12}:${minutesStr}`;
-
-        const isSelected = selectedEventId === item.id;
-        const duration = item.end_time ? Math.round(item.end_time - item.start_time) : null;
+        const timeStr = `${hours12}:${minutes} ${amPm}`;
+        const duration = event.end_time ? Math.round(event.end_time - event.start_time) : null;
+        const isSelected = selectedEventId === event.id;
 
         return (
-            <View style={styles.timelineItem}>
-                {/* Left Time Column */}
-                <View style={styles.timeColumn}>
-                    <View style={styles.timeGroup}>
-                        <Text style={styles.timeText}>{timeOnly}</Text>
-                        <Text style={styles.amPmText}>{amPm}</Text>
-                    </View>
-                    {duration && <Text style={styles.durationText}>{duration}s</Text>}
-                </View>
-
-                {/* Timeline Line & Dot */}
-                <View style={styles.lineColumn}>
-                    <View style={styles.lineTop} />
-                    <View style={[styles.dot, isSelected && styles.activeDot]} />
-                    <View style={styles.lineBottom} />
-                </View>
-
-                {/* Event Card */}
-                <TouchableOpacity
-                    style={[styles.cardContainer, isSelected && styles.activeCard]}
-                    onPress={() => onEventPress(item)}
-                    activeOpacity={0.7}
-                >
+            <TouchableOpacity
+                key={event.id}
+                style={[styles.card, isSelected && styles.cardSelected]}
+                onPress={() => onEventPress(event)}
+                activeOpacity={0.75}
+            >
+                <View style={styles.thumbWrap}>
                     <Image
                         source={{
-                            uri: `${adminUrl}/api/frigate/events/${item.id}/thumbnail`,
+                            uri: `${adminUrl}/api/frigate/events/${event.id}/thumbnail`,
                             headers: authHeaders || {},
                         }}
                         style={styles.thumbnail}
                         resizeMode="cover"
                     />
-                    <View style={styles.cardOverlay}>
-                        <View style={styles.labelBadge}>
-                            <Text style={styles.labelText}>{item.label}</Text>
+                    {isSelected && (
+                        <View style={styles.playOverlay}>
+                            <Play size={28} color="white" fill="white" />
                         </View>
-                        {isSelected && (
-                            <View style={styles.playIconOverlay}>
-                                <Play size={20} color="white" fill="white" />
-                            </View>
-                        )}
+                    )}
+                    {duration != null && (
+                        <View style={styles.durationBadge}>
+                            <Text style={styles.durationText}>{duration}s</Text>
+                        </View>
+                    )}
+                </View>
+                <View style={styles.cardInfo}>
+                    <Text style={styles.timeText}>{timeStr}</Text>
+                    <View style={[styles.labelBadge, isSelected && styles.labelBadgeSelected]}>
+                        <Text style={styles.labelText}>{event.label}</Text>
                     </View>
-                </TouchableOpacity>
+                </View>
+            </TouchableOpacity>
+        );
+    };
+
+    const renderItem = ({ item }) => {
+        if (item.type === 'header') {
+            return (
+                <View style={styles.sectionHeader}>
+                    <Text style={styles.sectionHeaderText}>{item.title}</Text>
+                </View>
+            );
+        }
+        return (
+            <View style={styles.row}>
+                {renderEventCard(item.left)}
+                {renderEventCard(item.right)}
             </View>
         );
     };
 
-    const renderSectionHeader = ({ section: { title } }) => (
-        <View style={styles.sectionHeader}>
-            <BlurView intensity={20} tint="dark" style={styles.sectionHeaderBlur}>
-                <Text style={styles.sectionHeaderText}>{title}</Text>
-            </BlurView>
-        </View>
-    );
-
     return (
-        <SectionList
+        <FlatList
             ref={listRef}
-            sections={sections}
-            keyExtractor={(item) => item.id}
+            data={rows}
+            keyExtractor={(item) => item.key}
             renderItem={renderItem}
-            renderSectionHeader={renderSectionHeader}
+            ListHeaderComponent={listHeader || null}
             contentContainerStyle={styles.listContent}
-            stickySectionHeadersEnabled={true}
             onEndReached={() => {
                 if (hasMore && !loadingMore) onLoadMore();
             }}
-            onEndReachedThreshold={0.5}
+            onEndReachedThreshold={0.4}
             ListFooterComponent={
                 loadingMore ? (
                     <View style={styles.footerLoader}>
-                        <ActivityIndicator color="#fff" />
+                        <ActivityIndicator color="#3b82f6" />
+                        <Text style={styles.footerText}>Loading more…</Text>
                     </View>
+                ) : hasMore ? (
+                    <View style={{ height: 40 }} />
                 ) : (
-                    <View style={{ height: 100 }} /> // Spacer
+                    <View style={styles.footerEnd}>
+                        <Text style={styles.footerEndText}>· end of events ·</Text>
+                    </View>
                 )
             }
             ListEmptyComponent={
@@ -127,137 +141,125 @@ export default function FrigateTimeline({ events, onEventPress, onLoadMore, hasM
 
 const styles = StyleSheet.create({
     listContent: {
-        paddingBottom: 40
+        paddingHorizontal: 12,
+        paddingBottom: 60,
+    },
+    row: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        marginBottom: 10,
     },
     sectionHeader: {
-        marginBottom: 10,
-        marginTop: 20,
-        marginHorizontal: 20,
-        borderRadius: 8,
-        overflow: 'hidden',
-    },
-    sectionHeaderBlur: {
-        paddingVertical: 6,
-        paddingHorizontal: 12,
-        backgroundColor: 'rgba(255,255,255,0.1)'
+        width: '100%',
+        paddingVertical: 8,
+        paddingHorizontal: 4,
+        marginTop: 16,
+        marginBottom: 6,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.1)',
     },
     sectionHeaderText: {
-        color: 'rgba(255,255,255,0.8)',
-        fontWeight: 'bold',
-        fontSize: 14,
+        color: 'rgba(255,255,255,0.7)',
+        fontWeight: '700',
+        fontSize: 13,
         textTransform: 'uppercase',
-        letterSpacing: 1
+        letterSpacing: 0.8,
     },
-    timelineItem: {
-        flexDirection: 'row',
-        paddingHorizontal: 20,
-        height: 100, // Fixed height for consistency
-    },
-    timeColumn: {
-        width: 60,
-        alignItems: 'flex-end',
-        paddingRight: 10,
-        justifyContent: 'center',
-    },
-    timeGroup: {
-        alignItems: 'flex-start', // Align children (Time, AM/PM) to left
-    },
-    timeText: {
-        color: 'white',
-        fontSize: 14,
-        fontWeight: 'bold',
-        marginBottom: 2,
-    },
-    amPmText: {
-        color: 'rgba(255,255,255,0.6)',
-        fontSize: 10,
-        textTransform: 'uppercase',
-        marginTop: 0,
-        fontWeight: '600',
-    },
-    durationText: {
-        color: 'rgba(255,255,255,0.5)',
-        fontSize: 10,
-        marginTop: 2
-    },
-    lineColumn: {
-        width: 20,
-        alignItems: 'center',
-    },
-    lineTop: {
+    card: {
         flex: 1,
-        width: 2,
-        backgroundColor: 'rgba(255,255,255,0.1)',
-    },
-    lineBottom: {
-        flex: 1,
-        width: 2,
-        backgroundColor: 'rgba(255,255,255,0.1)',
-    },
-    dot: {
-        width: 10,
-        height: 10,
-        borderRadius: 5,
-        backgroundColor: 'rgba(255,255,255,0.3)',
-        marginVertical: -1 // Overlap line slightly
-    },
-    activeDot: {
-        backgroundColor: '#3b82f6',
-        width: 14,
-        height: 14,
-        borderRadius: 7
-    },
-    cardContainer: {
-        // flex: 1, // Removed to prevent full expansion
-        width: 160, // Fixed narrower width
-        marginLeft: 10,
-        marginBottom: 10,
+        maxWidth: '48.5%',
+        backgroundColor: 'rgba(255,255,255,0.06)',
         borderRadius: 12,
         overflow: 'hidden',
-        backgroundColor: 'rgba(255,255,255,0.05)',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)'
+        borderWidth: 1.5,
+        borderColor: 'transparent',
     },
-    activeCard: {
+    cardSelected: {
         borderColor: '#3b82f6',
-        borderWidth: 1.5
+    },
+    cardPlaceholder: {
+        flex: 1,
+        maxWidth: '48.5%',
+    },
+    thumbWrap: {
+        width: '100%',
+        aspectRatio: 16 / 9,
+        backgroundColor: '#111',
     },
     thumbnail: {
         width: '100%',
         height: '100%',
-        backgroundColor: '#111'
     },
-    cardOverlay: {
+    playOverlay: {
         ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    durationBadge: {
+        position: 'absolute',
+        bottom: 5,
+        right: 5,
+        backgroundColor: 'rgba(0,0,0,0.65)',
+        borderRadius: 4,
+        paddingHorizontal: 5,
+        paddingVertical: 2,
+    },
+    durationText: {
+        color: 'white',
+        fontSize: 10,
+        fontWeight: '600',
+    },
+    cardInfo: {
         padding: 8,
-        justifyContent: 'space-between'
+        gap: 4,
+    },
+    timeText: {
+        color: 'white',
+        fontSize: 12,
+        fontWeight: '700',
     },
     labelBadge: {
-        backgroundColor: 'rgba(0,0,0,0.6)',
         alignSelf: 'flex-start',
-        paddingHorizontal: 8,
-        paddingVertical: 4, // Increased padding
-        borderRadius: 4
+        backgroundColor: 'rgba(255,255,255,0.12)',
+        borderRadius: 4,
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+    },
+    labelBadgeSelected: {
+        backgroundColor: 'rgba(59,130,246,0.35)',
     },
     labelText: {
-        color: 'white',
-        fontSize: 7, // Drastically smaller
-        fontWeight: 'bold',
-        textTransform: 'capitalize'
-    },
-    playIconOverlay: {
-        alignSelf: 'center',
-        padding: 10
+        color: 'rgba(255,255,255,0.85)',
+        fontSize: 10,
+        fontWeight: '600',
+        textTransform: 'capitalize',
     },
     footerLoader: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'center',
         paddingVertical: 20,
-        alignItems: 'center'
+        gap: 8,
+    },
+    footerText: {
+        color: 'rgba(255,255,255,0.5)',
+        fontSize: 13,
+    },
+    footerEnd: {
+        paddingVertical: 20,
+        alignItems: 'center',
+    },
+    footerEndText: {
+        color: 'rgba(255,255,255,0.25)',
+        fontSize: 12,
     },
     emptyContainer: {
         padding: 40,
-        alignItems: 'center'
+        alignItems: 'center',
     },
     emptyText: {
-        color: 'rgba(255,255,255,0.4)'
-    }
+        color: 'rgba(255,255,255,0.4)',
+        fontSize: 14,
+    },
 });

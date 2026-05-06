@@ -1,75 +1,98 @@
 import { memo, useState, useEffect, useRef, useMemo } from 'react';
 import {
-    View, Text, StyleSheet, TouchableOpacity, Dimensions, Image,
+    View, Text, StyleSheet, TouchableOpacity, Dimensions,
     Modal, FlatList, ActivityIndicator, Alert, TextInput, Animated, PanResponder,
 } from 'react-native';
+import { WebView } from 'react-native-webview';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Edit2, Check, X, Search } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
 import { authFetch } from '../../utils/authFetch';
+import CameraSensorOverlay, { buildEntityMap, resolveSensorIds } from './CameraSensorOverlay';
 
 // 2 columns, parent has paddingHorizontal:20 on each side → usable width = screen - 40
 const SCREEN_W = Dimensions.get('window').width;
 const COL_GAP = 10;
 const H_PAD = 40;
 const CARD_W = (SCREEN_W - H_PAD - COL_GAP) / 2;
-const CARD_H = 174;
 
-// Camera card — snapshot image, auto-refreshes every 5 s
-const CameraCard = ({ cam, frigateService, onPress, cardHeight = 174 }) => {
-    const [tick, setTick] = useState(Date.now());
+// Strip page chrome: remove body margin/padding/background so the stream fills the card
+const STRIP_PAGE_JS = `
+  (function() {
+    function apply() {
+      var s = document.body ? document.body.style : null;
+      if (!s) return;
+      s.margin = '0'; s.padding = '0'; s.background = 'black'; s.overflow = 'hidden';
+      document.documentElement.style.background = 'black';
+      document.documentElement.style.overflow = 'hidden';
+      document.querySelectorAll('img,video').forEach(function(el) {
+        el.style.width = '100%'; el.style.height = '100%'; el.style.objectFit = 'cover';
+        el.style.display = 'block';
+      });
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);
+    else apply();
+    setTimeout(apply, 500);
+  })();
+  true;
+`;
 
-    // Refresh snapshot every 5 seconds
-    useEffect(() => {
-        const id = setInterval(() => setTick(Date.now()), 5000);
-        return () => clearInterval(id);
-    }, []);
-
+// Camera card — live WebView stream
+const CameraCard = ({ cam, frigateService, onPress, isOnline = true, sensorIds = [], entityMap = {} }) => {
+    const [streamError, setStreamError] = useState(false);
     const isHACamera = !!(cam.entity_id);
-    const baseUrl = isHACamera
+    const streamUrl = isHACamera
         ? frigateService?.getHASnapshotUrl(cam.entity_id || cam.id)
-        : frigateService?.getSnapshotUrl(cam.name || cam.id);
+        : frigateService?.getStreamUrl(cam.name || cam.id);
 
-    // Append cache-buster so Image re-fetches each interval
-    const snapshotUrl = baseUrl ? `${baseUrl}?t=${tick}` : null;
     const headers = frigateService?.headers || {};
 
     return (
         <TouchableOpacity
-            style={[styles.card, { height: cardHeight }]}
+            style={styles.card}
             onPress={() => onPress && onPress(cam)}
             activeOpacity={0.85}
         >
-            {snapshotUrl ? (
-                <Image
-                    source={{ uri: snapshotUrl, headers }}
+            {streamUrl && !streamError ? (
+                <WebView
+                    source={{ uri: streamUrl, headers }}
                     style={StyleSheet.absoluteFill}
-                    resizeMode="cover"
+                    backgroundColor="black"
+                    scrollEnabled={false}
+                    allowsInlineMediaPlayback={true}
+                    mediaPlaybackRequiresUserAction={false}
+                    originWhitelist={['*']}
+                    scalesPageToFit={true}
+                    javaScriptEnabled={true}
+                    injectedJavaScript={STRIP_PAGE_JS}
+                    onError={() => setStreamError(true)}
+                    onHttpError={(e) => { if (e.nativeEvent.statusCode >= 400) setStreamError(true); }}
+                    onLoadStart={() => setStreamError(false)}
                 />
             ) : (
                 <View style={styles.placeholder}>
-                    <Text style={styles.placeholderIcon}>📷</Text>
+                    {streamError ? (
+                        <>
+                            <Text style={styles.placeholderIcon}>📵</Text>
+                            <Text style={styles.placeholderErrorText}>Stream unavailable</Text>
+                        </>
+                    ) : (
+                        <Text style={styles.placeholderIcon}>📷</Text>
+                    )}
                 </View>
             )}
 
-            {/* Same gradient as room card */}
             <LinearGradient
                 colors={['transparent', 'rgba(0,0,0,0.4)', 'rgba(0,0,0,0.92)']}
                 style={styles.gradient}
             />
 
-            {/* Camera name at bottom — same as room card */}
             <View style={styles.textContainer}>
                 <Text style={styles.cameraName} numberOfLines={1}>
                     {cam.name || cam.id}
                 </Text>
             </View>
-
-            {/* Live dot top-right */}
-            <View style={styles.liveBadge}>
-                <View style={styles.liveDot} />
-                <Text style={styles.liveText}>LIVE</Text>
-            </View>
+            <CameraSensorOverlay sensorIds={sensorIds} entityMap={entityMap} position="bl" />
         </TouchableOpacity>
     );
 };
@@ -276,8 +299,45 @@ function EditCamerasModal({ visible, onClose, adminUrl, onSave }) {
     );
 }
 
-function HomeCameraStrip({ frigateCameras = [], selectedCameraNames = [], frigateService, onCameraPress, onAllCamerasPress, adminUrl, onCamerasUpdated, cardHeight = 174 }) {
+function HomeCameraStrip({ frigateCameras = [], selectedCameraNames = [], frigateService, onCameraPress, onAllCamerasPress, adminUrl, onCamerasUpdated, cameraSensors = {}, haEntities = [] }) {
     const [editVisible, setEditVisible] = useState(false);
+    const [cameraOnlineStatus, setCameraOnlineStatus] = useState({});
+
+    // Fast entity lookup map built from live HA entities (sensors only)
+    const entityMap = useMemo(() => {
+        const sensorEntities = haEntities.filter(e =>
+            e.entity_id.startsWith('sensor.') || e.entity_id.startsWith('binary_sensor.')
+        );
+        const map = buildEntityMap(sensorEntities);
+        return map;
+    }, [haEntities]);
+
+    useEffect(() => {
+        if (!frigateService) return;
+        let cancelled = false;
+
+        const poll = async () => {
+            try {
+                const stats = await frigateService.getStats();
+                if (cancelled || !stats?.cameras) return;
+                const status = {};
+                Object.entries(stats.cameras).forEach(([name, data]) => {
+                    // camera_fps > 0 means Frigate is receiving frames from this camera
+                    status[name] = (data.camera_fps ?? 0) > 0;
+                });
+                setCameraOnlineStatus(status);
+            } catch {
+                // Silently ignore — keep last known status
+            }
+        };
+
+        poll();
+        const id = setInterval(poll, 10000);
+        return () => {
+            cancelled = true;
+            clearInterval(id);
+        };
+    }, [frigateService]);
 
     // selectedCameraNames may be HA entity IDs like "camera.doorstep"
     // frigateCameras have name like "doorstep" (without prefix)
@@ -303,15 +363,20 @@ function HomeCameraStrip({ frigateCameras = [], selectedCameraNames = [], frigat
             </View>
             {cameras.length > 0 && (
                 <View style={styles.grid}>
-                    {cameras.map(cam => (
-                        <CameraCard
-                            key={cam.id || cam.name}
-                            cam={cam}
-                            frigateService={frigateService}
-                            onPress={onCameraPress}
-                            cardHeight={cardHeight}
-                        />
-                    ))}
+                    {cameras.map(cam => {
+                        const sensorIds = resolveSensorIds(cam, cameraSensors);
+                        return (
+                            <CameraCard
+                                key={cam.id || cam.name}
+                                cam={cam}
+                                frigateService={frigateService}
+                                onPress={onCameraPress}
+                                isOnline={cameraOnlineStatus[cam.name] !== false}
+                                sensorIds={sensorIds}
+                                entityMap={entityMap}
+                            />
+                        );
+                    })}
                 </View>
             )}
             <EditCamerasModal
@@ -379,7 +444,7 @@ const styles = StyleSheet.create({
     },
     card: {
         width: CARD_W,
-        height: CARD_H,
+        aspectRatio: 16 / 9,
         borderRadius: 16,
         overflow: 'hidden',
         backgroundColor: '#1e1f35',
@@ -399,6 +464,13 @@ const styles = StyleSheet.create({
     placeholderIcon: {
         fontSize: 36,
         opacity: 0.4,
+    },
+    placeholderErrorText: {
+        color: 'rgba(255,255,255,0.35)',
+        fontSize: 11,
+        fontFamily: CF.regular,
+        marginTop: 6,
+        textAlign: 'center',
     },
     gradient: {
         position: 'absolute',
@@ -433,17 +505,28 @@ const styles = StyleSheet.create({
         paddingVertical: 3,
         borderRadius: 8,
     },
+    liveBadgeError: {
+        backgroundColor: 'rgba(239,83,80,0.15)',
+        borderWidth: 1,
+        borderColor: 'rgba(239,83,80,0.4)',
+    },
     liveDot: {
         width: 6,
         height: 6,
         borderRadius: 3,
         backgroundColor: '#4ade80',
     },
+    liveDotError: {
+        backgroundColor: '#EF5350',
+    },
     liveText: {
         color: 'white',
         fontSize: 10,
         fontFamily: CF.semibold,
         letterSpacing: 0.5,
+    },
+    liveTextError: {
+        color: '#EF5350',
     },
 });
 

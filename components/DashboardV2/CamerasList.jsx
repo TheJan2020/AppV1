@@ -1,6 +1,6 @@
 import { memo, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { WebView } from 'react-native-webview';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';import { WebView } from 'react-native-webview';
+import CameraSensorOverlay, { resolveSensorIds } from './CameraSensorOverlay';
 
 // Injected JS: detects video/stream errors inside the WebView page and posts messages back
 const INJECTED_JS = `
@@ -11,7 +11,14 @@ const INJECTED_JS = `
     function attachVideoListeners(v) {
       if (v._rn_attached) return;
       v._rn_attached = true;
-      v.addEventListener('playing', function() { postMsg('stream_ok'); });
+      // Delay stream_ok slightly so error text check runs first
+      v.addEventListener('playing', function() {
+        setTimeout(function() {
+          var text = document.body ? document.body.innerText : '';
+          var hasErrText = text.indexOf('check error') !== -1 || text.indexOf('frames have been received') !== -1;
+          if (!hasErrText) postMsg('stream_ok');
+        }, 800);
+      });
       v.addEventListener('error', function() { postMsg('stream_error'); });
       v.addEventListener('stalled', function() {
         setTimeout(function() { if (v.readyState < 3) postMsg('stream_error'); }, 3000);
@@ -42,8 +49,21 @@ const INJECTED_JS = `
   true;
 `;
 
-const LiveCamera = ({ cam, service }) => {
+const LiveCamera = ({ cam, service, sensorIds = [], entityMap = {} }) => {
     const [hasError, setHasError] = useState(false);
+    // Track whether injected JS has ever confirmed a real error on this load.
+    // Once an in-page error is detected, onLoad must NOT clear it — only a
+    // genuine 'stream_ok' (video playing) message can clear it.
+    const errorConfirmedRef = useState(false);
+
+    const markError = () => {
+        errorConfirmedRef[1](true);
+        setHasError(true);
+    };
+    const clearError = () => {
+        errorConfirmedRef[1](false);
+        setHasError(false);
+    };
 
     if (!service || !cam) {
         return (
@@ -63,7 +83,8 @@ const LiveCamera = ({ cam, service }) => {
             <View style={styles.imageContainer}>
                 <WebView
                     source={{ uri: streamUrl, headers: service?.headers || {} }}
-                    style={{ flex: 1, backgroundColor: 'black' }}
+                    style={[StyleSheet.absoluteFill, { backgroundColor: 'black' }]}
+                    backgroundColor="black"
                     scrollEnabled={false}
                     allowsInlineMediaPlayback={true}
                     mediaPlaybackRequiresUserAction={false}
@@ -72,27 +93,26 @@ const LiveCamera = ({ cam, service }) => {
                     injectedJavaScript={INJECTED_JS}
                     onMessage={(e) => {
                         const msg = e.nativeEvent.data;
-                        if (msg === 'stream_error') setHasError(true);
-                        else if (msg === 'stream_ok') setHasError(false);
+                        if (msg === 'stream_error') markError();
+                        else if (msg === 'stream_ok') clearError();
                     }}
-                    onError={() => setHasError(true)}
-                    onHttpError={() => setHasError(true)}
-                    onLoad={() => setHasError(false)}
-                    onLoadStart={() => setHasError(false)}
+                    onError={() => markError()}
+                    onHttpError={() => markError()}
+                    onLoadStart={() => clearError()}
                 />
-                {/* Status badge — bottom-left overlay */}
-                <View style={[styles.liveBadge, hasError && styles.liveBadgeError]}>
-                    <View style={[styles.liveDot, hasError && styles.liveDotError]} />
-                    <Text style={[styles.liveText, hasError && styles.liveTextError]}>
-                        {hasError ? 'Error' : 'Live'}
-                    </Text>
-                </View>
+                {hasError && (
+                    <View style={[StyleSheet.absoluteFill, styles.errorOverlay]}>
+                        <Text style={styles.errorIcon}>📵</Text>
+                        <Text style={styles.errorText}>Stream unavailable</Text>
+                    </View>
+                )}
+                <CameraSensorOverlay sensorIds={sensorIds} entityMap={entityMap} position="bl" />
             </View>
         </View>
     );
 };
 
-function CamerasList({ frigateCameras, service, onCameraPress, columns = 2 }) {
+function CamerasList({ frigateCameras, service, onCameraPress, columns = 2, cameraSensors = {}, entityMap = {} }) {
     if (!frigateCameras || frigateCameras.length === 0) return null;
 
     // On tablets (columns > 2), show all cameras in equal-width grid
@@ -118,7 +138,12 @@ function CamerasList({ frigateCameras, service, onCameraPress, columns = 2 }) {
                                 ]
                         ]}
                     >
-                        <LiveCamera cam={cam} service={service} />
+                        <LiveCamera
+                            cam={cam}
+                            service={service}
+                            sensorIds={resolveSensorIds(cam, cameraSensors)}
+                            entityMap={entityMap}
+                        />
                         <View style={styles.cameraNameContainer}>
                             <Text style={styles.cameraName} numberOfLines={1}>
                                 {cam.name || 'Camera'}
@@ -213,6 +238,21 @@ const styles = StyleSheet.create({
     },
     liveTextError: {
         color: '#EF5350',
+    },
+    errorOverlay: {
+        backgroundColor: '#0d0d1a',
+        justifyContent: 'center',
+        alignItems: 'center',
+        gap: 6,
+    },
+    errorIcon: {
+        fontSize: 28,
+        opacity: 0.5,
+    },
+    errorText: {
+        color: 'rgba(255,255,255,0.35)',
+        fontSize: 12,
+        fontWeight: '400',
     },
 });
 

@@ -122,12 +122,17 @@ export class FrigateService {
 
     async getStats() {
         try {
-            // Use backend proxy (assuming we add one, or skip stats for now if not used)
-            const response = await this.request('/api/stats');
-            return await response.json();
+            const proxyUrl = this.adminUrl + '/api/frigate/stats';
+            const response = await fetch(proxyUrl, {
+                method: 'GET',
+                headers: this.headers,
+            });
+            if (!response.ok) return null;
+            const text = await response.text();
+            if (!text || text.trim().startsWith('<')) return null;
+            return JSON.parse(text);
         } catch (error) {
-            console.error('Frigate Stats Error:', error);
-            // Alert.alert('Frigate Stats Error', error.message || String(error)); // Commented out to avoid spamming stats loop
+            // Silently ignore — stats are optional
             return null;
         }
     }

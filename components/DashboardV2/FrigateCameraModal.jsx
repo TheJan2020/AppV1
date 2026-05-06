@@ -1,29 +1,120 @@
-import { Modal, View, Text, StyleSheet, TouchableOpacity, Dimensions, Image, ScrollView, ActivityIndicator } from 'react-native';
+import { Modal, View, Text, StyleSheet, TouchableOpacity, FlatList, Image, ActivityIndicator, ScrollView } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { X } from 'lucide-react-native';
-import { useState, useEffect, useMemo, useRef } from 'react';
-import { Video } from 'expo-av';
-import FrigateTimeline from './FrigateTimeline';
-import FrigateScrubber from './FrigateScrubber';
-import { Play, Calendar, Video as VideoIcon, Radio } from 'lucide-react-native';
+import { X, User, Car, Dog, AlertTriangle, Clock, Video } from 'lucide-react-native';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { LinearGradient } from 'expo-linear-gradient';
+import { CF } from '../../utils/typography';
+import CameraSensorOverlay, { isSensorActive, buildEntityMap, resolveSensorIds } from './CameraSensorOverlay';
 
-const { width, height } = Dimensions.get('window');
+// ── Helpers ───────────────────────────────────────────────────────────────────
 
-const LiveStream = ({ service, cameraName }) => {
+function timeAgo(unixTs) {
+    const diff = Math.floor(Date.now() / 1000) - unixTs;
+    if (diff < 60) return `${diff}s ago`;
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+}
+
+function formatTime(unixTs) {
+    const d = new Date(unixTs * 1000);
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatDate(unixTs) {
+    const d = new Date(unixTs * 1000);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    if (d.toDateString() === today.toDateString()) return 'Today';
+    if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function LabelIcon({ label, size = 14, color = '#fff' }) {
+    const l = (label || '').toLowerCase();
+    if (l === 'person') return <User size={size} color={color} />;
+    if (l === 'car' || l === 'vehicle' || l === 'truck' || l === 'motorcycle') return <Car size={size} color={color} />;
+    if (l === 'dog' || l === 'cat' || l === 'animal') return <Dog size={size} color={color} />;
+    return <AlertTriangle size={size} color={color} />;
+}
+
+function labelColor(label) {
+    const l = (label || '').toLowerCase();
+    if (l === 'person') return '#8947ca';
+    if (l === 'car' || l === 'vehicle' || l === 'truck') return '#FF7043';
+    if (l === 'dog' || l === 'cat' || l === 'animal') return '#4CAF50';
+    return '#FFA000';
+}
+
+// ── Event Card ────────────────────────────────────────────────────────────────
+
+function EventCard({ event, adminUrl, authHeaders }) {
+    const [thumbError, setThumbError] = useState(false);
+    const thumbUrl = `${adminUrl}/api/frigate/events/${event.id}/thumbnail`;
+    const color = labelColor(event.label);
+    const score = event.data?.top_score ?? event.top_score;
+    const scoreText = score ? `${Math.round(score * 100)}%` : null;
+
+    return (
+        <View style={styles.card}>
+            {/* Thumbnail */}
+            <View style={styles.thumb}>
+                {thumbError ? (
+                    <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
+                        <LabelIcon label={event.label} size={28} color="rgba(255,255,255,0.15)" />
+                    </View>
+                ) : (
+                    <Image
+                        source={{ uri: thumbUrl, headers: authHeaders }}
+                        style={StyleSheet.absoluteFill}
+                        resizeMode="cover"
+                        onError={() => setThumbError(true)}
+                    />
+                )}
+                <LinearGradient
+                    colors={['transparent', 'rgba(0,0,0,0.7)']}
+                    style={StyleSheet.absoluteFill}
+                />
+                <View style={[styles.labelBadge, { backgroundColor: `${color}cc` }]}>
+                    <LabelIcon label={event.label} size={11} color="#fff" />
+                    <Text style={styles.labelText}>{event.label || 'unknown'}</Text>
+                    {scoreText && <Text style={styles.scoreText}>{scoreText}</Text>}
+                </View>
+                {event.has_clip && (
+                    <View style={styles.clipBadge}>
+                        <Video size={10} color="#fff" />
+                    </View>
+                )}
+            </View>
+
+            {/* Info */}
+            <View style={styles.info}>
+                <Text style={styles.cameraName} numberOfLines={1}>{event.camera}</Text>
+                <View style={styles.timeRow}>
+                    <Clock size={11} color="rgba(255,255,255,0.4)" />
+                    <Text style={styles.timeText}>{formatDate(event.start_time)} · {formatTime(event.start_time)}</Text>
+                </View>
+                <Text style={styles.agoText}>{timeAgo(event.start_time)}</Text>
+            </View>
+        </View>
+    );
+}
+
+// ── Live Stream ───────────────────────────────────────────────────────────────
+
+function LiveStream({ service, cameraName, sensorIds, entityMap }) {
     const webViewRef = useRef(null);
-
     if (!service || !cameraName) {
         return (
-            <View style={[styles.cameraFeed, { justifyContent: 'center', alignItems: 'center' }]}>
-                <Text style={{ color: 'rgba(255,255,255,0.6)' }}>Loading camera...</Text>
+            <View style={[styles.streamContainer, { alignItems: 'center', justifyContent: 'center' }]}>
+                <ActivityIndicator color="white" />
             </View>
         );
     }
-
-        const streamUrl = service.getStreamUrl(cameraName);
-
+    const streamUrl = service.getStreamUrl(cameraName);
     return (
-        <View style={styles.cameraFeed}>
+        <View style={styles.streamContainer}>
             <WebView
                 ref={webViewRef}
                 source={{ uri: streamUrl, headers: service?.headers || {} }}
@@ -35,140 +126,62 @@ const LiveStream = ({ service, cameraName }) => {
                 scalesPageToFit={true}
                 javaScriptEnabled={true}
             />
+            <CameraSensorOverlay sensorIds={sensorIds} entityMap={entityMap} position="bl" />
         </View>
     );
-};
+}
 
+// ── Main Modal ────────────────────────────────────────────────────────────────
 
-
-export default function FrigateCameraModal({ visible, camera, service, initialView = 'live', onClose }) {
-    // ✅ hooks ALWAYS run
+export default function FrigateCameraModal({ visible, camera, service, onClose, cameraSensors = {}, haEntities = [] }) {
     const [events, setEvents] = useState([]);
-    const [selectedEvent, setSelectedEvent] = useState(null);
-    const [videoDuration, setVideoDuration] = useState(null);
+    const [eventsLoaded, setEventsLoaded] = useState(false);
     const [loadingEvents, setLoadingEvents] = useState(false);
     const [loadingMore, setLoadingMore] = useState(false);
     const [selectedLabel, setSelectedLabel] = useState(null);
     const [availableLabels, setAvailableLabels] = useState([]);
     const [hasMore, setHasMore] = useState(true);
-    const [videoLoading, setVideoLoading] = useState(false);
-    const [isMuted, setIsMuted] = useState(false);
-
-    // Recordings Mode State
-    const [viewMode, setViewMode] = useState(initialView); // 'live' | 'events' | 'recordings'
-    const [recordingSummary, setRecordingSummary] = useState([]);
-    const [playbackUrl, setPlaybackUrl] = useState(null);
-
-    const videoRef = useRef(null);
-    const scrollViewRef = useRef(null);
 
     const ready = !!camera && !!service;
 
-    // Update viewMode if initialView changes
-    useEffect(() => {
-        if (visible) {
-            setViewMode(initialView === 'history' ? 'events' : initialView);
-        }
-    }, [visible, initialView]);
+    // ── Build entity map — only sensor entities to avoid rebuilding on every HA event ──
+    const entityMap = useMemo(() => {
+        const sensorEntities = haEntities.filter(e =>
+            e.entity_id.startsWith('sensor.') || e.entity_id.startsWith('binary_sensor.')
+        );
+        const map = buildEntityMap(sensorEntities);
+        return map;
+    }, [haEntities]);
 
-    // Fetch available labels from Frigate config
-    useEffect(() => {
-        if (!ready) return;
-        const fetchLabels = async () => {
-            try {
-                const config = await service.getConfig();
-                if (config?.objects?.track) {
-                    setAvailableLabels(config.objects.track);
-                }
-            } catch (e) {
-                console.error('Failed to fetch labels:', e);
-            }
-        };
-        fetchLabels();
-    }, [ready, service]);
+    // ── Find assigned sensor IDs for this camera ──────────────────
+    const assignedSensorIds = useMemo(() => {
+        return resolveSensorIds(camera, cameraSensors);
+    }, [camera, cameraSensors]);
 
-    // Fetch Recording Summary when switching to 'recordings'
     useEffect(() => {
-        if (visible && viewMode === 'recordings' && ready) {
-            const loadSummary = async () => {
-                const summary = await service.getRecordingSummary(camera.name);
-                setRecordingSummary(summary);
-            };
-            loadSummary();
-        }
-    }, [visible, viewMode, ready, camera?.name]);
-
-    // Construct Playback URL when a time is selected
-    const handleScrub = (timestamp) => {
-        if (!ready) return;
-        // Play 1 hour clip from selected time
-        // API requires integer timestamps
-        const start = Math.floor(timestamp);
-        const end = start + 3600; // 1 hour
-        const url = service.getVodUrl(camera.name, start, end);
-        console.log('[Modal] Playing VOD:', url);
-        setPlaybackUrl(url);
-    };
-
-    // Auto-scroll to history if initialView is history (mapped to events)
-    useEffect(() => {
-        let scrollTimer;
-        if (visible && viewMode === 'events' && scrollViewRef.current && events.length > 0) {
-            scrollTimer = setTimeout(() => {
-                try {
-                    scrollViewRef.current?.scrollToLocation({ sectionIndex: 0, itemIndex: 0, animated: true });
-                } catch (e) {
-                    console.log('Scroll failed:', e);
-                }
-            }, 800);
-        }
-        return () => { if (scrollTimer) clearTimeout(scrollTimer); };
-    }, [visible, viewMode, events.length]);
+        if (!ready || !visible) return;
+        service.getConfig().then(config => {
+            if (config?.objects?.track) setAvailableLabels(config.objects.track);
+        }).catch(() => {});
+    }, [ready, visible]);
 
     const fetchEvents = async (loadMore = false) => {
         if (!ready) return;
         try {
-            if (loadMore) {
-                setLoadingMore(true);
-            } else {
-                setLoadingEvents(true);
-            }
-
-            const options = {
-                camera: camera.name,
-                limit: 20,
-                has_snapshot: 1
-            };
-
-            if (selectedLabel) {
-                options.label = selectedLabel;
-            }
-
+            loadMore ? setLoadingMore(true) : setLoadingEvents(true);
+            const options = { camera: camera.name, limit: loadMore ? 20 : 10 };
+            if (selectedLabel) options.label = selectedLabel;
             if (loadMore && events.length > 0) {
-                // Use the last event's start_time. Frigate API uses float timestamps.
-                // Ensure strictly number.
-                const lastEventStart = Number(events[events.length - 1].start_time);
-                if (!isNaN(lastEventStart)) {
-                    options.before = lastEventStart - 0.001; // Slightly before to avoid duplicate
-                    console.log('[FrigateModal] Loading more before:', options.before);
-                }
+                const last = Number(events[events.length - 1].start_time);
+                if (!isNaN(last)) options.before = last - 0.001;
             }
-
             const data = await service.getEvents(options);
             const newEvents = Array.isArray(data) ? data : [];
-
-            if (loadMore) {
-                setEvents(prev => [...prev, ...newEvents]);
-            } else {
-                setEvents(newEvents);
-            }
-
-            // Check if there are more events to load
+            setEvents(prev => loadMore ? [...prev, ...newEvents] : newEvents);
+            if (!loadMore) setEventsLoaded(true);
             setHasMore(newEvents.length === options.limit);
-        } catch (e) {
-            if (!loadMore) {
-                setEvents([]);
-            }
+        } catch {
+            if (!loadMore) setEvents([]);
         } finally {
             setLoadingEvents(false);
             setLoadingMore(false);
@@ -176,30 +189,71 @@ export default function FrigateCameraModal({ visible, camera, service, initialVi
     };
 
     useEffect(() => {
-        // Reset when closing or when camera/service changes
         if (!visible || !ready) {
             setEvents([]);
-            setSelectedEvent(null);
-            setLoadingEvents(false);
             setSelectedLabel(null);
             setHasMore(true);
-            setPlaybackUrl(null);
+            setEventsLoaded(false);
             return;
         }
-        if (viewMode === 'events') {
-            fetchEvents();
-        }
+        // Initial fetch: small page to show results quickly
+        if (!eventsLoaded) fetchEvents(false);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [visible, ready, camera?.name, service?.baseUrl, selectedLabel, viewMode]);
+    }, [visible, camera?.name, service?.baseUrl, selectedLabel, eventsLoaded]);
 
+    const labelPills = [
+        { value: null, label: 'All' },
+        ...(availableLabels.map(l => ({ value: l, label: l.charAt(0).toUpperCase() + l.slice(1) }))),
+    ];
 
+    // FlatList header — only the events section (no WebView here)
+    const ListHeader = useMemo(() => (
+        <>
+            <View style={styles.eventsHeader}>
+                <Text style={styles.sectionTitle}>Recent Events</Text>
+                {availableLabels.length > 0 && (
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.chipsContent}
+                        style={styles.chipsScroll}
+                    >
+                        {labelPills.map(item => (
+                            <TouchableOpacity
+                                key={String(item.value)}
+                                style={[styles.chip, selectedLabel === item.value && styles.chipActive]}
+                                onPress={() => setSelectedLabel(item.value)}
+                                activeOpacity={0.7}
+                            >
+                                <Text style={[styles.chipText, selectedLabel === item.value && styles.chipTextActive]}>
+                                    {item.label}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                )}
+            </View>
+
+            {loadingEvents && events.length === 0 && (
+                <View style={styles.centered}>
+                    <ActivityIndicator color="white" />
+                    <Text style={styles.dimText}>Loading events...</Text>
+                </View>
+            )}
+            {!loadingEvents && events.length === 0 && (
+                <View style={styles.centered}>
+                    <Text style={styles.dimText}>
+                        {selectedLabel ? `No ${selectedLabel} events found` : 'No recent events'}
+                    </Text>
+                </View>
+            )}
+        </>
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    ), [availableLabels, selectedLabel, loadingEvents, events.length]);
 
     return (
-        <Modal animationType="slide" transparent={true} visible={visible} onRequestClose={onClose}>
+        <Modal animationType="slide" transparent={false} visible={visible} onRequestClose={onClose}>
             <View style={styles.container}>
-                <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,1.0)' }]} />
-
-                {/* Header */}
                 <View style={styles.header}>
                     <Text style={styles.title}>{camera?.name ?? 'Camera'}</Text>
                     <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -207,223 +261,48 @@ export default function FrigateCameraModal({ visible, camera, service, initialVi
                     </TouchableOpacity>
                 </View>
 
-                {/* View Mode Toggle */}
-                <View style={styles.viewToggleContainer}>
-                    <TouchableOpacity
-                        style={[styles.viewToggleBtn, viewMode === 'live' && styles.viewToggleBtnActive]}
-                        onPress={() => setViewMode('live')}
-                    >
-                        <Radio size={16} color={viewMode === 'live' ? 'white' : 'rgba(255,255,255,0.5)'} />
-                        <Text style={[styles.viewToggleText, viewMode === 'live' && styles.viewToggleTextActive]}>Live</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.viewToggleBtn, viewMode === 'events' && styles.viewToggleBtnActive]}
-                        onPress={() => setViewMode('events')}
-                    >
-                        <Calendar size={16} color={viewMode === 'events' ? 'white' : 'rgba(255,255,255,0.5)'} />
-                        <Text style={[styles.viewToggleText, viewMode === 'events' && styles.viewToggleTextActive]}>Events</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                        style={[styles.viewToggleBtn, viewMode === 'recordings' && styles.viewToggleBtnActive]}
-                        onPress={() => setViewMode('recordings')}
-                    >
-                        <VideoIcon size={16} color={viewMode === 'recordings' ? 'white' : 'rgba(255,255,255,0.5)'} />
-                        <Text style={[styles.viewToggleText, viewMode === 'recordings' && styles.viewToggleTextActive]}>Recs</Text>
-                    </TouchableOpacity>
-                </View>
+                {/* Live stream lives OUTSIDE FlatList so it never remounts */}
+                <LiveStream
+                    service={service}
+                    cameraName={camera?.name}
+                    sensorIds={assignedSensorIds}
+                    entityMap={entityMap}
+                />
 
-                {/* Main Content Area */}
-                <View style={{ flex: 1 }}>
-                    {viewMode === 'recordings' ? (
-                        <View style={styles.recordingsContainer}>
-                            {/* Video Player Area */}
-                            <View style={styles.recordingPlayerContainer}>
-                                {playbackUrl ? (
-                                    <Video
-                                        source={{ uri: playbackUrl, headers: service?.headers || {} }}
-                                        style={styles.recordingVideo}
-                                        useNativeControls
-                                        resizeMode="contain"
-                                        shouldPlay
-                                        isLooping={false}
-                                    />
-                                ) : (
-                                    <View style={styles.recordingPlaceholder}>
-                                        <Text style={styles.recordingPlaceholderText}>Select a time from the scrubber</Text>
-                                    </View>
-                                )}
-                            </View>
-
-                            {/* Vertical Scrubber */}
-                            <FrigateScrubber
-                                summary={recordingSummary}
-                                onTimeSelect={handleScrub}
-                            />
-                        </View>
-                    ) : (
-                        <>
-                            {/* Camera View (Live or Event Clip) */}
-                            <View style={styles.cameraContainer}>
-                                {!ready ? (
-                                    <View style={{ flex: 1, width: '100%', alignItems: 'center', justifyContent: 'center' }}>
-                                        <Text style={{ color: 'rgba(255,255,255,0.6)' }}>Connecting…</Text>
-                                    </View>
-                                ) : selectedEvent && viewMode === 'events' ? (
-                                    <View style={{ position: 'relative', flex: 1, width: '100%' }}>
-                                        <Video
-                                            ref={videoRef}
-                                            key={selectedEvent.id} // Force remount on event change for clean state
-                                            source={{
-                                                uri: `${service?.adminUrl}/api/frigate/events/${selectedEvent.id}/clip`,
-                                                headers: service?.headers || {},
-                                            }}
-                                            style={styles.cameraFeed}
-                                            useNativeControls
-                                            resizeMode="contain"
-                                            shouldPlay
-                                            isLooping={false}
-                                            volume={1.0}
-                                            progressUpdateIntervalMillis={500}
-                                            onError={(error) => {
-                                                console.error('[Video] Error loading event clip:', error);
-                                                setVideoLoading(false);
-                                            }}
-                                            onLoadStart={() => {
-                                                setVideoLoading(true);
-                                                setVideoDuration(null); // Reset duration when loading starts
-                                            }}
-                                            onLoad={(status) => {
-                                                setVideoLoading(false);
-                                                if (status.durationMillis) {
-                                                    setVideoDuration(status.durationMillis / 1000);
-                                                }
-                                            }}
-                                            onPlaybackStatusUpdate={(status) => {
-                                                if (status.durationMillis && !videoDuration) {
-                                                    setVideoDuration(status.durationMillis / 1000);
-                                                }
-                                            }}
-                                        />
-                                        {videoLoading && (
-                                            <View style={styles.videoLoadingOverlay}>
-                                                <ActivityIndicator size="large" color="#ffffff" />
-                                                <Text style={styles.videoLoadingText}>Loading video...</Text>
-                                            </View>
-                                        )}
-                                    </View>
-                                ) : (
-                                    <LiveStream
-                                        service={service}
-                                        cameraName={camera.name}
-                                        isMuted={isMuted}
-                                        onToggleMute={() => setIsMuted(!isMuted)}
-                                    />
-                                )}
-                            </View>
-
-                            {/* Video Controls - Outside camera container so they push events down */}
-                            {selectedEvent && viewMode === 'events' && (
-                                <View style={styles.videoControlsContainer}>
-                                    <View style={styles.videoBadges}>
-                                        <View style={styles.badge}>
-                                            <Text style={styles.badgeText}>
-                                                {new Date(selectedEvent.start_time * 1000).toLocaleString('en-US')}
-                                            </Text>
-                                        </View>
-                                        {videoDuration && (
-                                            <View style={styles.badge}>
-                                                <Text style={styles.badgeText}>
-                                                    {Math.floor(videoDuration)}s
-                                                </Text>
-                                            </View>
-                                        )}
-                                    </View>
-                                    <TouchableOpacity
-                                        style={styles.returnToLiveBtn}
-                                        onPress={() => {
-                                            setSelectedEvent(null);
-                                            setVideoDuration(null);
-                                        }}
-                                    >
-                                        <Text style={styles.returnToLiveBtnText}>Return to Live</Text>
-                                    </TouchableOpacity>
-                                </View>
-                            )}
-
-
-                            {/* Recent Events List (Only in Events Mode) */}
-                            {viewMode === 'events' && (
-                                <View style={styles.eventsContainer}>
-                                    <Text style={styles.eventsTitle}>Recent Events</Text>
-
-                                    {/* Filter Chips */}
-                                    {availableLabels.length > 0 && (
-                                        <ScrollView
-                                            horizontal
-                                            showsHorizontalScrollIndicator={false}
-                                            contentContainerStyle={styles.filterChipsContainer}
-                                            style={styles.filterChipsScroll}
-                                        >
-                                            <TouchableOpacity
-                                                style={[styles.filterChip, !selectedLabel && styles.filterChipActive]}
-                                                onPress={() => setSelectedLabel(null)}
-                                            >
-                                                <Text style={[styles.filterChipText, !selectedLabel && styles.filterChipTextActive]}>
-                                                    All
-                                                </Text>
-                                            </TouchableOpacity>
-                                            {availableLabels.map((label) => (
-                                                <TouchableOpacity
-                                                    key={label}
-                                                    style={[styles.filterChip, selectedLabel === label && styles.filterChipActive]}
-                                                    onPress={() => setSelectedLabel(label)}
-                                                >
-                                                    <Text style={[styles.filterChipText, selectedLabel === label && styles.filterChipTextActive]}>
-                                                        {label.charAt(0).toUpperCase() + label.slice(1)}
-                                                    </Text>
-                                                </TouchableOpacity>
-                                            ))}
-                                        </ScrollView>
-                                    )}
-
-                                    {loadingEvents && events.length === 0 ? (
-                                        <Text style={styles.loadingText}>Loading events...</Text>
-                                    ) : events.length === 0 ? (
-                                        <Text style={styles.noEventsText}>
-                                            {selectedLabel ? `No ${selectedLabel} events found` : 'No recent events'}
-                                        </Text>
-                                    ) : (
-                                        <FrigateTimeline
-                                            events={events}
-                                            onEventPress={(event) => {
-                                                console.log('[Modal] Event selected:', event.id);
-                                                setVideoDuration(null);
-                                                setVideoLoading(true);
-                                                setSelectedEvent(event);
-                                            }}
-                                            onLoadMore={() => fetchEvents(true)}
-                                            hasMore={hasMore}
-                                            loadingMore={loadingMore}
-                                            selectedEventId={selectedEvent?.id}
-                                            listRef={scrollViewRef}
-                                            adminUrl={service?.adminUrl}
-                                            authHeaders={service?.headers}
-                                        />
-                                    )}
-                                </View>
-                            )}
-                        </>
+                <FlatList
+                    data={events}
+                    keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : String(index)}
+                    renderItem={({ item }) => (
+                        <EventCard
+                            event={item}
+                            adminUrl={service?.adminUrl}
+                            authHeaders={service?.headers}
+                        />
                     )}
-                </View>
+                    numColumns={2}
+                    columnWrapperStyle={styles.columnWrapper}
+                    ListHeaderComponent={ListHeader}
+                    contentContainerStyle={styles.listContent}
+                    showsVerticalScrollIndicator={false}
+                    onEndReached={() => hasMore && !loadingMore && fetchEvents(true)}
+                    onEndReachedThreshold={0.4}
+                    ListFooterComponent={
+                        loadingMore ? (
+                            <View style={styles.loadMoreWrap}>
+                                <ActivityIndicator color="rgba(255,255,255,0.4)" size="small" />
+                            </View>
+                        ) : null
+                    }
+                />
             </View>
-
-        </Modal >
+        </Modal>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+        backgroundColor: '#0a0a0a',
         paddingTop: 50,
     },
     header: {
@@ -431,7 +310,7 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: 20,
-        paddingVertical: 15,
+        paddingVertical: 14,
         borderBottomWidth: 1,
         borderBottomColor: 'rgba(255,255,255,0.1)',
     },
@@ -439,195 +318,148 @@ const styles = StyleSheet.create({
         color: 'white',
         fontSize: 20,
         fontWeight: 'bold',
+        textTransform: 'capitalize',
     },
     closeBtn: {
         padding: 8,
     },
-    cameraContainer: {
+    streamContainer: {
         width: '100%',
         aspectRatio: 16 / 9,
         backgroundColor: 'black',
-        marginBottom: 20,
+        position: 'relative',
+        overflow: 'hidden',
     },
-    cameraFeed: {
-        flex: 1,
-        width: '100%',
+    eventsHeader: {
+        paddingTop: 16,
+        paddingBottom: 4,
     },
-    videoControlsContainer: {
-        paddingHorizontal: 20,
-        paddingVertical: 15,
-        backgroundColor: 'rgba(0,0,0,0.8)',
-        gap: 12,
+    sectionTitle: {
+        color: 'white',
+        fontSize: 17,
+        fontWeight: '700',
+        marginBottom: 10,
+        paddingHorizontal: 16,
     },
-    videoBadges: {
-        flexDirection: 'row',
+    chipsScroll: {
+        flexGrow: 0,
+        marginBottom: 8,
+    },
+    chipsContent: {
+        gap: 8,
+        paddingHorizontal: 16,
+        paddingVertical: 2,
+        alignItems: 'center',
+    },
+    chip: {
+        paddingHorizontal: 14,
+        paddingVertical: 6,
+        borderRadius: 20,
+        backgroundColor: 'rgba(255,255,255,0.06)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+    },
+    chipActive: {
+        backgroundColor: 'rgba(137,71,202,0.25)',
+        borderColor: '#8947ca',
+    },
+    chipText: {
+        color: 'rgba(255,255,255,0.45)',
+        fontSize: 12,
+        fontFamily: CF.medium,
+    },
+    chipTextActive: {
+        color: '#c49ef0',
+    },
+    centered: {
+        paddingVertical: 40,
+        alignItems: 'center',
         gap: 10,
     },
-    badge: {
-        backgroundColor: 'rgba(255,255,255,0.15)',
-        paddingHorizontal: 14, // Increased padding
-        paddingVertical: 12, // Increased height
-        borderRadius: 12,
-        minHeight: 40, // Increased height (~10%)
-        justifyContent: 'center'
-    },
-    badgeText: {
-        color: 'white',
-        fontSize: 8, // Drastically smaller
-        fontWeight: '600',
-    },
-    returnToLiveBtn: {
-        backgroundColor: 'rgba(255,0,0,0.8)',
-        paddingHorizontal: 20,
-        paddingVertical: 12,
-        borderRadius: 8,
-        alignItems: 'center',
-    },
-    returnToLiveBtnText: {
-        color: 'white',
-        fontWeight: 'bold',
+    dimText: {
+        color: 'rgba(255,255,255,0.4)',
         fontSize: 14,
+        fontFamily: CF.regular,
     },
-    scrollContainer: {
-        paddingHorizontal: 20,
+    listContent: {
         paddingBottom: 40,
     },
-    videoLoadingOverlay: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        backgroundColor: 'rgba(0,0,0,0.85)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        zIndex: 999,
-        gap: 15,
-    },
-    videoLoadingText: {
-        color: 'white',
-        fontSize: 16,
-        fontWeight: '600',
-    },
-    muteButton: {
-        position: 'absolute',
-        bottom: 20,
-        right: 20,
-        width: 50,
-        height: 50,
-        borderRadius: 25,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        borderWidth: 2,
-        borderColor: 'rgba(255,255,255,0.3)',
-    },
-    muteButtonText: {
-        fontSize: 24,
-    },
-
-    eventsContainer: {
-        flex: 1, // Take remaining space
-        backgroundColor: 'rgba(0,0,0,0.3)',
-    },
-    eventsTitle: {
-        color: 'white',
-        fontSize: 18,
-        fontWeight: 'bold',
+    columnWrapper: {
+        gap: 10,
+        paddingHorizontal: 16,
         marginBottom: 10,
-        marginLeft: 20,
-        marginTop: 10
     },
-    filterChipsScroll: {
-        marginBottom: 20, // Increased spacing
-    },
-    filterChipsContainer: {
-        gap: 8,
-        paddingHorizontal: 20,
-        paddingVertical: 5 // Add padding to prevent clipping
-    },
-    filterChip: {
-        paddingHorizontal: 16,
-        paddingVertical: 10, // Increased vertical padding
-        borderRadius: 20,
-        backgroundColor: 'rgba(255,255,255,0.1)',
+    card: {
+        flex: 1,
+        flexDirection: 'column',
+        backgroundColor: 'rgba(255,255,255,0.04)',
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.2)',
-        justifyContent: 'center',
-        alignItems: 'center',
-        minHeight: 34 // Ensure minimum height
+        borderColor: 'rgba(255,255,255,0.07)',
+        borderRadius: 14,
+        overflow: 'hidden',
     },
-    filterChipActive: {
-        backgroundColor: 'rgba(59,130,246,0.8)',
-        borderColor: 'rgba(59,130,246,1)',
-    },
-    filterChipText: {
-        color: 'rgba(255,255,255,0.7)',
-        fontSize: 11, // Reduced by ~20%
-        fontWeight: '600',
-    },
-    filterChipTextActive: {
-        color: 'white',
-    },
-    loadingText: {
-        color: 'rgba(255,255,255,0.6)',
-        textAlign: 'center',
-        paddingVertical: 20,
-    },
-    noEventsText: {
-        color: 'rgba(255,255,255,0.4)',
-        textAlign: 'center',
-        paddingVertical: 20,
-    },
-    // View Toggle Styles
-    viewToggleContainer: {
-        flexDirection: 'row',
-        paddingHorizontal: 20,
-        paddingBottom: 15,
-        gap: 10
-    },
-    viewToggleBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.1)',
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 20,
-        gap: 6
-    },
-    viewToggleBtnActive: {
-        backgroundColor: '#3b82f6',
-    },
-    viewToggleText: {
-        color: 'rgba(255,255,255,0.5)',
-        fontWeight: '600',
-        fontSize: 14
-    },
-    viewToggleTextActive: {
-        color: 'white'
-    },
-    // Recordings View Styles
-    recordingsContainer: {
-        flex: 1,
-        flexDirection: 'row',
-        backgroundColor: 'black'
-    },
-    recordingPlayerContainer: {
-        flex: 1,
-        backgroundColor: 'black',
-        justifyContent: 'center'
-    },
-    recordingVideo: {
+    thumb: {
         width: '100%',
-        height: '100%',
+        aspectRatio: 16 / 9,
+        backgroundColor: '#0f0f1e',
+        position: 'relative',
     },
-    recordingPlaceholder: {
-        flex: 1,
+    labelBadge: {
+        position: 'absolute',
+        bottom: 5,
+        left: 5,
+        flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center'
+        gap: 3,
+        paddingHorizontal: 6,
+        paddingVertical: 3,
+        borderRadius: 6,
     },
-    recordingPlaceholderText: {
+    labelText: {
+        color: '#fff',
+        fontSize: 10,
+        fontFamily: CF.semibold,
+        textTransform: 'capitalize',
+    },
+    scoreText: {
+        color: 'rgba(255,255,255,0.7)',
+        fontSize: 9,
+        fontFamily: CF.regular,
+    },
+    clipBadge: {
+        position: 'absolute',
+        top: 5,
+        right: 5,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        borderRadius: 4,
+        padding: 3,
+    },
+    info: {
+        padding: 8,
+        gap: 3,
+    },
+    cameraName: {
+        color: '#ededf5',
+        fontSize: 12,
+        fontFamily: CF.semibold,
+    },
+    timeRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    timeText: {
         color: 'rgba(255,255,255,0.4)',
-        fontSize: 14
-    }
+        fontSize: 10,
+        fontFamily: CF.regular,
+    },
+    agoText: {
+        color: 'rgba(255,255,255,0.25)',
+        fontSize: 9,
+        fontFamily: CF.regular,
+    },
+    loadMoreWrap: {
+        paddingVertical: 20,
+        alignItems: 'center',
+    },
 });

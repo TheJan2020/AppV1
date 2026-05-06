@@ -1,13 +1,46 @@
 import { useState, useRef, useEffect, memo } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Keyboard } from 'react-native';
+import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Keyboard, Image } from 'react-native';
 import { Colors } from '../../constants/Colors';
-import { Send, Bot, User as UserIcon, Mic, Volume2, VolumeX } from 'lucide-react-native';
+import { Send, Bot, User as UserIcon, Mic, Volume2, VolumeX, ChevronLeft } from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import { AIService } from '../../services/ai';
 import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
+
+const AI_AVATAR = require('../../assets/ai.png');
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring, runOnJS } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withSpring, runOnJS, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
 import { Lock, X } from 'lucide-react-native';
+
+function TypingDots() {
+    const dot1 = useSharedValue(0.3);
+    const dot2 = useSharedValue(0.3);
+    const dot3 = useSharedValue(0.3);
+    useEffect(() => {
+        const anim = (v, delay) => {
+            v.value = withRepeat(
+                withSequence(
+                    withTiming(1, { duration: 300 }),
+                    withTiming(0.3, { duration: 300 })
+                ),
+                -1
+            );
+        };
+        anim(dot1, 0);
+        setTimeout(() => anim(dot2, 0), 150);
+        setTimeout(() => anim(dot3, 0), 300);
+    }, []);
+    const s1 = useAnimatedStyle(() => ({ opacity: dot1.value }));
+    const s2 = useAnimatedStyle(() => ({ opacity: dot2.value }));
+    const s3 = useAnimatedStyle(() => ({ opacity: dot3.value }));
+    return (
+        <View style={{ flexDirection: 'row', gap: 5, alignItems: 'center', paddingVertical: 2 }}>
+            <Animated.View style={[{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#fff' }, s1]} />
+            <Animated.View style={[{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#fff' }, s2]} />
+            <Animated.View style={[{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#fff' }, s3]} />
+        </View>
+    );
+}
 
 async function fetchCameraSnapshot(entityId, haUrl, haToken) {
     if (!haUrl || !haToken) {
@@ -210,7 +243,7 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
         const msgContent = typeof textOverride === 'string' ? textOverride : message;
         if (!msgContent.trim() || loading) return;
 
-        const userMsg = { role: 'user', content: msgContent };
+        const userMsg = { role: 'user', content: msgContent, timestamp: Date.now() };
         setHistory(prev => [...prev, userMsg]);
         setMessage('');
         setLoading(true);
@@ -314,7 +347,7 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
                 }
             }
 
-            const aiMsg = { role: 'assistant', content: aiMsgContent };
+            const aiMsg = { role: 'assistant', content: aiMsgContent, timestamp: Date.now() };
             setHistory(prev => [...prev, aiMsg]);
 
             if (audioMode) {
@@ -339,7 +372,10 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
             keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0} // Reduced from 100 since no TabBar
         >
             <View style={styles.header}>
-                <Text style={styles.title}>Brain</Text>
+                <TouchableOpacity onPress={onExit} style={styles.backBtn}>
+                    <ChevronLeft size={26} color="#fff" />
+                </TouchableOpacity>
+                <Text style={styles.title}>PrimeBot</Text>
                 <TouchableOpacity onPress={toggleAudioMode} style={styles.audioToggle}>
                     {audioMode ? <Volume2 size={24} color={Colors.primary} /> : <VolumeX size={24} color="rgba(255,255,255,0.3)" />}
                 </TouchableOpacity>
@@ -353,93 +389,96 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
                 {/* ... existing history map ... */}
                 {history.length === 0 && (
                     <View style={styles.emptyState}>
-                        <Bot size={64} color="rgba(255,255,255,0.1)" />
                         <Text style={styles.emptyText}>How can I help you with your home today?</Text>
                     </View>
                 )}
 
+                {/* Date separator */}
+                {/* Removed date from top */}
+
                 {history.map((msg, index) => {
                     const isUser = msg.role === 'user';
+                    const timeStr = msg.timestamp
+                        ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                     return (
                         <View key={index} style={[styles.msgContainer, isUser ? styles.userMsgContainer : styles.aiMsgContainer]}>
-                            {!isUser && (
-                                <View style={styles.avatar}>
-                                    <Bot size={20} color="#fff" />
-                                </View>
-                            )}
-                            <View style={[styles.msgBubble, isUser ? styles.userBubble : styles.aiBubble]}>
-                                <Text style={styles.msgText}>{msg.content}</Text>
+                            <View style={styles.bubbleWrapper}>
+                                {isUser ? (
+                                    <LinearGradient
+                                        colors={['#245072', '#187FB2']}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 0 }}
+                                        style={[styles.msgBubble, styles.userBubble]}
+                                    >
+                                        <Text style={styles.msgText}>{msg.content}</Text>
+                                        <Text style={styles.timeBubble}>{timeStr}</Text>
+                                    </LinearGradient>
+                                ) : (
+                                    <LinearGradient
+                                        colors={['#602FBE', '#7B2FBE']}
+                                        start={{ x: 0, y: 0 }}
+                                        end={{ x: 1, y: 0 }}
+                                        style={[styles.msgBubble, styles.aiBubble]}
+                                    >
+                                        <Text style={styles.msgText}>{msg.content}</Text>
+                                        <Text style={styles.timeBubble}>{timeStr}</Text>
+                                    </LinearGradient>
+                                )}
                             </View>
-                            {isUser && (
-                                <View style={styles.avatar}>
-                                    <UserIcon size={20} color="#fff" />
-                                </View>
-                            )}
                         </View>
                     );
                 })}
 
                 {loading && (
-                    <View style={styles.loadingContainer}>
-                        <ActivityIndicator color={Colors.primary} />
+                    <View style={[styles.msgContainer, styles.aiMsgContainer]}>
+                        <LinearGradient
+                            colors={['#602FBE', '#7B2FBE']}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                            style={[styles.msgBubble, styles.aiBubble, styles.typingBubble]}
+                        >
+                            <TypingDots />
+                        </LinearGradient>
                     </View>
                 )}
             </ScrollView>
 
-            <View style={[styles.inputContainer, { paddingBottom: isKeyboardVisible ? 0 : 40 }]}>
-                <TextInput
-                    style={styles.input}
-                    placeholder="Ask anything..."
-                    placeholderTextColor="rgba(255,255,255,0.3)"
-                    value={message}
-                    onChangeText={setMessage}
-                    onSubmitEditing={handleSend}
-                    multiline
-                    maxLength={500}
-                />
-
-                {/* Visual Lock Indicator Slide */}
-                {isRecordingState && !lockedRecording && (
-                    <Animated.View style={[styles.lockIndicator, lockAnimatedStyle]}>
-                        <Lock size={16} color="rgba(255,255,255,0.5)" />
-                        <Text style={styles.lockText}>Slide to lock</Text>
-                    </Animated.View>
-                )}
-
-                {/* Cancel Button when Locked */}
-                {lockedRecording && (
-                    <TouchableOpacity onPress={cancelRecording} style={styles.cancelBtn}>
-                        <Text style={styles.cancelText}>Cancel</Text>
-                    </TouchableOpacity>
-                )}
-
-                <GestureDetector gesture={panGesture}>
-                    <Animated.View style={[styles.micBtn, (isRecordingState || lockedRecording) && styles.recordingBtn, micAnimatedStyle]}>
-                        {lockedRecording ? (
-                            <TouchableOpacity onPress={() => stopRecording(true)}>
-                                <Send size={24} color="#fff" />
-                            </TouchableOpacity>
-                        ) : (
-                            <Mic size={24} color="#fff" />
-                        )}
-                    </Animated.View>
-                </GestureDetector>
-                {!isRecordingState && !lockedRecording && (
-                    <TouchableOpacity
-                        style={[styles.sendBtn, !message.trim() && styles.disabledBtn]}
-                        onPress={() => handleSend()}
-                        disabled={!message.trim() || loading}
-                    >
-                        <Send size={20} color="#fff" />
-                    </TouchableOpacity>
-                )}
+            <View style={[styles.inputContainer, { paddingBottom: isKeyboardVisible ? 16 : 40 }]}>
+                <View style={styles.inputPill}>
+                    <TextInput
+                        style={styles.input}
+                        placeholder="Ask anything..."
+                        placeholderTextColor="rgba(255,255,255,0.35)"
+                        value={message}
+                        onChangeText={setMessage}
+                        onSubmitEditing={handleSend}
+                        multiline
+                        maxLength={500}
+                    />
+                    {!isRecordingState && !lockedRecording && (
+                        <TouchableOpacity
+                            onPress={() => handleSend()}
+                            disabled={!message.trim() || loading}
+                            activeOpacity={0.8}
+                        >
+                            <LinearGradient
+                                colors={['#602FBE', '#7B2FBE']}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 0, y: 1 }}
+                                style={[styles.sendBtn, !message.trim() && styles.disabledBtn]}
+                            >
+                                <Image
+                                    source={require('../../assets/ai_msg.png')}
+                                    style={{ width: 20, height: 20 }}
+                                    resizeMode="contain"
+                                />
+                            </LinearGradient>
+                        </TouchableOpacity>
+                    )}
+                </View>
             </View>
 
-            {!isKeyboardVisible && (
-                <TouchableOpacity onPress={onExit} style={styles.exitBtn}>
-                    <Text style={styles.exitText}>Exit to Home</Text>
-                </TouchableOpacity>
-            )}
         </KeyboardAvoidingView>
     );
 }
@@ -448,16 +487,25 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         paddingTop: 60,
+        backgroundColor: '#09091A',
     },
     header: {
-        paddingHorizontal: 20,
+        paddingHorizontal: 16,
         marginBottom: 10,
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center'
     },
+    backBtn: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     title: {
-        fontSize: 32,
+        fontSize: 22,
         fontWeight: 'bold',
         color: '#fff',
     },
@@ -498,52 +546,108 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
+    avatarImg: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+    },
+    aiAvatar: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: '#602FBE',
+        justifyContent: 'center',
+        alignItems: 'center',
+    },
+    aiAvatarText: {
+        color: '#fff',
+        fontSize: 11,
+        fontWeight: '700',
+        letterSpacing: 0.5,
+    },
+    bubbleWrapper: {
+        maxWidth: '80%',
+    },
     msgBubble: {
         padding: 12,
         borderRadius: 20,
-        maxWidth: '80%',
     },
     userBubble: {
-        backgroundColor: Colors.primary,
         borderBottomRightRadius: 4,
     },
     aiBubble: {
-        backgroundColor: 'rgba(255,255,255,0.1)',
         borderBottomLeftRadius: 4,
+    },
+    typingBubble: {
+        paddingVertical: 14,
+        paddingHorizontal: 16,
     },
     msgText: {
         color: '#fff',
         fontSize: 16,
         lineHeight: 22,
     },
+    timeBubble: {
+        color: 'rgba(255,255,255,0.5)',
+        fontSize: 11,
+        marginTop: 6,
+        textAlign: 'right',
+    },
+    timeText: {
+        fontSize: 11,
+        color: 'rgba(255,255,255,0.35)',
+        marginTop: 4,
+    },
+    timeRight: {
+        textAlign: 'right',
+    },
+    timeLeft: {
+        textAlign: 'left',
+    },
+    dateSeparator: {
+        alignItems: 'center',
+        marginBottom: 16,
+        marginTop: 4,
+    },
+    dateText: {
+        fontSize: 12,
+        color: 'rgba(255,255,255,0.3)',
+    },
+    loadingContainer: {
+        padding: 10,
+        alignItems: 'flex-start',
+        paddingLeft: 42
+    },
     inputContainer: {
-        flexDirection: 'row',
-        padding: 16,
-        backgroundColor: 'rgba(20, 20, 30, 0.9)',
+        paddingHorizontal: 16,
+        paddingTop: 12,
+        backgroundColor: '#09091A',
         borderTopWidth: 1,
-        borderTopColor: 'rgba(255,255,255,0.1)',
-        alignItems: 'flex-end',
-        gap: 10,
-        // paddingBottom: 100 // Moved to inline style via isKeyboardVisible
+        borderTopColor: 'rgba(255,255,255,0.06)',
+    },
+    inputPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#21213F',
+        borderRadius: 28,
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        gap: 8,
     },
     input: {
         flex: 1,
-        backgroundColor: 'rgba(255,255,255,0.05)',
-        borderRadius: 20,
-        paddingHorizontal: 16,
-        paddingTop: 12,
-        paddingBottom: 12,
         color: '#fff',
+        fontSize: 15,
         maxHeight: 100,
-        fontSize: 16,
+        paddingVertical: 4,
     },
     sendBtn: {
         width: 44,
         height: 44,
         borderRadius: 22,
-        backgroundColor: Colors.primary,
         justifyContent: 'center',
         alignItems: 'center',
+        overflow: 'hidden',
     },
     micBtn: {
         width: 44,
@@ -584,11 +688,6 @@ const styles = StyleSheet.create({
     disabledBtn: {
         backgroundColor: 'rgba(255,255,255,0.1)',
         opacity: 0.5
-    },
-    loadingContainer: {
-        padding: 10,
-        alignItems: 'flex-start',
-        paddingLeft: 42
     },
     exitBtn: {
         alignSelf: 'center',
