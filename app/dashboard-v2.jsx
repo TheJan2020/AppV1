@@ -4,6 +4,7 @@ import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
 import NotificationModal from '../components/DashboardV2/NotificationModal';
 import AlertNotificationModal from '../components/DashboardV2/AlertNotificationModal';
+import SecurityAlertModal from '../components/DashboardV2/SecurityAlertModal';
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator, Image } from 'react-native';
@@ -727,6 +728,75 @@ export default function DashboardV2() {
         return []; // let the modal use its DEFAULT_ZONES
     }, [entities]);
 
+    // ── Security Alert: open locks / garage-shutter covers while armed ──────
+    // Resolves the room name for an entity using registryEntities + registryDevices + registryAreas
+    const resolveRoomName = useCallback((entityId) => {
+        const re = registryEntities.find(r => r.entity_id === entityId);
+        const areaId = re?.area_id
+            || (re?.device_id ? registryDevices.find(d => d.id === re.device_id)?.area_id : null);
+        return registryAreas.find(a => a.area_id === areaId)?.name ?? null;
+    }, [registryEntities, registryDevices, registryAreas]);
+
+    const securityAlertItems = useMemo(() => {
+        const alarm = entities.find(e => e.entity_id.startsWith('alarm_control_panel.'));
+        if (!alarm || alarm.state === 'disarmed') return [];
+
+        const items = [];
+
+        // Open locks
+        entities
+            .filter(e => e.entity_id.startsWith('lock.') && e.state === 'unlocked')
+            .forEach(e => {
+                items.push({
+                    type: 'lock',
+                    name: e.attributes?.friendly_name || e.entity_id.replace('lock.', '').replace(/_/g, ' '),
+                    room: resolveRoomName(e.entity_id),
+                });
+            });
+
+        // Open garage doors / shutters
+        entities
+            .filter(e => {
+                if (!e.entity_id.startsWith('cover.')) return false;
+                const dc = e.attributes?.device_class;
+                return (dc === 'garage' || dc === 'shutter') && e.state === 'open';
+            })
+            .forEach(e => {
+                items.push({
+                    type: 'cover',
+                    name: e.attributes?.friendly_name || e.entity_id.replace('cover.', '').replace(/_/g, ' '),
+                    room: resolveRoomName(e.entity_id),
+                });
+            });
+
+        return items;
+    }, [entities, resolveRoomName]);
+
+    const [securityAlertDismissed, setSecurityAlertDismissed] = useState(false);
+    const [securityAlertVisible, setSecurityAlertVisible] = useState(false);
+    const prevAlarmStateRef = useRef(null);
+
+    useEffect(() => {
+        const alarm = entities.find(e => e.entity_id.startsWith('alarm_control_panel.'));
+        const currentState = alarm?.state ?? null;
+
+        // Reset dismissed flag when alarm transitions to a new armed state
+        if (currentState && currentState !== 'disarmed' && currentState !== prevAlarmStateRef.current) {
+            setSecurityAlertDismissed(false);
+        }
+        prevAlarmStateRef.current = currentState;
+
+        if (securityAlertItems.length > 0 && !securityAlertDismissed) {
+            setSecurityAlertVisible(true);
+        } else {
+            setSecurityAlertVisible(false);
+        }
+    }, [securityAlertItems, securityAlertDismissed, entities]);
+
+    const alarmState = useMemo(() =>
+        entities.find(e => e.entity_id.startsWith('alarm_control_panel.'))?.state ?? null,
+    [entities]);
+
     // Active Devices Modal State
     const [modalVisible, setModalVisible] = useState(false);
     const [securityModalVisible, setSecurityModalVisible] = useState(false);
@@ -767,6 +837,15 @@ export default function DashboardV2() {
             }
         }).catch(() => {});
     }
+
+    // When a notification alert opens, skip the loading cascade so the full
+    // dashboard renders behind the modal immediately — no frozen skeleton.
+    useEffect(() => {
+        if (alertNotif) {
+            clearTimeout(revealRef.current);
+            setRevealStep(5);
+        }
+    }, [!!alertNotif]);
     // All entity_ids present in MonitoredEntity table (regardless of ignored flag)
     const monitoredEntitiesRef = useRef(new Set());
     // Entity_ids where ignored=1 (user has muted them)
@@ -1069,7 +1148,12 @@ export default function DashboardV2() {
                     if (val) {
                         SecureStore.deleteItemAsync('pending_notif_data').catch(() => {});
                         SecureStore.deleteItemAsync('pending_notif_open').catch(() => {});
-                        try { setAlertNotif(JSON.parse(val)); } catch (_) {}
+                        try {
+                            setAlertNotif(JSON.parse(val));
+                            // Fast-forward cascade so dashboard is fully visible behind the modal
+                            clearTimeout(revealRef.current);
+                            setRevealStep(5);
+                        } catch (_) {}
                     }
                 }).catch(() => {});
             }
@@ -1478,6 +1562,14 @@ export default function DashboardV2() {
                 timestamp={alertNotif?.timestamp}
                 onDismiss={() => setAlertNotif(null)}
                 onViewAll={() => { setAlertNotif(null); setShowNotifications(true); }}
+            />
+
+            {/* Security alert — shown when home is armed and a lock/cover is open */}
+            <SecurityAlertModal
+                visible={securityAlertVisible}
+                items={securityAlertItems}
+                armedState={alarmState}
+                onDismiss={() => { setSecurityAlertDismissed(true); setSecurityAlertVisible(false); }}
             />
 
             {locksModalVisible && (
