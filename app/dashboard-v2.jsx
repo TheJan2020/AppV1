@@ -37,6 +37,13 @@ import RoomSheet from '../components/DashboardV2/RoomSheet';
 import OpacitySettingsModal from '../components/DashboardV2/OpacitySettingsModal';
 import HomeAccess from '../components/DashboardV2/HomeAccess';
 import BrainView from '../components/DashboardV2/BrainView';
+import DashboardSkeleton, {
+    HeaderSkeleton,
+    ScenesSkeleton,
+    HomeAccessSkeleton,
+    RoomsSkeleton,
+    CamerasSkeleton,
+} from '../components/DashboardV2/DashboardSkeleton';
 import VoiceConversation from '../components/VoiceConversation';
 
 import { FrigateService } from '../services/frigate';
@@ -191,10 +198,67 @@ export default function DashboardV2() {
     const [selectedCoverIds, setSelectedCoverIds] = useState(null);
     const [lockPassageConfigs, setLockPassageConfigs] = useState({}); // { [entity_id]: { enabled, passage_entity_id } }
 
+    // ── Progressive reveal ────────────────────────────────────────────────────
+    // All API calls fire in parallel (fastest possible). Once BOTH entities have
+    // arrived from HA AND all API flags are done, sections are revealed one by one
+    // with a 180ms gap so the user sees a clear top-to-bottom cascade.
+    //
+    //  revealStep:  0 = nothing shown (skeleton everywhere)
+    //               1 = Header visible
+    //               2 = Scenes visible
+    //               3 = HomeAccess visible
+    //               4 = Rooms visible
+    //               5 = Cameras visible
+    const [scenesFetched, setScenesFetched] = useState(false);
+    const [homeAccessFetched, setHomeAccessFetched] = useState(false);
+    const [frigateFetched, setFrigateFetched] = useState(false);
+    const [revealStep, setRevealStep] = useState(0);
+    const revealRef = useRef(null);
+
+    // Cascade starts as soon as entities arrive.
+    // Each step only waits for the data ITS section needs before advancing.
+    useEffect(() => {
+        if (entities.length === 0) return;   // nothing to show yet
+        if (revealStep >= 5) return;          // fully revealed
+
+        // Pause at step 1 until scenes API is done
+        if (revealStep === 1 && !scenesFetched) return;
+        // Pause at step 2 until home-access API is done
+        if (revealStep === 2 && !homeAccessFetched) return;
+        // Pause at step 4 until frigate API is done
+        if (revealStep === 4 && !frigateFetched) return;
+
+        revealRef.current = setTimeout(() => {
+            setRevealStep(s => Math.min(s + 1, 5));
+        }, 180);
+        return () => clearTimeout(revealRef.current);
+    }, [entities.length, scenesFetched, homeAccessFetched, frigateFetched, revealStep]);
+
+    // Reset on config change so cascade re-runs on profile switch
+    const resetReveal = () => {
+        clearTimeout(revealRef.current);
+        setRevealStep(0);
+        setScenesFetched(false);
+        setHomeAccessFetched(false);
+        setFrigateFetched(false);
+    };
+
     const mappingsAbortRef = useRef(null);
 
     const fetchMappings = () => {
-        if (!connectionConfig.loaded || !connectionConfig.adminUrl) return;
+        // Config not ready yet — wait, don't touch any flags
+        if (!connectionConfig.loaded) return;
+
+        // Loaded but no admin URL — nothing to fetch, mark all API flags done immediately
+        if (!connectionConfig.adminUrl) {
+            setScenesFetched(true);
+            setHomeAccessFetched(true);
+            // frigate is set in the useEffect for initial load
+            return;
+        }
+
+        // Reset so cascade re-runs cleanly
+        resetReveal();
 
         // Abort any in-flight mapping requests
         if (mappingsAbortRef.current) mappingsAbortRef.current.abort();
@@ -214,11 +278,13 @@ export default function DashboardV2() {
         fetch(qsUrl, { signal: controller.signal, headers: authHeaders })
             .then(res => res.json())
             .then(data => {
-                if (Array.isArray(data)) {
-                    setAllowedQuickScenes(data.map(s => s.entity_id));
-                }
+                if (Array.isArray(data)) setAllowedQuickScenes(data.map(s => s.entity_id));
+                setScenesFetched(true);
             })
-            .catch(e => { if (e.name !== 'AbortError') console.error('[Mappings] Quick Scenes error:', e); });
+            .catch(e => {
+                if (e.name !== 'AbortError') console.error('[Mappings] Quick Scenes error:', e);
+                setScenesFetched(true);
+            });
 
         // 2. Lights
         const lightsUrl = `${baseUrl}api/monitored-entities?type=light&t=${Date.now()}`;
@@ -265,8 +331,12 @@ export default function DashboardV2() {
                     setSelectedLockIds(data.locks);
                     setSelectedCoverIds(data.covers);
                 }
+                setHomeAccessFetched(true);
             })
-            .catch(e => { if (e.name !== 'AbortError') console.error('[Mappings] HomeAccess error:', e); });
+            .catch(e => {
+                if (e.name !== 'AbortError') console.error('[Mappings] HomeAccess error:', e);
+                setHomeAccessFetched(true);
+            });
 
         // 7. Lock passage configs
         const lockPassageUrl = `${baseUrl}api/lock-passage?t=${Date.now()}`;
@@ -307,6 +377,9 @@ export default function DashboardV2() {
     // Initial Load Logic
     useEffect(() => {
         if (!connectionConfig.loaded) return;
+
+        // Reset frigate skeleton for this load cycle
+        setFrigateFetched(false);
 
         const { url: haUrl, token: haToken } = connectionConfig;
     const adminUrl = connectionConfig.adminUrl;
@@ -565,6 +638,9 @@ export default function DashboardV2() {
                 }));
                 setFrigateCameras(cams);
             }
+            setFrigateFetched(true);
+        }).catch(() => {
+            setFrigateFetched(true);
         });
 
         // 4. Fetch HA camera entities from admin backend as fallback/supplement
@@ -679,6 +755,18 @@ export default function DashboardV2() {
     const [showNotifications, setShowNotifications] = useState(false);
     // Alert modal shown when user taps a push notification
     const [alertNotif, setAlertNotif] = useState(null); // { title, body, category, timestamp }
+    // Read pending notification immediately so the modal shows before entities load
+    const alertReadRef = useRef(false);
+    if (!alertReadRef.current) {
+        alertReadRef.current = true;
+        SecureStore.getItemAsync('pending_notif_data').then(val => {
+            if (val) {
+                SecureStore.deleteItemAsync('pending_notif_data').catch(() => {});
+                SecureStore.deleteItemAsync('pending_notif_open').catch(() => {});
+                try { setAlertNotif(JSON.parse(val)); } catch (_) {}
+            }
+        }).catch(() => {});
+    }
     // All entity_ids present in MonitoredEntity table (regardless of ignored flag)
     const monitoredEntitiesRef = useRef(new Set());
     // Entity_ids where ignored=1 (user has muted them)
@@ -874,16 +962,7 @@ export default function DashboardV2() {
         }
     }, []);
 
-    // ── Cold-start tap: show alert modal for the tapped notification ──────────
-    useEffect(() => {
-        SecureStore.getItemAsync('pending_notif_data').then(val => {
-            if (val) {
-                SecureStore.deleteItemAsync('pending_notif_data').catch(() => {});
-                SecureStore.deleteItemAsync('pending_notif_open').catch(() => {});
-                try { setAlertNotif(JSON.parse(val)); } catch (_) {}
-            }
-        }).catch(() => {});
-    }, []);
+    // ── Cold-start tap handled eagerly above (alertReadRef) ───────────────────
 
     // -------------------------------------------------------------------------
     // -------------------------------------------------------------------------
@@ -1470,44 +1549,53 @@ export default function DashboardV2() {
 
             {/* ===== HOME TAB ===== */}
             <View style={[{ flex: 1 }, activeTab !== 'home' && { display: 'none' }]}>
-                {entities.length === 0 ? <LoadingSpinner /> : (
+                {!connectionConfig.loaded ? <DashboardSkeleton /> : (
                     <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
-                        <HeaderV2
-                            weather={weather}
-                            cityName={cityName}
-                            userName={userName}
-                            entities={entities}
-                            config={badgeConfig}
-                            humidity={humidity}
-                            indoorTemp={indoorTemp}
-                            onRoomPress={handleHeaderRoomPress}
-                            onBellPress={handleBellPress}
-                            unreadCount={notifUnread}
-                        />
-                        <StatusBadges
-                            securityState={securityState}
-                            lightsOn={lightsOn}
-                            acOn={acOn}
-                            doorsOpen={doorsOpen}
-                            power={power}
-                            onPress={handleBadgePress}
-                            zones={securityZones}
-                            locks={entities.filter(e => e.entity_id.startsWith('lock.'))}
-                            lockPassageConfigs={lockPassageConfigs}
-                            entities={entities}
-                        />
-                        <View style={styles.divider} />
 
-                        {showFamily && <PersonBadges entities={entities} alertRules={alertRules} haUrl={haHttpUrl} />}
+                        {/* ── Header + Locks ── step 1 */}
+                        {revealStep < 1 ? <HeaderSkeleton /> : (
+                            <>
+                                <HeaderV2
+                                    weather={weather}
+                                    cityName={cityName}
+                                    userName={userName}
+                                    entities={entities}
+                                    config={badgeConfig}
+                                    humidity={humidity}
+                                    indoorTemp={indoorTemp}
+                                    onRoomPress={handleHeaderRoomPress}
+                                    onBellPress={handleBellPress}
+                                    unreadCount={notifUnread}
+                                />
+                                <StatusBadges
+                                    securityState={securityState}
+                                    lightsOn={lightsOn}
+                                    acOn={acOn}
+                                    doorsOpen={doorsOpen}
+                                    power={power}
+                                    onPress={handleBadgePress}
+                                    zones={securityZones}
+                                    locks={entities.filter(e => e.entity_id.startsWith('lock.'))}
+                                    lockPassageConfigs={lockPassageConfigs}
+                                    entities={entities}
+                                />
+                                <View style={styles.divider} />
+                                {showFamily && <PersonBadges entities={entities} alertRules={alertRules} haUrl={haHttpUrl} />}
+                            </>
+                        )}
 
-                        <QuickScenes
-                            scenes={quickScenesData}
-                            onScenePress={handleScenePress}
-                            adminUrl={connectionConfig?.adminUrl}
-                            onScenesUpdated={(ids) => setAllowedQuickScenes(ids)}
-                        />
+                        {/* ── Scenes ── step 2 */}
+                        {revealStep < 2 ? <ScenesSkeleton /> : (
+                            <QuickScenes
+                                scenes={quickScenesData}
+                                onScenePress={handleScenePress}
+                                adminUrl={connectionConfig?.adminUrl}
+                                onScenesUpdated={(ids) => setAllowedQuickScenes(ids)}
+                            />
+                        )}
 
-                        {showVoiceAssistant && <VoiceConversation
+                        {/* Voice assistant — only shown once entities are ready */}
+                        {showVoiceAssistant && entities.length > 0 && <VoiceConversation
                             onCommand={handleVoiceCommand}
                             context={{
                                 userName: userName,
@@ -1631,61 +1719,69 @@ export default function DashboardV2() {
                             }}
                         />}
 
-                        {/* Home Access — Locks & Covers */}
-                        <HomeAccess
-                            isHomeActive={activeTab === 'home'}
-                            locks={homeLocks}
-                            covers={homeCovers}
-                            allLockEntities={entities.filter(e => e.entity_id.startsWith('lock.'))}
-                            haEntities={entities}
-                            lockPassageConfigs={lockPassageConfigs}
-                            adminUrl={connectionConfig.adminUrl}
-                            haToken={connectionConfig.token}
-                            onConfigSaved={fetchMappings}
-                            onToggleLock={(entityId, state) => {
-                                const isUnlocked = state === 'unlocked' || state === 'open';
-                                callService('lock', isUnlocked ? 'lock' : 'unlock', { entity_id: entityId });
-                            }}
-                            onControlCover={(entityId, action) => {
-                                callService('cover', action, { entity_id: entityId });
-                            }}
-                        />
+                        {/* ── Home Access ── step 3 */}
+                        {revealStep < 3 ? <HomeAccessSkeleton /> : (
+                            <HomeAccess
+                                isHomeActive={activeTab === 'home'}
+                                locks={homeLocks}
+                                covers={homeCovers}
+                                allLockEntities={entities.filter(e => e.entity_id.startsWith('lock.'))}
+                                haEntities={entities}
+                                lockPassageConfigs={lockPassageConfigs}
+                                adminUrl={connectionConfig.adminUrl}
+                                haToken={connectionConfig.token}
+                                onConfigSaved={fetchMappings}
+                                onToggleLock={(entityId, state) => {
+                                    const isUnlocked = state === 'unlocked' || state === 'open';
+                                    callService('lock', isUnlocked ? 'lock' : 'unlock', { entity_id: entityId });
+                                }}
+                                onControlCover={(entityId, action) => {
+                                    callService('cover', action, { entity_id: entityId });
+                                }}
+                            />
+                        )}
 
-                        <RoomsList
-                            rooms={roomsWithCounts}
-                            registryEntities={registryEntities}
-                            allEntities={entities}
-                            onRoomPress={handleRoomPress}
-                            overlayOpacity={cardOpacity}
-                            overlayColor={cardColor}
-                            onSettingsPress={handleOpenOpacitySettings}
-                            onAllRoomsPress={() => setActiveTab('rooms')}
-                            layout={isTablet ? 'grid' : 'horizontal'}
-                            columns={columns}
-                            haUrl={haHttpUrl}
-                            haToken={connectionConfig.token}
-                            sensorMappings={sensorMappings}
-                        />
+                        {/* ── Rooms ── step 4 */}
+                        {revealStep < 4 ? <RoomsSkeleton /> : (
+                            <RoomsList
+                                rooms={roomsWithCounts}
+                                registryEntities={registryEntities}
+                                allEntities={entities}
+                                onRoomPress={handleRoomPress}
+                                overlayOpacity={cardOpacity}
+                                overlayColor={cardColor}
+                                onSettingsPress={handleOpenOpacitySettings}
+                                onAllRoomsPress={() => setActiveTab('rooms')}
+                                layout={isTablet ? 'grid' : 'horizontal'}
+                                columns={columns}
+                                haUrl={haHttpUrl}
+                                haToken={connectionConfig.token}
+                                sensorMappings={sensorMappings}
+                            />
+                        )}
 
-                        <HomeCameraStrip
-                            frigateCameras={frigateCameras}
-                            selectedCameraNames={badgeConfig?.selected_cameras || []}
-                            frigateService={frigateService.current}
-                            onCameraPress={handleFrigateCameraPress}
-                            onAllCamerasPress={() => setActiveTab('cctv')}
-                            adminUrl={connectionConfig.adminUrl}
-                            onCamerasUpdated={(ids) => setBadgeConfig(prev => ({ ...prev, selected_cameras: ids }))}
-                            cameraSensors={badgeConfig?.camera_sensors || {}}
-                            haEntities={entities}
-                        />
+                        {/* ── Cameras ── step 5 */}
+                        {revealStep < 5 ? <CamerasSkeleton /> : (
+                            <HomeCameraStrip
+                                frigateCameras={frigateCameras}
+                                selectedCameraNames={badgeConfig?.selected_cameras || []}
+                                frigateService={frigateService.current}
+                                onCameraPress={handleFrigateCameraPress}
+                                onAllCamerasPress={() => setActiveTab('cctv')}
+                                adminUrl={connectionConfig.adminUrl}
+                                onCamerasUpdated={(ids) => setBadgeConfig(prev => ({ ...prev, selected_cameras: ids }))}
+                                cameraSensors={badgeConfig?.camera_sensors || {}}
+                                haEntities={entities}
+                            />
+                        )}
+
                     </ScrollView>
-
                 )}
             </View>
 
             {/* ===== ROOMS TAB ===== */}
             <View style={[{ flex: 1 }, activeTab !== 'rooms' && { display: 'none' }]}>
-                {entities.length === 0 ? <LoadingSpinner /> : (
+                {entities.length === 0 ? <DashboardSkeleton /> : (
                     <ScrollView
                         style={{ flex: 1 }}
                         contentContainerStyle={[styles.content, { paddingHorizontal: 20, marginTop: 60, paddingBottom: 120 }, isLandscape && sidebarPadding]}
@@ -1759,7 +1855,7 @@ export default function DashboardV2() {
             {/* ===== CCTV TAB — WebViews only rendered when active (too heavy to keep in background) ===== */}
             <View style={[{ flex: 1 }, activeTab !== 'cctv' && { display: 'none' }]}>
                 {activeTab === 'cctv' ? (
-                    frigateCameras.length === 0 ? <LoadingSpinner /> : (
+                    frigateCameras.length === 0 ? <DashboardSkeleton /> : (
                         <View style={{ flex: 1, marginTop: 60 }}>
                             {/* Cameras / Events toggle */}
                             <View style={styles.cctvToggleRow}>
