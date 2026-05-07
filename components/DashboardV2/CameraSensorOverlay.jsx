@@ -88,13 +88,11 @@ const SensorPill = memo(({ entityId, entity }) => {
         <View style={[
             pill.wrap,
             active
-                ? { backgroundColor: `${meta.color}30`, borderColor: `${meta.color}60` }
-                : { backgroundColor: 'rgba(0,0,0,0.45)', borderColor: 'rgba(255,255,255,0.12)' },
+                ? { backgroundColor: 'rgba(0,0,0,0.62)' }
+                : { backgroundColor: 'rgba(0,0,0,0.40)' },
         ]}>
-            <Animated.View style={{ opacity: active ? pulse : 0.5 }}>
-                <Icon size={9} color={color} strokeWidth={2.5} />
-            </Animated.View>
-            <Text style={[pill.text, { color }]} numberOfLines={1}>
+            {active && <View style={[pill.dot, { backgroundColor: meta.color }]} />}
+            <Text style={[pill.text, { color: active ? '#fff' : 'rgba(255,255,255,0.4)' }]} numberOfLines={1}>
                 {stateLabel}
             </Text>
         </View>
@@ -131,7 +129,7 @@ function CameraSensorOverlay({ sensorIds = [], entityMap = {}, position = 'bl', 
                 <SensorPill key={sId} entityId={sId} entity={entityMap[sId]} />
             ))}
             {activeSensorIds.length > maxVisible && (
-                <View style={[pill.wrap, { backgroundColor: 'rgba(0,0,0,0.5)', borderColor: 'rgba(255,255,255,0.15)' }]}>
+                <View style={[pill.wrap, { backgroundColor: 'rgba(0,0,0,0.55)' }]}>
                     <Text style={[pill.text, { color: 'rgba(255,255,255,0.5)' }]}>
                         +{activeSensorIds.length - maxVisible}
                     </Text>
@@ -157,15 +155,21 @@ const pill = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 4,
-        paddingHorizontal: 6,
-        paddingVertical: 3,
-        borderRadius: 6,
-        borderWidth: 1,
+        paddingHorizontal: 7,
+        paddingVertical: 4,
+        borderRadius: 20,
+        borderWidth: 0,
+    },
+    dot: {
+        width: 5,
+        height: 5,
+        borderRadius: 3,
+        marginRight: 2,
     },
     text: {
         fontSize: 9,
-        fontWeight: '600',
-        letterSpacing: 0.2,
+        fontWeight: '700',
+        letterSpacing: 0.3,
     },
 });
 

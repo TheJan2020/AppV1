@@ -1,14 +1,15 @@
 /**
- * useNotifications — EntityHistory-backed notification store
+ * useNotifications — unified notification store
  *
- * Reads from /api/notifications/history which queries EntityHistory
- * filtered by MonitoredEntity (ignored=0).  No new DB table needed.
+ * Merges TWO sources into one sorted list (newest first):
+ *   1. /api/notifications/history  — EntityHistory DB (lights, AC, sensors, etc.)
+ *   2. /api/notifications/log      — notifications-log.json (locks/sensors sent by backend push)
  *
- * "Clear all"  → DELETE /api/notifications/history  (writes cleared_at on server)
- * "Mark read"  → PATCH  /api/notifications/history  (writes read_at on server)
+ * "Clear all"  → DELETE both endpoints
+ * "Mark read"  → PATCH  /api/notifications/history  (log entries are always unread until cleared)
  *
  * Notification shape:
- *   { id, entity_id, title, body, category, timestamp, read, unread }
+ *   { id, entity_id, title, body, category, timestamp, read, unread, source }
  */
 
 import { useState, useCallback, useEffect, useRef } from 'react';
@@ -18,7 +19,6 @@ export default function useNotifications(adminUrl, haToken) {
     const [unreadCount,   setUnreadCount]   = useState(0);
     const loadedRef = useRef(false);
 
-    // Keep latest values in refs so callbacks never need to be recreated
     const adminUrlRef = useRef(adminUrl);
     const haTokenRef  = useRef(haToken);
     useEffect(() => { adminUrlRef.current = adminUrl; }, [adminUrl]);
@@ -30,30 +30,57 @@ export default function useNotifications(adminUrl, haToken) {
         'Content-Type':  'application/json',
     });
 
-    // ── Fetch from server ─────────────────────────────────────────────────────
-    // Stable reference — reads latest adminUrl/haToken via refs, never changes
+    // ── Fetch + merge both sources ────────────────────────────────────────────
     const fetchNotifications = useCallback(() => {
         if (!adminUrlRef.current || !haTokenRef.current) return;
-        fetch(`${getBase()}/api/notifications/history`, { headers: getHeaders() })
-            .then(res => res.json())
-            .then(data => {
-                if (data.success && Array.isArray(data.notifications)) {
-                    setNotifications(data.notifications);
-                    setUnreadCount(data.unreadCount ?? data.notifications.filter(n => n.unread).length);
-                }
-            })
-            .catch(err => console.warn('[useNotifications] fetch error:', err.message));
-    }, []); // ← no deps: always stable, reads latest via refs
+        const base = getBase();
+        const hdrs = getHeaders();
 
-    // Load once — when adminUrl first becomes available
+        Promise.allSettled([
+            fetch(`${base}/api/notifications/history`, { headers: hdrs }).then(r => r.json()),
+            fetch(`${base}/api/notifications/log`,     { headers: hdrs }).then(r => r.json()),
+        ]).then(([histResult, logResult]) => {
+            // Source 1 — EntityHistory
+            const histItems = (histResult.status === 'fulfilled' && histResult.value?.success)
+                ? (histResult.value.notifications || []).map(n => ({ ...n, source: 'history' }))
+                : [];
+
+            // Source 2 — notifications-log.json (lock/sensor push alerts)
+            const logItems = (logResult.status === 'fulfilled' && logResult.value?.success)
+                ? (logResult.value.notifications || []).map((n, i) => ({
+                    id:        `log_${n.timestamp}_${i}`,
+                    entity_id: null,
+                    title:     n.title    || '',
+                    body:      n.body     || '',
+                    category:  n.category || 'lock',
+                    timestamp: n.timestamp,
+                    read:      false,
+                    unread:    true,
+                    source:    'log',
+                  }))
+                : [];
+
+            // Merge & sort newest first — deduplicate by id
+            const seen = new Set();
+            const merged = [...logItems, ...histItems]
+                .filter(n => { if (seen.has(n.id)) return false; seen.add(n.id); return true; })
+                .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+                .slice(0, 150);
+
+            setNotifications(merged);
+            setUnreadCount(merged.filter(n => n.unread).length);
+        });
+    }, []);
+
+    // Load once on mount
     useEffect(() => {
-        if (!adminUrl || !haToken) return;   // wait until config is ready
+        if (!adminUrl || !haToken) return;
         if (loadedRef.current) return;
         loadedRef.current = true;
         fetchNotifications();
-    }, [adminUrl, haToken]); // ← run when config arrives; guard prevents double-fetch
+    }, [adminUrl, haToken]);
 
-    // ── Optimistic add (foreground in-app notifications appear instantly) ─────
+    // ── Optimistic add (foreground socket events appear instantly) ────────────
     const addNotification = useCallback((title, body, category = 'default') => {
         const newItem = {
             id:        `local_${Date.now()}`,
@@ -64,10 +91,11 @@ export default function useNotifications(adminUrl, haToken) {
             read:      false,
             unread:    true,
             timestamp: new Date().toISOString(),
+            source:    'local',
         };
-        setNotifications(prev => [newItem, ...prev].slice(0, 100));
+        setNotifications(prev => [newItem, ...prev].slice(0, 150));
         setUnreadCount(prev => prev + 1);
-    }, []); // stable
+    }, []);
 
     // ── Mark all as read ──────────────────────────────────────────────────────
     const markAllRead = useCallback(() => {
@@ -76,19 +104,22 @@ export default function useNotifications(adminUrl, haToken) {
         if (!adminUrlRef.current || !haTokenRef.current) return;
         fetch(`${getBase()}/api/notifications/history`, { method: 'PATCH', headers: getHeaders() })
             .catch(err => console.warn('[useNotifications] markAllRead error:', err.message));
-    }, []); // stable
+    }, []);
 
-    // ── Clear all ─────────────────────────────────────────────────────────────
+    // ── Clear all (both sources) ──────────────────────────────────────────────
     const clearAll = useCallback(() => {
         setNotifications([]);
         setUnreadCount(0);
         if (!adminUrlRef.current || !haTokenRef.current) return;
-        fetch(`${getBase()}/api/notifications/history`, { method: 'DELETE', headers: getHeaders() })
-            .catch(err => console.warn('[useNotifications] clearAll error:', err.message));
-    }, []); // stable
+        const base = getBase();
+        const hdrs = getHeaders();
+        Promise.allSettled([
+            fetch(`${base}/api/notifications/history`, { method: 'DELETE', headers: hdrs }),
+            fetch(`${base}/api/notifications/log`,     { method: 'DELETE', headers: hdrs }),
+        ]).catch(err => console.warn('[useNotifications] clearAll error:', err.message));
+    }, []);
 
-    // ── Refresh (call when modal opens) ──────────────────────────────────────
-    const refresh = fetchNotifications; // same stable reference
+    const refresh = fetchNotifications;
 
     return { notifications, unreadCount, addNotification, markAllRead, clearAll, refresh };
 }

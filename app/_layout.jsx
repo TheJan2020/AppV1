@@ -67,7 +67,16 @@ export default function RootLayout() {
         // ── Tap from lock screen / notification centre ────────────────────────
         // Set a tiny SecureStore flag so dashboard-v2 opens the notification modal
         // when the app comes to the foreground after a lock-screen tap.
-        const tapSub = Notifications.addNotificationResponseReceivedListener(() => {
+        const tapSub = Notifications.addNotificationResponseReceivedListener((response) => {
+            // Save the full notification content so the dashboard can show a modal
+            const content = response?.notification?.request?.content ?? {};
+            const payload = JSON.stringify({
+                title:     content.title    || '',
+                body:      content.body     || '',
+                category:  content.data?.category || 'default',
+                timestamp: new Date().toISOString(),
+            });
+            SecureStore.setItemAsync('pending_notif_data', payload).catch(() => {});
             SecureStore.setItemAsync(PENDING_OPEN_KEY, '1').catch(() => {});
         });
 

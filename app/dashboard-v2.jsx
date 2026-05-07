@@ -3,6 +3,7 @@ import * as Notifications from 'expo-notifications';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
 import NotificationModal from '../components/DashboardV2/NotificationModal';
+import AlertNotificationModal from '../components/DashboardV2/AlertNotificationModal';
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator, Image } from 'react-native';
@@ -676,6 +677,8 @@ export default function DashboardV2() {
         refresh:       refreshNotifications,
     } = useNotifications(connectionConfig.adminUrl, connectionConfig.token);
     const [showNotifications, setShowNotifications] = useState(false);
+    // Alert modal shown when user taps a push notification
+    const [alertNotif, setAlertNotif] = useState(null); // { title, body, category, timestamp }
     // All entity_ids present in MonitoredEntity table (regardless of ignored flag)
     const monitoredEntitiesRef = useRef(new Set());
     // Entity_ids where ignored=1 (user has muted them)
@@ -871,14 +874,13 @@ export default function DashboardV2() {
         }
     }, []);
 
-    // ── Cold-start tap: open notification modal if launched via push tap ──────
+    // ── Cold-start tap: show alert modal for the tapped notification ──────────
     useEffect(() => {
-        SecureStore.getItemAsync('pending_notif_open').then(val => {
-            if (val === '1') {
+        SecureStore.getItemAsync('pending_notif_data').then(val => {
+            if (val) {
+                SecureStore.deleteItemAsync('pending_notif_data').catch(() => {});
                 SecureStore.deleteItemAsync('pending_notif_open').catch(() => {});
-                // History is in the DB — the hook already fetched it on mount.
-                // Just open the modal.
-                setShowNotifications(true);
+                try { setAlertNotif(JSON.parse(val)); } catch (_) {}
             }
         }).catch(() => {});
     }, []);
@@ -983,12 +985,12 @@ export default function DashboardV2() {
                 // Refresh config
                 fetchMappings();
 
-                // Open notification modal if user tapped a push from lock screen
-                SecureStore.getItemAsync('pending_notif_open').then(val => {
-                    if (val === '1') {
+                // Show alert modal if user tapped a push from lock screen / notification centre
+                SecureStore.getItemAsync('pending_notif_data').then(val => {
+                    if (val) {
+                        SecureStore.deleteItemAsync('pending_notif_data').catch(() => {});
                         SecureStore.deleteItemAsync('pending_notif_open').catch(() => {});
-                        refreshNotificationsRef.current?.(); // get latest from DB
-                        setShowNotifications(true);
+                        try { setAlertNotif(JSON.parse(val)); } catch (_) {}
                     }
                 }).catch(() => {});
             }
@@ -1386,6 +1388,17 @@ export default function DashboardV2() {
                 onClose={() => setShowNotifications(false)}
                 onClearAll={handleClearNotifications}
                 onOpen={refreshNotifications}
+            />
+
+            {/* Alert modal — shown when user taps a push notification */}
+            <AlertNotificationModal
+                visible={!!alertNotif}
+                title={alertNotif?.title}
+                body={alertNotif?.body}
+                category={alertNotif?.category}
+                timestamp={alertNotif?.timestamp}
+                onDismiss={() => setAlertNotif(null)}
+                onViewAll={() => { setAlertNotif(null); setShowNotifications(true); }}
             />
 
             {locksModalVisible && (

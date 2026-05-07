@@ -1,269 +1,260 @@
-import { View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import { Flame, Snowflake, Fan, Droplets, Wind, Zap, Minus, Plus, MoreVertical, Moon, Leaf, HeartPulse, AirVent, PowerOff, ChevronUp } from 'lucide-react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Switch, ScrollView } from 'react-native';
+import {
+    Wind, Flame, Snowflake, Fan, Zap, Droplets, Minus, Plus,
+    ChevronDown, ChevronUp, Clock, Moon, Leaf, HeartPulse, AirVent,
+} from 'lucide-react-native';
+import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
-import { Colors } from '../../constants/Colors';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
+import { CF } from '../../utils/typography';
 
-const getModeIcon = (mode, size, color) => {
-    switch (mode) {
-        case 'heat': return <Flame size={size} color={color} />;
-        case 'cool': return <Snowflake size={size} color={color} />;
-        case 'dry': return <Droplets size={size} color={color} />;
-        case 'fan_only': return <Fan size={size} color={color} />;
-        case 'auto': return <Zap size={size} color={color} />;
-        case 'heat_cool': return <Flame size={size} color={color} />;
-        case 'humid': return <Droplets size={size} color={color} />;
-        default: return <Text style={{ color, fontWeight: 'bold', fontSize: 12 }}>{mode.slice(0, 3).toUpperCase()}</Text>;
-    }
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const MODE_META = {
+    cool:      { label: 'Cool',  Icon: Snowflake, color: '#44C8CA' },
+    heat:      { label: 'Heat',  Icon: Flame,     color: '#FF7043' },
+    auto:      { label: 'Auto',  Icon: Zap,       color: '#AB47BC' },
+    heat_cool: { label: 'Auto',  Icon: Zap,       color: '#AB47BC' },
+    fan_only:  { label: 'Fan',   Icon: Fan,       color: '#66BB6A' },
+    dry:       { label: 'Dry',   Icon: Droplets,  color: '#FFA726' },
 };
 
-const getModeLabel = (mode) => {
-    switch (mode) {
-        case 'heat': return 'Heat';
-        case 'cool': return 'Cool';
-        case 'dry': return 'Dry';
-        case 'fan_only': return 'Fan';
-        case 'auto': return 'Auto';
-        case 'heat_cool': return 'Auto';
-        case 'humid': return 'Humid';
-        default: return mode.charAt(0).toUpperCase() + mode.slice(1).replace('_', ' ');
-    }
-};
+const getMeta = (mode) => MODE_META[mode] || { label: mode, Icon: Wind, color: '#8947ca' };
+const getFanLabel = (f) => f.charAt(0).toUpperCase() + f.slice(1).replace(/_/g, ' ');
 
 const getPresetIcon = (preset, size, color) => {
-    const lower = preset.toLowerCase();
-    if (lower.includes('silent') || lower.includes('sleep') || lower.includes('quiet')) return <Moon size={size} color={color} />;
-    if (lower.includes('eco') || lower.includes('energy')) return <Leaf size={size} color={color} />;
-    if (lower.includes('health') || lower.includes('comfort')) return <HeartPulse size={size} color={color} />;
-    if (lower.includes('wind') || lower.includes('breeze')) return <AirVent size={size} color={color} />;
-    if (lower.includes('boost') || lower.includes('turbo') || lower.includes('power')) return <Zap size={size} color={color} />;
-    return <Text style={{ color, fontWeight: 'bold', fontSize: 12 }}>{preset.slice(0, 3).toUpperCase()}</Text>;
-};
-
-const getFanIcon = (fanMode, size, color) => {
-    const lower = fanMode.toLowerCase();
-    if (lower === 'auto') return <Zap size={size} color={color} />;
-    if (lower === 'low' || lower === 'quiet' || lower === 'silent' || lower === 'sleep') return <Wind size={size} color={color} />;
-    if (lower === 'medium' || lower === 'mid' || lower === 'middle') return <AirVent size={size} color={color} />;
-    if (lower === 'high' || lower === 'strong' || lower === 'turbo') return <Fan size={size} color={color} />;
-    if (lower === 'diffuse') return <Droplets size={size} color={color} />;
+    const p = preset.toLowerCase();
+    if (p.includes('eco') || p.includes('energy'))                         return <Leaf       size={size} color={color} />;
+    if (p.includes('silent') || p.includes('sleep') || p.includes('quiet')) return <Moon      size={size} color={color} />;
+    if (p.includes('health') || p.includes('comfort'))                     return <HeartPulse size={size} color={color} />;
+    if (p.includes('wind') || p.includes('breeze'))                        return <AirVent    size={size} color={color} />;
+    if (p.includes('boost') || p.includes('turbo') || p.includes('power')) return <Zap       size={size} color={color} />;
     return <Wind size={size} color={color} />;
 };
 
-const getFanLabel = (fanMode) => {
-    return fanMode.charAt(0).toUpperCase() + fanMode.slice(1).replace('_', ' ');
-};
+const pad = (n) => String(n).padStart(2, '0');
 
-const getModeColor = (mode) => {
-    switch (mode) {
-        case 'heat': return '#FF7043';
-        case 'cool': return '#42A5F5';
-        case 'dry': return '#FFA726';
-        case 'fan_only': return '#66BB6A';
-        case 'auto': return '#AB47BC';
-        case 'heat_cool': return '#AB47BC';
-        case 'humid': return '#29B6F6';
-        default: return '#8947ca';
-    }
-};
+// ─── Spinner ──────────────────────────────────────────────────────────────────
+function TimeSpinner({ value, max, onChange, label }) {
+    return (
+        <View style={sp.wrap}>
+            <TouchableOpacity style={sp.arrowBtn} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onChange((value + 1) % (max + 1)); }}>
+                <ChevronUp size={20} color="#fff" />
+            </TouchableOpacity>
+            <Text style={sp.value}>{pad(value)}</Text>
+            <TouchableOpacity style={sp.arrowBtn} onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); onChange((value - 1 + max + 1) % (max + 1)); }}>
+                <ChevronDown size={20} color="#fff" />
+            </TouchableOpacity>
+            <Text style={sp.label}>{label}</Text>
+        </View>
+    );
+}
 
+const sp = StyleSheet.create({
+    wrap:     { alignItems: 'center', gap: 4 },
+    arrowBtn: { width: 36, height: 36, alignItems: 'center', justifyContent: 'center' },
+    value:    { fontSize: 28, fontFamily: CF.bold, color: '#fff', minWidth: 50, textAlign: 'center' },
+    label:    { fontSize: 10, fontFamily: CF.medium, color: 'rgba(255,255,255,0.4)', letterSpacing: 1.5 },
+});
+
+// ─── Main ─────────────────────────────────────────────────────────────────────
 export default function ClimateCard({ climate, onUpdate, needsChange }) {
     const [expanded, setExpanded] = useState(false);
+    const [timerHours,   setTimerHours]   = useState(0);
+    const [timerMins,    setTimerMins]    = useState(0);
+    const [timerRunning, setTimerRunning] = useState(false);
+    const [timerLeft,    setTimerLeft]    = useState(0);
+    const intervalRef   = useRef(null);
+    const [optimisticOn, setOptimisticOn] = useState(null); // null = follow real state
+    const optimisticTimer = useRef(null);
+
+    useEffect(() => {
+        if (timerRunning && timerLeft > 0) {
+            intervalRef.current = setInterval(() => {
+                setTimerLeft(s => {
+                    if (s <= 1) { clearInterval(intervalRef.current); setTimerRunning(false); return 0; }
+                    return s - 1;
+                });
+            }, 1000);
+        }
+        return () => clearInterval(intervalRef.current);
+    }, [timerRunning]);
 
     if (!climate) return null;
 
     const { attributes, state } = climate.stateObj;
-    const targetTemp = attributes.temperature;
-    const hvacMode = state;
-    const hvacModes = attributes.hvac_modes || [];
-    const fanModes = attributes.fan_modes || [];
-    const currentFanMode = attributes.fan_mode;
-    const presetModes = (attributes.preset_modes || []).filter(p => p !== 'none');
+    const targetTemp   = attributes.temperature;
+    const hvacMode     = state;
+    const hvacModes    = attributes.hvac_modes || [];
+    const fanModes     = attributes.fan_modes  || [];
+    const currentFan   = attributes.fan_mode;
+    const presetModes  = (attributes.preset_modes || []).filter(p => p !== 'none');
     const currentPreset = attributes.preset_mode;
+    const realIsOn     = hvacMode !== 'off';
+    // Use optimistic value immediately; fall back to real state once HA confirms
+    const isOn         = optimisticOn !== null ? optimisticOn : realIsOn;
+    const availModes   = hvacModes.filter(m => m !== 'off');
 
-    const isOn = hvacMode !== 'off';
-    const availableModes = hvacModes.filter(mode => mode !== 'off');
+    // When real state catches up with what we optimistically set, clear optimistic override
+    useEffect(() => {
+        if (optimisticOn !== null && realIsOn === optimisticOn) {
+            clearTimeout(optimisticTimer.current);
+            setOptimisticOn(null);
+        }
+    }, [realIsOn, optimisticOn]);
 
-    const toggleExpanded = () => {
-        setExpanded(prev => !prev);
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    };
-
-    const handlePower = () => {
+    const togglePower = () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        if (isOn) {
+        const next = !isOn;
+        setOptimisticOn(next);
+        // Safety: clear optimistic override after 5s if HA never responds
+        clearTimeout(optimisticTimer.current);
+        optimisticTimer.current = setTimeout(() => setOptimisticOn(null), 5000);
+        if (!next) {
             onUpdate(climate.entity_id, 'climate', 'set_hvac_mode', { hvac_mode: 'off' });
         } else {
-            const lastMode = attributes.last_on_operation;
-            const targetMode = (lastMode && hvacModes.includes(lastMode) && lastMode !== 'off')
-                ? lastMode
-                : (availableModes[0] || 'heat');
-            onUpdate(climate.entity_id, 'climate', 'set_hvac_mode', { hvac_mode: targetMode });
+            const last = attributes.last_on_operation;
+            const mode = (last && hvacModes.includes(last) && last !== 'off') ? last : (availModes[0] || 'cool');
+            onUpdate(climate.entity_id, 'climate', 'set_hvac_mode', { hvac_mode: mode });
         }
     };
 
-    const handleModeSelect = (mode) => {
+    const setMode   = (m) => { Haptics.selectionAsync(); onUpdate(climate.entity_id, 'climate', 'set_hvac_mode',  { hvac_mode:    m }); };
+    const setFan    = (f) => { Haptics.selectionAsync(); onUpdate(climate.entity_id, 'climate', 'set_fan_mode',   { fan_mode:     f }); };
+    const setPreset = (p) => {
         Haptics.selectionAsync();
-        onUpdate(climate.entity_id, 'climate', 'set_hvac_mode', { hvac_mode: mode });
+        onUpdate(climate.entity_id, 'climate', 'set_preset_mode', { preset_mode: currentPreset === p ? 'none' : p });
     };
-
-    const handleFanSelect = (fanMode) => {
-        Haptics.selectionAsync();
-        onUpdate(climate.entity_id, 'climate', 'set_fan_mode', { fan_mode: fanMode });
-    };
-
-    const handlePresetSelect = (preset) => {
-        Haptics.selectionAsync();
-        const newPreset = currentPreset === preset ? 'none' : preset;
-        onUpdate(climate.entity_id, 'climate', 'set_preset_mode', { preset_mode: newPreset });
-    };
-
-    const handleTempChange = (delta) => {
+    const changeTemp = (d) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        if (targetTemp === null || targetTemp === undefined) return;
-        const newTemp = targetTemp + delta;
-        onUpdate(climate.entity_id, 'climate', 'set_temperature', { temperature: newTemp });
+        if (targetTemp == null) return;
+        onUpdate(climate.entity_id, 'climate', 'set_temperature', { temperature: targetTemp + d });
     };
 
-    const activeIcon = isOn ? getModeIcon(hvacMode, 28, '#fff') : <PowerOff size={28} color={Colors.textDim} />;
-    const modeRingColor = isOn ? getModeColor(hvacMode) : 'transparent';
+    const startTimer = () => {
+        const total = timerHours * 3600 + timerMins * 60;
+        if (total === 0) return;
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        setTimerLeft(total);
+        setTimerRunning(true);
+    };
+    const resetTimer = () => {
+        clearInterval(intervalRef.current);
+        setTimerRunning(false);
+        setTimerLeft(0);
+        setTimerHours(0);
+        setTimerMins(0);
+    };
+
+    const dispH = timerRunning ? Math.floor(timerLeft / 3600) : timerHours;
+    const dispM = timerRunning ? Math.floor((timerLeft % 3600) / 60) : timerMins;
 
     return (
-        <View style={[
-            styles.container,
-            needsChange && { borderColor: '#8947ca', borderWidth: 2 }
-        ]}>
-            {/* Top Row: Icon + Name/State + Temp Control */}
-            <View style={styles.topRow}>
-                <TouchableOpacity
-                    style={[
-                        styles.iconCircle,
-                        isOn && { borderWidth: 2.5, borderColor: modeRingColor }
-                    ]}
-                    onPress={handlePower}
-                >
-                    {activeIcon}
-                </TouchableOpacity>
+        <View style={[s.card, needsChange && { borderColor: '#8947ca', borderWidth: 1.5 }]}>
 
-                <View style={styles.nameArea}>
-                    <Text style={styles.name} numberOfLines={1}>{climate.displayName}</Text>
-                    <Text style={styles.state}>
-                        {isOn ? getModeLabel(hvacMode) : 'Off'}
-                    </Text>
-                </View>
-
-                <View style={styles.tempPill}>
-                    <TouchableOpacity style={styles.tempPillBtn} onPress={() => handleTempChange(-1)}>
-                        <Minus size={18} color="#fff" />
-                    </TouchableOpacity>
-                    <Text style={styles.tempText}>
-                        {targetTemp !== null && targetTemp !== undefined ? `${targetTemp}°` : '--'}
-                    </Text>
-                    <TouchableOpacity style={styles.tempPillBtn} onPress={() => handleTempChange(1)}>
-                        <Plus size={18} color="#fff" />
-                    </TouchableOpacity>
-                </View>
+            {/* Header */}
+            <View style={s.header}>
+                <LinearGradient colors={['#1de0e0', '#4A90D9']} style={s.iconBg} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }}>
+                    <Wind size={22} color="#fff" strokeWidth={2} />
+                </LinearGradient>
+                <Text style={s.name} numberOfLines={1}>{climate.displayName}</Text>
+                <Switch
+                    value={isOn}
+                    onValueChange={togglePower}
+                    trackColor={{ false: 'rgba(255,255,255,0.12)', true: '#8947ca' }}
+                    thumbColor="#fff"
+                    ios_backgroundColor="rgba(255,255,255,0.12)"
+                />
             </View>
 
-            {/* Bottom Row: Fan Speed Buttons + More */}
-            {isOn && (
-                <View style={styles.bottomRow}>
-                    <ScrollView
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        contentContainerStyle={styles.fanRow}
-                        style={styles.fanScroll}
-                    >
-                        {fanModes.map(fm => {
-                            const isActive = currentFanMode === fm;
-                            return (
-                                <TouchableOpacity
-                                    key={fm}
-                                    style={styles.fanItem}
-                                    onPress={() => handleFanSelect(fm)}
-                                >
-                                    <View style={[
-                                        styles.fanCircle,
-                                        isActive && styles.fanCircleActive
-                                    ]}>
-                                        {getFanIcon(fm, 22, isActive ? '#fff' : Colors.textDim)}
-                                    </View>
-                                    <Text style={[
-                                        styles.fanLabel,
-                                        isActive && styles.fanLabelActive
-                                    ]}>
-                                        {getFanLabel(fm)}
-                                    </Text>
-                                </TouchableOpacity>
-                            );
-                        })}
-                    </ScrollView>
-
-                    <TouchableOpacity style={styles.moreBtn} onPress={toggleExpanded}>
-                        {expanded
-                            ? <ChevronUp size={22} color={Colors.textDim} />
-                            : <MoreVertical size={22} color={Colors.textDim} />
-                        }
-                    </TouchableOpacity>
+            {/* Temperature */}
+            <View style={s.tempRow}>
+                <TouchableOpacity style={s.tempBtn} onPress={() => changeTemp(-1)} activeOpacity={0.7}>
+                    <Minus size={20} color="#fff" strokeWidth={2.5} />
+                </TouchableOpacity>
+                <View style={s.tempCenter}>
+                    <Text style={s.tempNum}>{targetTemp != null ? targetTemp : '--'}</Text>
+                    <Text style={s.tempUnit}>°C</Text>
                 </View>
+                <TouchableOpacity style={s.tempBtn} onPress={() => changeTemp(1)} activeOpacity={0.7}>
+                    <Plus size={20} color="#fff" strokeWidth={2.5} />
+                </TouchableOpacity>
+            </View>
+
+            {/* Mode pills */}
+            <View style={s.modeRow}>
+                {availModes.map(mode => {
+                    const meta = getMeta(mode);
+                    const isActive = hvacMode === mode && isOn;
+                    return (
+                        <TouchableOpacity
+                            key={mode}
+                            style={[s.modePill, isActive && { backgroundColor: meta.color }]}
+                            onPress={() => isOn ? setMode(mode) : null}
+                            activeOpacity={0.75}
+                        >
+                            <Text style={[s.modePillText, isActive && s.modePillTextActive]}>
+                                {meta.label}
+                            </Text>
+                        </TouchableOpacity>
+                    );
+                })}
+            </View>
+
+            {/* Expand toggle */}
+            {isOn && (
+                <TouchableOpacity
+                    style={s.expandToggle}
+                    onPress={() => { setExpanded(p => !p); Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); }}
+                    activeOpacity={0.7}
+                >
+                    {expanded
+                        ? <ChevronUp   size={18} color="rgba(255,255,255,0.35)" />
+                        : <ChevronDown size={18} color="rgba(255,255,255,0.35)" />}
+                </TouchableOpacity>
             )}
 
-            {/* Expanded Inline Section */}
+            {/* Expanded section */}
             {isOn && expanded && (
-                <View style={styles.expandedSection}>
-                    {/* Mode */}
-                    <View style={styles.expandedDivider} />
-                    <Text style={styles.expandedTitle}>Mode</Text>
-                    <View style={styles.expandedIconRow}>
-                        {availableModes.map(mode => {
-                            const isActive = hvacMode === mode;
-                            return (
-                                <TouchableOpacity
-                                    key={mode}
-                                    style={styles.expandedIconItem}
-                                    onPress={() => handleModeSelect(mode)}
-                                >
-                                    <View style={[
-                                        styles.expandedIconCircle,
-                                        isActive && styles.expandedIconCircleActive
-                                    ]}>
-                                        {getModeIcon(mode, 24, isActive ? '#000' : Colors.textDim)}
-                                    </View>
-                                    <Text style={[
-                                        styles.expandedIconLabel,
-                                        isActive && styles.expandedIconLabelActive
-                                    ]}>
-                                        {getModeLabel(mode)}
-                                    </Text>
-                                </TouchableOpacity>
-                            );
-                        })}
-                    </View>
+                <View style={s.expanded}>
 
-                    {/* Custom Features */}
+                    {/* Fan speed */}
+                    {fanModes.length > 0 && (
+                        <>
+                            <Text style={s.secTitle}>Fan Speed</Text>
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.fanRow}>
+                                {fanModes.map(fm => {
+                                    const active = currentFan === fm;
+                                    return (
+                                        <TouchableOpacity key={fm} style={s.fanItem} onPress={() => setFan(fm)} activeOpacity={0.75}>
+                                            <View style={[s.fanCircle, active && s.fanCircleActive]}>
+                                                <Fan size={20} color={active ? '#fff' : 'rgba(255,255,255,0.4)'} />
+                                            </View>
+                                            <Text style={[s.fanLabel, active && s.fanLabelActive]}>{getFanLabel(fm)}</Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </ScrollView>
+                        </>
+                    )}
+
+                    {/* Presets */}
                     {presetModes.length > 0 && (
                         <>
-                            <View style={styles.expandedDivider} />
-                            <Text style={styles.expandedTitle}>Custom features</Text>
-                            <View style={styles.expandedIconRow}>
+                            <View style={s.divider} />
+                            <Text style={s.secTitle}>Modes</Text>
+                            <View style={s.presetRow}>
                                 {presetModes.map(preset => {
-                                    const isActive = currentPreset === preset;
+                                    const active = currentPreset === preset;
                                     return (
                                         <TouchableOpacity
                                             key={preset}
-                                            style={styles.expandedIconItem}
-                                            onPress={() => handlePresetSelect(preset)}
+                                            style={[s.presetPill, active && s.presetPillActive]}
+                                            onPress={() => setPreset(preset)}
+                                            activeOpacity={0.75}
                                         >
-                                            <View style={[
-                                                styles.expandedIconCircle,
-                                                isActive && styles.expandedIconCircleActive
-                                            ]}>
-                                                {getPresetIcon(preset, 24, isActive ? '#000' : Colors.textDim)}
-                                            </View>
-                                            <Text style={[
-                                                styles.expandedIconLabel,
-                                                isActive && styles.expandedIconLabelActive
-                                            ]}>
+                                            {getPresetIcon(preset, 13, active ? '#fff' : 'rgba(255,255,255,0.5)')}
+                                            <Text style={[s.presetText, active && s.presetTextActive]}>
                                                 {preset.charAt(0).toUpperCase() + preset.slice(1)}
                                             </Text>
                                         </TouchableOpacity>
@@ -273,97 +264,76 @@ export default function ClimateCard({ climate, onUpdate, needsChange }) {
                         </>
                     )}
 
-                    {/* Close button */}
-                    <TouchableOpacity style={styles.collapseBtn} onPress={toggleExpanded}>
-                        <ChevronUp size={20} color={Colors.textDim} />
-                    </TouchableOpacity>
+                    {/* Timer */}
+                    <View style={s.divider} />
+                    <View style={s.timerHeader}>
+                        <Clock size={14} color="rgba(255,255,255,0.4)" />
+                        <Text style={s.secTitle}>Timer</Text>
+                    </View>
+                    <View style={s.spinnerRow}>
+                        <TimeSpinner value={dispH} max={23} onChange={timerRunning ? () => {} : setTimerHours} label="HOURS" />
+                        <Text style={s.spinnerColon}>:</Text>
+                        <TimeSpinner value={dispM} max={59} onChange={timerRunning ? () => {} : setTimerMins}  label="MIN"   />
+                    </View>
+                    <View style={s.timerBtnRow}>
+                        <TouchableOpacity
+                            style={[s.timerBtnStart, timerRunning && { opacity: 0.55 }]}
+                            onPress={timerRunning ? undefined : startTimer}
+                            activeOpacity={0.8}
+                        >
+                            <LinearGradient colors={['#a259f7', '#44C8CA']} style={s.timerGrad} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}>
+                                <Text style={s.timerBtnText}>{timerRunning ? `${pad(dispH)}:${pad(dispM)} left` : 'Start'}</Text>
+                            </LinearGradient>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={s.timerBtnReset} onPress={resetTimer} activeOpacity={0.8}>
+                            <Text style={s.timerResetText}>Reset</Text>
+                        </TouchableOpacity>
+                    </View>
                 </View>
             )}
         </View>
     );
 }
 
-const styles = StyleSheet.create({
-    // ── Main Card ──
-    container: {
+const BG = '#09091A';
+
+const s = StyleSheet.create({
+    card: {
         width: '100%',
-        backgroundColor: 'rgba(30, 30, 40, 0.95)',
+        backgroundColor: BG,
         borderRadius: 24,
-        padding: 18,
+        padding: 20,
         marginTop: 10,
-        overflow: 'hidden',
     },
-    topRow: {
+    // Header
+    header: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 12,
+        marginBottom: 24,
     },
-    iconCircle: {
-        width: 52,
-        height: 52,
-        borderRadius: 26,
-        backgroundColor: 'rgba(255,255,255,0.08)',
+    iconBg: {
+        width: 48,
+        height: 48,
+        borderRadius: 14,
         alignItems: 'center',
-        justifyContent: 'center',
-    },
-    nameArea: {
-        flex: 1,
         justifyContent: 'center',
     },
     name: {
+        flex: 1,
         fontSize: 17,
-        fontWeight: '600',
+        fontFamily: CF.semibold,
         color: '#fff',
     },
-    state: {
-        fontSize: 13,
-        color: Colors.textDim,
-        marginTop: 2,
-    },
-    tempPill: {
+    // Temperature
+    tempRow: {
         flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'rgba(255,255,255,0.1)',
-        borderRadius: 22,
-        height: 44,
-        paddingHorizontal: 4,
-        gap: 2,
-    },
-    tempPillBtn: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
         alignItems: 'center',
         justifyContent: 'center',
+        gap: 28,
+        marginBottom: 24,
     },
-    tempText: {
-        fontSize: 20,
-        fontWeight: 'bold',
-        color: '#fff',
-        minWidth: 44,
-        textAlign: 'center',
-    },
-
-    // ── Bottom Row (Fan Speeds + More) ──
-    bottomRow: {
-        flexDirection: 'row',
-        alignItems: 'flex-end',
-        justifyContent: 'space-between',
-        marginTop: 16,
-    },
-    fanScroll: {
-        flex: 1,
-        marginRight: 4,
-    },
-    fanRow: {
-        flexDirection: 'row',
-        gap: 16,
-    },
-    fanItem: {
-        alignItems: 'center',
-        gap: 6,
-    },
-    fanCircle: {
+    tempBtn: {
         width: 48,
         height: 48,
         borderRadius: 24,
@@ -371,76 +341,130 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         justifyContent: 'center',
     },
-    fanCircleActive: {
-        backgroundColor: '#8947ca',
+    tempCenter: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
     },
-    fanLabel: {
-        fontSize: 11,
-        color: Colors.textDim,
-        fontWeight: '500',
-    },
-    fanLabelActive: {
+    tempNum: {
+        fontSize: 52,
+        fontFamily: CF.bold,
         color: '#fff',
+        lineHeight: 58,
     },
-    moreBtn: {
-        width: 40,
-        height: 40,
+    tempUnit: {
+        fontSize: 18,
+        fontFamily: CF.medium,
+        color: 'rgba(255,255,255,0.55)',
+        marginTop: 8,
+    },
+    // Mode pills
+    modeRow: {
+        flexDirection: 'row',
+        gap: 8,
+        flexWrap: 'wrap',
+    },
+    modePill: {
+        paddingHorizontal: 18,
+        paddingVertical: 9,
+        borderRadius: 22,
+        backgroundColor: 'rgba(255,255,255,0.07)',
+    },
+    modePillText: {
+        fontSize: 13,
+        fontFamily: CF.medium,
+        color: 'rgba(255,255,255,0.45)',
+    },
+    modePillTextActive: {
+        color: '#fff',
+        fontFamily: CF.semibold,
+    },
+    // Expand
+    expandToggle: {
+        alignSelf: 'center',
+        marginTop: 16,
+        width: 36,
+        height: 24,
         alignItems: 'center',
         justifyContent: 'center',
     },
-
-    // ── Expanded Inline Section ──
-    expandedSection: {
-        marginTop: 4,
-    },
-    expandedDivider: {
+    // Expanded
+    expanded: { marginTop: 4 },
+    divider: {
         height: 1,
-        backgroundColor: 'rgba(255,255,255,0.08)',
+        backgroundColor: 'rgba(255,255,255,0.07)',
         marginVertical: 16,
     },
-    expandedTitle: {
-        fontSize: 16,
-        fontWeight: '700',
-        color: '#fff',
-        marginBottom: 12,
+    secTitle: {
+        fontSize: 12,
+        fontFamily: CF.semibold,
+        color: 'rgba(255,255,255,0.45)',
+        letterSpacing: 0.8,
+        marginBottom: 14,
+        textTransform: 'uppercase',
     },
-    expandedIconRow: {
+    timerHeader: {
         flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: 16,
-    },
-    expandedIconItem: {
         alignItems: 'center',
         gap: 6,
     },
-    expandedIconCircle: {
+    // Fan
+    fanRow: { flexDirection: 'row', gap: 14, paddingBottom: 4 },
+    fanItem: { alignItems: 'center', gap: 6 },
+    fanCircle: {
         width: 52,
         height: 52,
         borderRadius: 26,
-        backgroundColor: 'rgba(255,255,255,0.08)',
+        backgroundColor: 'rgba(255,255,255,0.07)',
         alignItems: 'center',
         justifyContent: 'center',
     },
-    expandedIconCircleActive: {
-        backgroundColor: '#fff',
-    },
-    expandedIconLabel: {
-        fontSize: 11,
-        color: Colors.textDim,
-        fontWeight: '500',
-    },
-    expandedIconLabelActive: {
-        color: '#fff',
-        fontWeight: '600',
-    },
-    collapseBtn: {
-        alignSelf: 'center',
-        marginTop: 16,
-        width: 40,
-        height: 40,
+    fanCircleActive: { backgroundColor: '#44C8CA' },
+    fanLabel: { fontSize: 11, fontFamily: CF.medium, color: 'rgba(255,255,255,0.4)' },
+    fanLabelActive: { color: '#fff', fontFamily: CF.semibold },
+    // Presets
+    presetRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+    presetPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        paddingHorizontal: 14,
+        paddingVertical: 9,
         borderRadius: 20,
-        backgroundColor: 'rgba(255,255,255,0.08)',
+        backgroundColor: 'rgba(255,255,255,0.07)',
+    },
+    presetPillActive: { backgroundColor: 'rgba(68,200,202,0.18)', borderWidth: 1, borderColor: '#44C8CA' },
+    presetText: { fontSize: 12, fontFamily: CF.medium, color: 'rgba(255,255,255,0.5)' },
+    presetTextActive: { color: '#fff', fontFamily: CF.semibold },
+    // Timer spinners
+    spinnerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        marginBottom: 20,
+    },
+    spinnerColon: {
+        fontSize: 28,
+        fontFamily: CF.bold,
+        color: 'rgba(255,255,255,0.25)',
+        marginBottom: 18,
+    },
+    // Timer buttons
+    timerBtnRow: { flexDirection: 'row', gap: 10 },
+    timerBtnStart: { flex: 1, height: 48, borderRadius: 14, overflow: 'hidden' },
+    timerGrad: {
+        ...StyleSheet.absoluteFillObject,
         alignItems: 'center',
         justifyContent: 'center',
     },
+    timerBtnText: { fontSize: 15, fontFamily: CF.semibold, color: '#fff' },
+    timerBtnReset: {
+        flex: 1,
+        height: 48,
+        borderRadius: 14,
+        backgroundColor: 'rgba(255,255,255,0.07)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    timerResetText: { fontSize: 15, fontFamily: CF.semibold, color: 'rgba(255,255,255,0.5)' },
 });

@@ -16,23 +16,42 @@ const COL_GAP = 10;
 const H_PAD = 40;
 const CARD_W = (SCREEN_W - H_PAD - COL_GAP) / 2;
 
-// Strip page chrome: remove body margin/padding/background so the stream fills the card
+// Injected BEFORE content loads — guarantees CSS is in place before the img/video renders
+const STRIP_PRE_JS = `
+  (function() {
+    var style = document.createElement('style');
+    style.textContent =
+      '* { margin: 0 !important; padding: 0 !important; box-sizing: border-box !important; }' +
+      'html, body { width: 100vw !important; height: 100vh !important; overflow: hidden !important; background: black !important; }' +
+      'img, video { position: fixed !important; top: 50% !important; left: 50% !important; ' +
+      'transform: translate(-50%,-50%) !important; min-width: 100vw !important; min-height: 100vh !important; ' +
+      'width: auto !important; height: auto !important; object-fit: cover !important; display: block !important; }';
+    (document.head || document.documentElement).appendChild(style);
+  })();
+  true;
+`;
+
+// Post-load pass — re-applies inline styles in case the page overrides our CSS
 const STRIP_PAGE_JS = `
   (function() {
     function apply() {
-      var s = document.body ? document.body.style : null;
-      if (!s) return;
-      s.margin = '0'; s.padding = '0'; s.background = 'black'; s.overflow = 'hidden';
-      document.documentElement.style.background = 'black';
-      document.documentElement.style.overflow = 'hidden';
+      var cover = [
+        'position:fixed','top:50%','left:50%',
+        'transform:translate(-50%,-50%)',
+        'min-width:100vw','min-height:100vh',
+        'width:auto','height:auto',
+        'object-fit:cover','display:block',
+      ].join(';');
       document.querySelectorAll('img,video').forEach(function(el) {
-        el.style.width = '100%'; el.style.height = '100%'; el.style.objectFit = 'cover';
-        el.style.display = 'block';
+        el.style.cssText = cover;
       });
+      var b = document.body;
+      if (b) { b.style.margin='0'; b.style.padding='0'; b.style.overflow='hidden'; b.style.background='black'; b.style.width='100vw'; b.style.height='100vh'; }
     }
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);
-    else apply();
-    setTimeout(apply, 500);
+    apply();
+    setTimeout(apply, 300);
+    setTimeout(apply, 1000);
+    setTimeout(apply, 3000);
   })();
   true;
 `;
@@ -62,8 +81,9 @@ const CameraCard = ({ cam, frigateService, onPress, isOnline = true, sensorIds =
                     allowsInlineMediaPlayback={true}
                     mediaPlaybackRequiresUserAction={false}
                     originWhitelist={['*']}
-                    scalesPageToFit={true}
+                    scalesPageToFit={false}
                     javaScriptEnabled={true}
+                    injectedJavaScriptBeforeContentLoaded={STRIP_PRE_JS}
                     injectedJavaScript={STRIP_PAGE_JS}
                     onError={() => setStreamError(true)}
                     onHttpError={(e) => { if (e.nativeEvent.statusCode >= 400) setStreamError(true); }}
@@ -92,7 +112,7 @@ const CameraCard = ({ cam, frigateService, onPress, isOnline = true, sensorIds =
                     {cam.name || cam.id}
                 </Text>
             </View>
-            <CameraSensorOverlay sensorIds={sensorIds} entityMap={entityMap} position="bl" />
+            <CameraSensorOverlay sensorIds={sensorIds} entityMap={entityMap} position="tl" />
         </TouchableOpacity>
     );
 };
@@ -444,7 +464,7 @@ const styles = StyleSheet.create({
     },
     card: {
         width: CARD_W,
-        aspectRatio: 16 / 9,
+        aspectRatio: 4 / 3,
         borderRadius: 16,
         overflow: 'hidden',
         backgroundColor: '#1e1f35',
