@@ -6,7 +6,6 @@ export class FrigateService {
         this.username = username;
         this.password = password;
         this.adminUrl = adminUrl ? adminUrl.replace(/\/$/, '') : '';
-        console.log('[FrigateService] Admin URL:', this.adminUrl || 'NOT SET');
         this.token = null;
         this.headers = {
             'Content-Type': 'application/json',
@@ -17,12 +16,10 @@ export class FrigateService {
 
     async login() {
         if (!this.username || !this.password) {
-            console.log('Frigate: Anonymous Mode (No credentials provided)');
             return true;
         }
 
         try {
-            console.log('Logging in to Frigate...');
             const response = await fetch(`${this.baseUrl}/api/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -47,12 +44,8 @@ export class FrigateService {
             const cookie = response.headers.get('set-cookie');
             if (cookie) {
                 this.sessionCookie = cookie;
-                console.log('Frigate Session Cookie Captured');
-            } else {
-                console.log('Warning: No Set-Cookie header found in login response');
             }
 
-            console.log('Frigate Login Successful');
             return true;
         } catch (error) {
             console.error('Frigate Login Error:', error);
@@ -78,7 +71,6 @@ export class FrigateService {
         });
 
         if (response.status === 401) {
-            console.log('Frigate 401, attempting login...');
             const loggedIn = await this.login();
             if (loggedIn) {
                 // Retry
@@ -95,14 +87,10 @@ export class FrigateService {
         try {
             // Use backend proxy
             const proxyUrl = this.adminUrl + '/api/frigate/config';
-            console.log('Frigate: Fetching config from proxy:', proxyUrl);
-
             const response = await fetch(proxyUrl, {
                 method: 'GET',
                 headers: this.headers
             });
-
-            console.log('Frigate: Config response status:', response.status);
 
             if (!response.ok) {
                 console.error('Frigate: Config fetch failed with status:', response.status);
@@ -111,7 +99,6 @@ export class FrigateService {
             }
 
             const data = await response.json();
-            console.log('Frigate: Config loaded successfully');
             return data;
         } catch (error) {
             console.error('Frigate Config Error:', error.message || error);
@@ -154,8 +141,6 @@ export class FrigateService {
 
             // Use backend proxy
             const proxyUrl = this.adminUrl + `/api/frigate/events?${params.toString()}`;
-            console.log('Frigate: Fetching events from proxy:', proxyUrl);
-
             const response = await fetch(proxyUrl, { headers: this.headers });
             return await response.json();
         } catch (error) {
@@ -169,7 +154,6 @@ export class FrigateService {
         // Use backend proxy instead of direct Frigate connection
         // This solves WebView authentication issues
         const url = `${this.adminUrl}/api/frigate/stream/${cameraName}?fps=5&height=720&bbox=1`;
-        console.log('[FrigateService] Stream URL:', url);
         return url;
     }
 
@@ -188,7 +172,6 @@ export class FrigateService {
     getAudioUrl(cameraName) {
         // Frigate audio stream endpoint - using backend proxy
         const url = `${this.adminUrl}/api/frigate/audio/${cameraName}`;
-        console.log('[FrigateService] Audio URL:', url);
         return url;
     }
 

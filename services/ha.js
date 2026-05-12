@@ -40,11 +40,9 @@ export class HAService {
         // Don't reconnect if app is backgrounded
         if (this.appState !== 'active') return;
 
-        console.log('Connecting to', this.url);
         this.socket = new WebSocket(this.url);
 
         this.socket.onopen = () => {
-            console.log('Socket Connected');
             this.reconnectAttempts = 0; // Reset on successful connection
         };
 
@@ -53,12 +51,11 @@ export class HAService {
                 const data = JSON.parse(event.data);
                 this.handleMessage(data);
             } catch (e) {
-                console.log('[HAService] Failed to parse WebSocket message:', e.message);
+                console.error('[HAService] Failed to parse WebSocket message:', e.message);
             }
         };
 
         this.socket.onclose = () => {
-            console.log('Socket Closed');
             this.authenticated = false;
             this.socket = null;
 
@@ -73,18 +70,15 @@ export class HAService {
             if (this.appState === 'active' && this.reconnectAttempts < this.maxReconnectAttempts) {
                 const delay = Math.min(5000 * Math.pow(2, this.reconnectAttempts), 60000); // 5s, 10s, 20s, 40s, 60s
                 this.reconnectAttempts++;
-                console.log(`[HAService] Reconnecting in ${delay / 1000}s (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
                 this.reconnectTimer = setTimeout(() => {
                     this.reconnectTimer = null;
                     this.connect();
                 }, delay);
-            } else if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-                console.log('[HAService] Max reconnection attempts reached. Will retry on foreground.');
             }
         };
 
         this.socket.onerror = (e) => {
-            console.log('Socket Error', e.message);
+            console.error('Socket Error', e.message);
         };
     }
 
@@ -110,7 +104,6 @@ export class HAService {
         this.pending.clear();
 
         if (this.socket) {
-            console.log('Disconnecting socket...');
             // Prevent auto-reconnect logic
             this.socket.onclose = null;
             this.socket.close();
@@ -121,21 +114,6 @@ export class HAService {
     }
 
     handleMessage(data) {
-        // Log only messages related to "Master Controller" lights
-        if (data.type === 'event' && data.event?.event_type === 'state_changed') {
-            const newState  = data.event?.data?.new_state;
-            const oldState  = data.event?.data?.old_state;
-            const entityId  = data.event?.data?.entity_id || '';
-            const friendlyName = newState?.attributes?.friendly_name || '';
-
-            if (friendlyName.toLowerCase().includes('master controller') ||
-                entityId.toLowerCase().includes('master_controller')) {
-                console.log('[HA WS ← MASTER CONTROLLER]', entityId);
-                console.log('  state :', oldState?.state, '→', newState?.state);
-                console.log('  attrs :', JSON.stringify(newState?.attributes, null, 2));
-            }
-        }
-
         if (data.type === 'auth_required') {
             this.sendAuth();
         } else if (data.type === 'auth_ok') {
@@ -242,7 +220,6 @@ export class HAService {
 HAService.instances = new Set();
 
 HAService.disconnectAll = () => {
-    console.log(`[HAService] Disconnecting all ${HAService.instances.size} active instances...`);
     HAService.instances.forEach(instance => {
         try {
             instance.disconnect();

@@ -1,6 +1,6 @@
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ImageBackground, Image } from 'react-native';
 import { BlurView } from 'expo-blur';
-import { X, Lightbulb, Fan, ChevronLeft, Droplets, Thermometer, DoorOpen, DoorClosed, Lock, LockOpen, Power, Play, Zap, ChevronDown, ChevronUp } from 'lucide-react-native';
+import { X, Lightbulb, Fan, ChevronLeft, Droplets, Thermometer, DoorOpen, DoorClosed, Lock, LockOpen, Power, Play, Zap, ChevronDown, ChevronUp, Monitor } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '../../constants/Colors';
 import { CF } from '../../utils/typography';
@@ -347,15 +347,6 @@ export default function RoomDetailView({
     haToken,
     showPreferenceButton = true
 }) {
-    // Debug: print scripts in dev builds so it's easy to verify which scenes are passed in
-    if (typeof __DEV__ !== 'undefined' && __DEV__) {
-        try {
-            // eslint-disable-next-line no-console
-            console.log('[RoomDetailView] room:', room?.name || room?.area_id, 'scripts:', scripts?.map(s => ({ id: s.entity_id, name: s.displayName })));
-        } catch (e) {
-            // ignore
-        }
-    }
     const cardWidth = columns > 2 ? `${Math.floor(100 / columns) - 2}%` : '48%';
     const [selectedLight, setSelectedLight] = useState(null);
     const [preferences, setPreferences] = useState([]);
@@ -802,7 +793,7 @@ export default function RoomDetailView({
                                                 <View style={styles.cameraGradientOverlay} />
                                                 {!isUnavailable && (
                                                     <View style={styles.cameraLiveBadge}>
-                                                        <Text style={styles.cameraLiveText}>LIVE</Text>
+                                                        <View style={styles.cameraLiveDot} />
                                                     </View>
                                                 )}
                                                 {hasMotion && (
@@ -850,42 +841,62 @@ export default function RoomDetailView({
                         </View>
                     )}
 
-                    {/* ── 7. Media ── */}
-                    {medias.length > 0 && (
-                        <View style={{ marginBottom: 20 }}>
-                            <View style={styles.divider} />
-                            {medias
-                                .filter(m => {
-                                    const mapping = mediaMappings.find(map => map.entity_id === m.entity_id);
-                                    return !mapping || !mapping.parentId;
-                                })
-                                .map(media => {
-                                    const children = medias.filter(c => {
-                                        const mapping = mediaMappings.find(map => map.entity_id === c.entity_id);
-                                        return mapping && mapping.parentId === media.entity_id;
-                                    });
-                                    const mapping = mediaMappings.find(m => m.entity_id === media.entity_id);
-                                    return (
-                                        <MediaCard
-                                            key={media.entity_id}
-                                            player={media}
-                                            childPlayers={children}
-                                            mapping={mapping}
-                                            mediaMappings={mediaMappings}
-                                            needsChange={checkNeedsChange(media.entity_id)}
-                                            onUpdate={(id, domain, service, data) => {
-                                                if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
-                                            }}
-                                            adminUrl={adminUrl}
-                                            haUrl={haUrl}
-                                            haToken={haToken}
-                                            onShowSourceOverlay={setSourceOverlay}
-                                            onShowVolumeOverlay={setVolumeOverlay}
-                                        />
-                                    );
-                                })}
-                        </View>
-                    )}
+                    {/* ── 7. Media — TV players only (`getRoomEntities` filters non-TV media_player) ── */}
+                    {medias.length > 0 && (() => {
+                        const rootRows = medias
+                            .filter(m => {
+                                const map = mediaMappings.find(x => x.entity_id === m.entity_id);
+                                return !map || !map.parentId;
+                            })
+                            .map(media => {
+                                const map = mediaMappings.find(x => x.entity_id === media.entity_id);
+                                const children = medias.filter(c => {
+                                    const cm = mediaMappings.find(x => x.entity_id === c.entity_id);
+                                    return cm && cm.parentId === media.entity_id;
+                                });
+                                return { media, mapping: map, children };
+                            });
+
+                        if (rootRows.length === 0) return null;
+
+                        return (
+                            <View style={{ marginBottom: 20, marginTop: 12 }}>
+                                <View style={styles.mediaSectionPanel}>
+                                    <View style={styles.mediaSectionWrap}>
+                                        <View style={styles.mediaSectionHeader}>
+                                            <LinearGradient
+                                                colors={['#8947ca', '#6b2fb8']}
+                                                start={{ x: 0, y: 0 }}
+                                                end={{ x: 1, y: 1 }}
+                                                style={styles.mediaSectionIconCircle}
+                                            >
+                                                <Monitor size={18} color="#fff" strokeWidth={2.2} />
+                                            </LinearGradient>
+                                            <Text style={styles.mediaSectionTitle}>Media</Text>
+                                        </View>
+                                        {rootRows.map(row => (
+                                            <MediaCard
+                                                key={row.media.entity_id}
+                                                player={row.media}
+                                                childPlayers={row.children}
+                                                mapping={row.mapping}
+                                                mediaMappings={mediaMappings}
+                                                needsChange={checkNeedsChange(row.media.entity_id)}
+                                                onUpdate={(id, domain, service, data) => {
+                                                    if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
+                                                }}
+                                                adminUrl={adminUrl}
+                                                haUrl={haUrl}
+                                                haToken={haToken}
+                                                onShowSourceOverlay={setSourceOverlay}
+                                                onShowVolumeOverlay={setVolumeOverlay}
+                                            />
+                                        ))}
+                                    </View>
+                                </View>
+                            </View>
+                        );
+                    })()}
 
                     {/* ── 9. Switches ── */}
                     {switches.length > 0 && (
@@ -1158,6 +1169,34 @@ const styles = StyleSheet.create({
         marginVertical: 20,
         width: '100%',
     },
+    /** Whole Media block — outer surface; inner TV UI stays `#09091A` in `MediaCard` */
+    mediaSectionPanel: {
+        backgroundColor: '#13132A',
+        borderRadius: 22,
+        padding: 16,
+    },
+    mediaSectionWrap: {
+        gap: 12,
+    },
+    mediaSectionHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        marginBottom: 4,
+    },
+    mediaSectionIconCircle: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    mediaSectionTitle: {
+        color: '#fff',
+        fontSize: 17,
+        fontFamily: CF.semibold,
+        letterSpacing: 0.2,
+    },
     content: {
         padding: 20,
         paddingBottom: 40,
@@ -1303,11 +1342,11 @@ const styles = StyleSheet.create({
         paddingVertical: 2,
         borderRadius: 5,
     },
-    cameraLiveText: {
-        color: '#fff',
-        fontSize: 9,
-        fontWeight: '700',
-        letterSpacing: 0.5,
+    cameraLiveDot: {
+        width: 8,
+        height: 8,
+        borderRadius: 4,
+        backgroundColor: '#fff',
     },
     cameraMotionBadge: {
         position: 'absolute',

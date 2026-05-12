@@ -24,7 +24,7 @@ export default function RoomSheet({
 }) {
     if (!room) return null;
 
-    const { lights, fans, climates, covers, medias, cameras, sensors, doors, switches, automations, scripts } = getRoomEntities(room, registryDevices, registryEntities, allEntities, sensorMappings, coverMappings);
+    const { lights, fans, climates, covers, medias, cameras, sensors, doors, switches, automations, scripts } = getRoomEntities(room, registryDevices, registryEntities, allEntities, sensorMappings, coverMappings, mediaMappings);
 
     return (
         <Modal

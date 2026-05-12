@@ -301,24 +301,27 @@ export const RoomsSkeleton = memo(function RoomsSkeleton() {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  CamerasSkeleton — 2-col grid, matches HomeCameraStrip card exactly
-//  CARD_W = (screenWidth - 40 padding - 10 gap) / 2 — same formula as real strip
+//  CamerasSkeleton — 2 cards (single row), matches HomeCameraStrip card exactly
+//  Same usable width as HomeCameraStrip: SW - 40 (parent ScrollView padding only).
+//  Do not use sectionRoot horizontal padding here — it would double the inset,
+//  shrink the row, and force the two cards to wrap.
 // ─────────────────────────────────────────────────────────────────────────────
-const CAM_W = (SW - 40 - 10) / 2;
+const CAM_COL_GAP = 10;
+const CAM_W = (SW - 40 - CAM_COL_GAP) / 2;
 export const CamerasSkeleton = memo(function CamerasSkeleton() {
     const anim = useShimmer();
     return (
-        <View style={sec.sectionRoot}>
+        <View style={sec.camSectionRoot}>
             {/* Section label */}
             <View style={sec.spaceBetween}>
                 <Shimmer anim={anim} style={{ width: 72, height: 10, borderRadius: 5 }} />
                 <Shimmer anim={anim} style={{ width: 36, height: 10, borderRadius: 5 }} />
             </View>
 
-            {/* 2-column grid */}
-            <View style={[sec.camGrid, { marginTop: 12 }]}>
-                {[0, 1, 2, 3].map(i => (
-                    <View key={i} style={{ position: 'relative' }}>
+            {/* 2 cards in one row (same aspect ratio as HomeCameraStrip) */}
+            <View style={[sec.camGrid, sec.camStripRow, { marginTop: 12, gap: CAM_COL_GAP }]}>
+                {[0, 1].map(i => (
+                    <View key={i} style={{ width: CAM_W, position: 'relative' }}>
                         <Shimmer
                             anim={anim}
                             style={{ width: CAM_W, height: CAM_W * 0.75, borderRadius: 16 }}
@@ -360,6 +363,11 @@ const sec = StyleSheet.create({
         paddingTop: 24,
         paddingBottom: 4,
     },
+    /** Like sectionRoot but no horizontal padding — parent ScrollView already has 20+20 */
+    camSectionRoot: {
+        paddingTop: 24,
+        paddingBottom: 4,
+    },
     spaceBetween: {
         flexDirection: 'row',
         justifyContent: 'space-between',
@@ -372,6 +380,11 @@ const sec = StyleSheet.create({
     camGrid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 10,
+        justifyContent: 'space-between',
+        rowGap: 10,
+    },
+    camStripRow: {
+        flexWrap: 'nowrap',
+        justifyContent: 'flex-start',
     },
 });

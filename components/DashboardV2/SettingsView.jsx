@@ -18,7 +18,6 @@ function SettingsView({
     registryDevices = [],
     registryEntities = [],
     onSettingChange,
-    onPlayMedia,
     onNetwork,
     showFamily, // Prop from parent
     autoRoomVisit, // Prop from parent
@@ -567,16 +566,6 @@ function SettingsView({
 
             <View style={styles.section}>
                 <Text style={styles.sectionHeader}>Quick Actions</Text>
-
-                <TouchableOpacity style={styles.listItem} onPress={onPlayMedia}>
-                    <View style={styles.itemInfo}>
-                        <View style={styles.iconContainer}>
-                            <Play size={20} color={Colors.text} />
-                        </View>
-                        <Text style={styles.itemName}>Play Media</Text>
-                    </View>
-                    <ChevronRight size={20} color={Colors.textDim} />
-                </TouchableOpacity>
 
                 <TouchableOpacity style={styles.listItem} onPress={onNetwork}>
                     <View style={styles.itemInfo}>

@@ -2,14 +2,14 @@
  * AlertNotificationModal
  *
  * Centered full-screen overlay shown when the user taps a push notification.
- * Displays the title, body, category icon, and timestamp of the alert.
+ * Shows "Security Alert" as fixed heading, then the specific event name and detail.
  *
  * Props:
  *   visible   {bool}
- *   title     {string}
- *   body      {string}
- *   category  {string}  'lock' | 'security' | 'door' | 'camera' | 'default' ...
- *   timestamp {string}  ISO string
+ *   title     {string}   specific event, e.g. "Front Door — Door Sensor Triggered"
+ *   body      {string}   detail text
+ *   category  {string}   'lock' | 'garage' | 'security' | 'door' | 'camera' | 'default'
+ *   timestamp {string}   ISO string
  *   onDismiss {fn}
  */
 
@@ -20,38 +20,22 @@ import {
 } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Shield, Lock, DoorOpen, Camera, Bell, X, AlertTriangle } from 'lucide-react-native';
+import { X } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
 
-// ── Category → icon + colour ─────────────────────────────────────────────────
-function CategoryIcon({ category, size = 48 }) {
+// ── Category → accent colour (used for gradient tint only, no icon) ───────────
+function accentColor(category) {
     const map = {
-        lock:     { Icon: Lock,          color: '#44C8CA' },
-        security: { Icon: Shield,        color: '#EF5350' },
-        door:     { Icon: DoorOpen,      color: '#FF9800' },
-        camera:   { Icon: Camera,        color: '#7B2FBE' },
-        default:  { Icon: Bell,          color: '#9199BA' },
-        alert:    { Icon: AlertTriangle, color: '#EF5350' },
+        lock:     '#44C8CA',
+        garage:   '#FF9800',
+        security: '#EF5350',
+        door:     '#FF9800',
+        camera:   '#7B2FBE',
+        default:  '#9199BA',
+        alert:    '#EF5350',
     };
-    const { Icon, color } = map[category] ?? map.default;
-    return (
-        <View style={[iconStyles.circle, { borderColor: color + '40', backgroundColor: color + '18' }]}>
-            <Icon size={size} color={color} />
-        </View>
-    );
+    return map[category] ?? map.default;
 }
-
-const iconStyles = StyleSheet.create({
-    circle: {
-        width: 96,
-        height: 96,
-        borderRadius: 48,
-        borderWidth: 1.5,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginBottom: 20,
-    },
-});
 
 // ── Format timestamp ──────────────────────────────────────────────────────────
 function formatTime(iso) {
@@ -91,6 +75,8 @@ function AlertNotificationModal({ visible, title, body, category = 'default', ti
         ]).start(() => onDismiss?.());
     };
 
+    const accent = accentColor(category);
+
     return (
         <Modal
             visible={visible}
@@ -103,9 +89,9 @@ function AlertNotificationModal({ visible, title, body, category = 'default', ti
             <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
             <View style={styles.overlay}>
                 <Animated.View style={[styles.card, { transform: [{ scale: scaleAnim }], opacity: opacityAnim }]}>
-                    {/* Gradient border effect */}
+                    {/* Gradient tint — colour follows category */}
                     <LinearGradient
-                        colors={['rgba(68,200,202,0.15)', 'rgba(123,47,190,0.08)', 'rgba(0,0,0,0)']}
+                        colors={[accent + '22', accent + '08', 'rgba(0,0,0,0)']}
                         style={StyleSheet.absoluteFill}
                         start={{ x: 0, y: 0 }}
                         end={{ x: 1, y: 1 }}
@@ -116,12 +102,16 @@ function AlertNotificationModal({ visible, title, body, category = 'default', ti
                         <X size={18} color="rgba(255,255,255,0.5)" />
                     </TouchableOpacity>
 
-                    {/* Icon */}
-                    <CategoryIcon category={category} />
+                    {/* Fixed heading */}
+                    <Text style={[styles.heading, { color: accent }]}>Security Alert</Text>
 
-                    {/* Content */}
-                    <Text style={styles.title}>{title || 'Alert'}</Text>
+                    {/* Event name — what specifically triggered */}
+                    {!!title && <Text style={styles.eventName}>{title}</Text>}
+
+                    {/* Detail body */}
                     {!!body && <Text style={styles.body}>{body}</Text>}
+
+                    {/* Timestamp */}
                     {!!timestamp && (
                         <Text style={styles.time}>{formatTime(timestamp)}</Text>
                     )}
@@ -133,7 +123,7 @@ function AlertNotificationModal({ visible, title, body, category = 'default', ti
                                 <Text style={styles.viewAllText}>View All</Text>
                             </TouchableOpacity>
                         )}
-                        <TouchableOpacity style={[styles.dismissBtn, !onViewAll && styles.dismissBtnFull]} onPress={handleDismiss} activeOpacity={0.8}>
+                        <TouchableOpacity style={[styles.dismissBtn, !onViewAll && styles.dismissBtnFull, { backgroundColor: accent }]} onPress={handleDismiss} activeOpacity={0.8}>
                             <Text style={styles.dismissText}>Dismiss</Text>
                         </TouchableOpacity>
                     </View>
@@ -156,7 +146,8 @@ const styles = StyleSheet.create({
         borderRadius: 28,
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.1)',
-        paddingVertical: 40,
+        paddingTop: 44,
+        paddingBottom: 32,
         paddingHorizontal: 28,
         alignItems: 'center',
         overflow: 'hidden',
@@ -174,16 +165,24 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         backgroundColor: 'rgba(255,255,255,0.06)',
     },
-    title: {
+    heading: {
+        fontSize: 13,
+        fontFamily: CF.semibold,
+        letterSpacing: 1.4,
+        textTransform: 'uppercase',
+        marginBottom: 14,
+        opacity: 0.9,
+    },
+    eventName: {
         color: '#ededf5',
         fontSize: 20,
         fontFamily: CF.semibold,
         textAlign: 'center',
         marginBottom: 10,
-        lineHeight: 26,
+        lineHeight: 27,
     },
     body: {
-        color: 'rgba(255,255,255,0.55)',
+        color: 'rgba(255,255,255,0.5)',
         fontSize: 14,
         fontFamily: CF.regular,
         textAlign: 'center',
@@ -191,7 +190,7 @@ const styles = StyleSheet.create({
         marginBottom: 12,
     },
     time: {
-        color: 'rgba(255,255,255,0.3)',
+        color: 'rgba(255,255,255,0.28)',
         fontSize: 12,
         fontFamily: CF.regular,
         marginBottom: 28,
@@ -200,10 +199,10 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         gap: 10,
         marginTop: 4,
+        width: '100%',
     },
     dismissBtn: {
         flex: 1,
-        backgroundColor: '#44C8CA',
         borderRadius: 14,
         paddingVertical: 13,
         alignItems: 'center',

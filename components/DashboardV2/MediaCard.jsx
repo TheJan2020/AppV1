@@ -1,151 +1,106 @@
-import { View, Text, StyleSheet, TouchableOpacity, Image } from 'react-native';
-import { Tv, Speaker, Play, Pause, Power, Volume2, VolumeX, List, Monitor, Smartphone, ChevronRight, SkipBack, SkipForward, ArrowUp, ArrowDown, ArrowLeft, ArrowRight, Circle, Gamepad2 } from 'lucide-react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView } from 'react-native';
+import {
+    Monitor, Play, Pause, Volume2, VolumeX,
+    ChevronDown, ChevronUp,
+    Home, ChevronLeft, Plus, Minus, Check, X,
+} from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../../constants/Colors';
 import { useState, useEffect, useRef } from 'react';
-import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, withSequence } from 'react-native-reanimated';
 import { SvgUri } from 'react-native-svg';
+import { CF } from '../../utils/typography';
 
-export default function MediaCard({ player, childPlayers = [], mapping, mediaMappings = [], onUpdate, needsChange, adminUrl, haUrl, haToken, onShowSourceOverlay, onShowVolumeOverlay }) {
-    if (!player) return null;
+/** Inner TV card (nested inside room Media panel `#13132A`) */
+const TV_CARD_BG = '#09091A';
+/** D-pad tuned: slightly larger outer ring + slightly smaller inner disc */
+const DPAD_OUTER_SCALE = 0.84;
+const DPAD_INNER_SCALE = 0.76;
+const DPAD_SIZE = 244 * DPAD_OUTER_SCALE;
+const DPAD_INNER_W = 178.393798828125 * DPAD_INNER_SCALE;
+const DPAD_INNER_H = 178.3676300048828 * DPAD_INNER_SCALE;
+const DPAD_INNER_RADIUS = Math.min(DPAD_INNER_W, DPAD_INNER_H) / 2;
+const DPAD_INNER_BG = 'rgba(19, 19, 42, 0.23)';
+const DPAD_EDGE_INSET = Math.round(56 * DPAD_OUTER_SCALE);
+const DPAD_HIT_DEPTH = Math.round(58 * DPAD_OUTER_SCALE);
+const DPAD_HIT_PAD_V = Math.round(8 * DPAD_OUTER_SCALE);
+const DPAD_HIT_PAD_H = Math.round(10 * DPAD_OUTER_SCALE);
+const DPAD_DOT = Math.round(7 * DPAD_OUTER_SCALE);
+/** App shortcuts: 2-col grid, wide pills (height fixed) */
+const APP_ROW_HEIGHT = 68;
+const APP_COL_GAP = 12;
+const PROGRESS_FILL = '#00C2FF';
+const TRACK_BG = '#2A2A40';
+/** 90deg — all control buttons: #0066A7 → #0086CC */
+const BTN_GRADIENT = ['#0066A7', '#0086CC'];
+const BTN_GRADIENT_START = { x: 0, y: 0.5 };
+const BTN_GRADIENT_END = { x: 1, y: 0.5 };
+const ICON_STROKE = 2;
 
-    const { attributes, state } = player.stateObj;
-    const {
-        source_list,
-        source,
-        media_title,
-        media_artist,
-        app_name: parentAppName,
-        entity_picture: parentPicture,
-        device_class,
-        is_volume_muted: parentMuted,
-        volume_level: parentVolume
-    } = attributes;
+/**
+ * Expandable TV media card. Expanded area reserved for follow-up specs.
+ *
+ * @param {object} player — root media_player entity row { entity_id, displayName, stateObj }
+ * @param {object[]} childPlayers — grouped cast / linked players (parentId → this player)
+ */
+export default function MediaCard({
+    player,
+    childPlayers = [],
+    mapping,
+    mediaMappings = [],
+    onUpdate,
+    needsChange,
+    adminUrl,
+    haUrl: _haUrl,
+    haToken: _haToken,
+    onShowSourceOverlay,
+    onShowVolumeOverlay: _onShowVolumeOverlay,
+}) {
+    if (!player?.stateObj) return null;
 
-    const isOn = state !== 'off' && state !== 'standby' && state !== 'unavailable';
-    const isPlaying = ['playing', 'buffering', 'on'].includes(state) || childPlayers.some(c => ['playing', 'buffering', 'on'].includes(c.stateObj.state));
-    const activeColor = '#8947ca';
-
-    // --- Active Child Logic ---
-    // Find if the currently selected source on the parent corresponds to a mapped child
-    const activeChild = childPlayers.find(c => {
-        const cMap = mediaMappings.find(m => m.entity_id === c.entity_id);
-        return cMap && cMap.parentSource === source; // Simple exact match for now
-    });
-
-    // The entity we target for media controls (Play/Pause/Seek)
-    // If a child is active (e.g. Apple TV on HDMI 1), we control the child.
-    // If no child is active (e.g. Live TV), we control the TV.
+    const activeChild =
+        childPlayers.find(c => ['playing', 'buffering', 'on', 'paused'].includes(c.stateObj?.state)) ||
+        null;
     const targetEntity = activeChild || player;
-    const targetAttributes = targetEntity.stateObj.attributes;
     const targetState = targetEntity.stateObj.state;
+    const targetAttributes = targetEntity.stateObj.attributes || {};
+    const parentAttributes = player.stateObj.attributes || {};
 
-    // --- Display Info ---
-    const appName = targetAttributes.app_name || parentAppName;
-    const title = targetAttributes.media_title || media_title || targetEntity.displayName;
-    const artist = targetAttributes.media_artist || media_artist;
+    const source_list = targetAttributes.source_list ?? parentAttributes.source_list;
+    const source = targetAttributes.source ?? parentAttributes.source;
+    const is_volume_muted = !!targetAttributes.is_volume_muted;
 
-    // Construct Subtitle: "Main TV . YouTube" or "Apple TV . MBC Shahid"
-    let subtitle = player.displayName;
-    if (activeChild) {
-        subtitle = `${activeChild.displayName}`;
-        if (appName) subtitle += ` • ${appName}`;
-    } else {
-        if (source) subtitle += ` • ${source}`;
-        else if (appName) subtitle += ` • ${appName}`;
-    }
-    if (!isOn) subtitle = "Off";
+    const parentState = player.stateObj.state;
+    const isOn =
+        parentState !== 'off' &&
+        parentState !== 'standby' &&
+        parentState !== 'unavailable';
+    const isPlaying = ['playing', 'buffering'].includes(targetState);
 
-    // Icon handling
-    // If activeChild has a custom icon, use it. Else use parent icon.
-    // We assume mappings might have icon paths in future, but for now relying on child entity definition
-    const activeChildMapping = activeChild ? mediaMappings.find(m => m.entity_id === activeChild.entity_id) : null;
-    const activeIconUrl = (activeChildMapping?.mediaType?.icon_path && adminUrl)
-        ? `${adminUrl}${activeChildMapping.mediaType.icon_path}`
-        : null;
+    /** Apple TV, etc.: play + volume whenever HA isn’t unavailable */
+    const showTvTransport = parentState !== 'unavailable';
 
-    // Thumbnail
-    const entityPicture = targetAttributes.entity_picture || parentPicture;
-    const thumbUrl = entityPicture ? {
-        uri: `${haUrl}${entityPicture}`,
-        headers: { Authorization: `Bearer ${haToken}` }
-    } : null;
+    const activeMapping = activeChild
+        ? mediaMappings.find(m => m.entity_id === activeChild.entity_id)
+        : mapping;
+    const activeIconUrl =
+        activeMapping?.mediaType?.icon_path && adminUrl
+            ? `${adminUrl}${activeMapping.mediaType.icon_path}`
+            : null;
 
-    const [showRemote, setShowRemote] = useState(false);
+    const accentColor = '#8947ca';
+    const iconColor = isPlaying ? accentColor : isOn ? '#fff' : Colors.textDim;
 
-    // Animation for Icon
-    const scale = useSharedValue(1);
-    useEffect(() => {
-        if (isPlaying) {
-            scale.value = withRepeat(withSequence(withTiming(1.1, { duration: 800 }), withTiming(1, { duration: 800 })), -1, true);
-        } else {
-            scale.value = withTiming(1);
-        }
-    }, [isPlaying]);
-    const animatedIconStyle = useAnimatedStyle(() => ({ transform: [{ scale: scale.value }] }));
+    const [expanded, setExpanded] = useState(false);
+    const [appsModalVisible, setAppsModalVisible] = useState(false);
+    const [selectedAppSources, setSelectedAppSources] = useState([]);
+    const [appsSaving, setAppsSaving] = useState(false);
+    const [appsConfigLoaded, setAppsConfigLoaded] = useState(false);
+    const volumeRepeatRef = useRef({ timeoutId: null, intervalId: null });
+    const holdVolumeLevelRef = useRef(
+        typeof targetAttributes.volume_level === 'number' ? targetAttributes.volume_level : null
+    );
 
-    const handleAction = (entity, service, data = {}) => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-
-        // Remote Commands
-        if (service.startsWith('remote_')) {
-            const command = service.replace('remote_', '');
-
-            // Determine Strategy
-            const mapping = mediaMappings.find(m => m.entity_id === entity.entity_id);
-            const strategy = mapping?.remoteStrategy || 'default';
-
-            if (strategy === 'webos') {
-                // LG WebOS Strategy: Call webostv.button on the media_player entity
-                const webOSCmdMap = {
-                    'up': 'UP', 'down': 'DOWN', 'left': 'LEFT', 'right': 'RIGHT',
-                    'select': 'ENTER', 'home': 'HOME', 'back': 'BACK'
-                };
-                onUpdate(entity.entity_id, 'webostv', 'button', { button: webOSCmdMap[command] || command.toUpperCase() });
-                return;
-            } else {
-                // Default Strategy: Infer remote.xyz and call remote.send_command
-                const remoteId = entity.entity_id.replace('media_player.', 'remote.');
-                const cmdMap = {
-                    'up': 'up', 'down': 'down', 'left': 'left', 'right': 'right',
-                    'select': 'select', 'home': 'home', 'back': 'menu'
-                };
-                onUpdate(remoteId, 'remote', 'send_command', { command: cmdMap[command] || command });
-                return;
-            }
-        }
-
-        if (service === 'turn_on') {
-            const mapping = mediaMappings.find(m => m.entity_id === entity.entity_id);
-            const turnOnBtn = mapping?.turnOnButton;
-            if (turnOnBtn && turnOnBtn.startsWith('button.')) {
-                // If a specific WoL button is configured, press it
-                onUpdate(turnOnBtn, 'button', 'press', {});
-                return;
-            }
-        }
-
-        onUpdate(entity.entity_id, 'media_player', service, data);
-    };
-
-    const handleSourceSelect = (selectedSource) => {
-        handleAction(player, 'select_source', { source: selectedSource });
-    };
-
-    const handleVolumeChange = (val, entity) => {
-        onUpdate(entity.entity_id, 'media_player', 'volume_set', { volume_level: val });
-    };
-
-    const toggleMute = () => {
-        const newMute = !parentMuted;
-        handleAction(player, 'volume_mute', { is_volume_muted: newMute });
-        // Try mute child too if applicable
-        if (activeChild && activeChild.stateObj.attributes.is_volume_muted !== undefined) {
-            handleAction(activeChild, 'volume_mute', { is_volume_muted: newMute });
-        }
-    };
-
-    // Timeline Logic
     const duration = targetAttributes.media_duration || 0;
     const [position, setPosition] = useState(targetAttributes.media_position || 0);
     const [isScrubbing, setIsScrubbing] = useState(false);
@@ -155,250 +110,1051 @@ export default function MediaCard({ player, childPlayers = [], mapping, mediaMap
     }, [targetAttributes.media_position, isScrubbing]);
 
     useEffect(() => {
+        if (typeof targetAttributes.volume_level === 'number') {
+            holdVolumeLevelRef.current = targetAttributes.volume_level;
+        }
+    }, [targetAttributes.volume_level]);
+
+    useEffect(() => {
         let interval;
         if (targetState === 'playing' && !isScrubbing && duration > 0) {
             interval = setInterval(() => {
-                setPosition(prev => {
-                    const next = prev + 1;
-                    return next > duration ? duration : next;
-                });
+                setPosition(prev => Math.min(prev + 1, duration));
             }, 1000);
         }
         return () => clearInterval(interval);
     }, [targetState, isScrubbing, duration]);
 
-    const formatTime = (secs) => {
-        if (!secs || isNaN(secs)) return "0:00";
-        const m = Math.floor(secs / 60);
-        const s = Math.floor(secs % 60);
-        return `${m}:${s < 10 ? '0' : ''}${s}`;
+    useEffect(() => {
+        const stopVolumeRepeat = () => {
+            if (volumeRepeatRef.current.timeoutId) clearTimeout(volumeRepeatRef.current.timeoutId);
+            if (volumeRepeatRef.current.intervalId) clearInterval(volumeRepeatRef.current.intervalId);
+            volumeRepeatRef.current.timeoutId = null;
+            volumeRepeatRef.current.intervalId = null;
+        };
+        return stopVolumeRepeat;
+    }, []);
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadAppSelection = async () => {
+            if (!adminUrl || !player?.entity_id) return;
+            try {
+                const base = adminUrl.endsWith('/') ? adminUrl.slice(0, -1) : adminUrl;
+                const headers = _haToken ? { Authorization: `Bearer ${_haToken}` } : {};
+                const res = await fetch(`${base}/api/media-remote-apps?entity_id=${encodeURIComponent(player.entity_id)}`, { headers });
+                if (!res.ok) return;
+                const data = await res.json();
+                if (cancelled || !data?.success) return;
+                if (Array.isArray(data.selected_apps)) {
+                    setSelectedAppSources(data.selected_apps);
+                }
+                setAppsConfigLoaded(true);
+            } catch (e) {
+                // keep fallback list if backend is unreachable
+            }
+        };
+        loadAppSelection();
+        return () => { cancelled = true; };
+    }, [adminUrl, player?.entity_id, _haToken]);
+
+    /** HH:MM:SS (e.g. 01:30:59) */
+    const formatTime = secs => {
+        if (secs == null || isNaN(secs)) return '00:00:00';
+        const n = Math.max(0, Math.floor(secs));
+        const h = Math.floor(n / 3600);
+        const m = Math.floor((n % 3600) / 60);
+        const s = n % 60;
+        const hh = h < 10 ? `0${h}` : `${h}`;
+        return `${hh}:${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
     };
+    const fmtPos = formatTime(position);
+    const fmtDur = formatTime(duration);
 
     const isLive = !duration && ['playing', 'buffering', 'paused', 'on'].includes(targetState);
 
+    const handleAction = (entity, service, data = {}, options = {}) => {
+        const { haptics = true } = options;
+        if (haptics) {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        }
+
+        if (service.startsWith('remote_')) {
+            const command = service.replace('remote_', '');
+            const mp = mediaMappings.find(m => m.entity_id === entity.entity_id);
+            const strategy = mp?.remoteStrategy || 'default';
+            if (strategy === 'webos') {
+                const map = {
+                    up: 'UP',
+                    down: 'DOWN',
+                    left: 'LEFT',
+                    right: 'RIGHT',
+                    select: 'ENTER',
+                    home: 'HOME',
+                    back: 'BACK',
+                };
+                onUpdate(entity.entity_id, 'webostv', 'button', { button: map[command] || command.toUpperCase() });
+            } else {
+                const remoteId = entity.entity_id.replace('media_player.', 'remote.');
+                const map = {
+                    up: 'up',
+                    down: 'down',
+                    left: 'left',
+                    right: 'right',
+                    select: 'select',
+                    home: 'home',
+                    back: 'menu',
+                };
+                onUpdate(remoteId, 'remote', 'send_command', { command: map[command] || command });
+            }
+            return;
+        }
+
+        if (service === 'turn_on') {
+            const mp = mediaMappings.find(m => m.entity_id === entity.entity_id);
+            const btn = mp?.turnOnButton;
+            if (btn?.startsWith('button.')) {
+                onUpdate(btn, 'button', 'press', {});
+                return;
+            }
+        }
+
+        onUpdate(entity.entity_id, 'media_player', service, data);
+    };
+
+    const toggleMute = () => {
+        const newMute = !is_volume_muted;
+        handleAction(targetEntity, 'volume_mute', { is_volume_muted: newMute });
+        if (activeChild && activeChild.stateObj.attributes.is_volume_muted !== undefined) {
+            handleAction(activeChild, 'volume_mute', { is_volume_muted: newMute });
+        }
+    };
+
+    const handlePlayPause = () => {
+        const currentlyPlaying = ['playing', 'buffering'].includes(targetState);
+        const currentlyPaused = targetState === 'paused';
+        if (currentlyPlaying) {
+            handleAction(targetEntity, 'media_pause');
+            return;
+        }
+        if (currentlyPaused || ['idle', 'off', 'on'].includes(targetState)) {
+            handleAction(targetEntity, 'media_play');
+            return;
+        }
+        handleAction(targetEntity, 'media_play_pause');
+    };
+
+    const stopVolumeRepeat = () => {
+        if (volumeRepeatRef.current.timeoutId) clearTimeout(volumeRepeatRef.current.timeoutId);
+        if (volumeRepeatRef.current.intervalId) clearInterval(volumeRepeatRef.current.intervalId);
+        volumeRepeatRef.current.timeoutId = null;
+        volumeRepeatRef.current.intervalId = null;
+    };
+
+    const startVolumeRepeat = direction => {
+        stopVolumeRepeat();
+        const step = direction === 'up' ? 0.04 : -0.04;
+        const supportsAbsolute = typeof targetAttributes.volume_level === 'number';
+        if (supportsAbsolute) {
+            const baseLevel = typeof holdVolumeLevelRef.current === 'number'
+                ? holdVolumeLevelRef.current
+                : targetAttributes.volume_level;
+            const next = Math.max(0, Math.min(1, baseLevel + step));
+            holdVolumeLevelRef.current = next;
+            handleAction(targetEntity, 'volume_set', { volume_level: next }, { haptics: false });
+        } else {
+            const service = direction === 'up' ? 'volume_up' : 'volume_down';
+            handleAction(targetEntity, service, {}, { haptics: false });
+        }
+
+        volumeRepeatRef.current.timeoutId = setTimeout(() => {
+            volumeRepeatRef.current.intervalId = setInterval(() => {
+                if (supportsAbsolute) {
+                    const baseLevel = typeof holdVolumeLevelRef.current === 'number'
+                        ? holdVolumeLevelRef.current
+                        : (typeof targetAttributes.volume_level === 'number' ? targetAttributes.volume_level : 0);
+                    const next = Math.max(0, Math.min(1, baseLevel + step));
+                    holdVolumeLevelRef.current = next;
+                    handleAction(targetEntity, 'volume_set', { volume_level: next }, { haptics: false });
+                } else {
+                    const service = direction === 'up' ? 'volume_up' : 'volume_down';
+                    handleAction(targetEntity, service, {}, { haptics: false });
+                }
+            }, 55);
+        }, 90);
+    };
+
+    const handleSourceSelect = src => handleAction(player, 'select_source', { source: src });
+
+    const toggleTvPower = () => {
+        if (parentState === 'unavailable') return;
+        if (isOn) handleAction(player, 'turn_off', {});
+        else handleAction(player, 'turn_on', {});
+    };
+
+    const openSourcePicker = () => {
+        if (!onShowSourceOverlay || !Array.isArray(source_list) || source_list.length === 0) return;
+        onShowSourceOverlay({
+            sourceList: source_list,
+            currentSource: source,
+            childPlayers,
+            mediaMappings,
+            onSelect: handleSourceSelect,
+        });
+    };
+
+    /** App shortcut grid (HA `source_list`) — 2×4 slots, design height per tile */
+    const APP_GRID_SLOTS = 8;
+    const allAppSources = Array.isArray(source_list) ? source_list.filter(Boolean) : [];
+    const effectiveSelectedApps = selectedAppSources.filter(app => allAppSources.includes(app));
+    const appGridSources = (() => {
+        const list = (appsConfigLoaded && effectiveSelectedApps.length > 0) ? [...effectiveSelectedApps] : [...allAppSources];
+        while (list.length < APP_GRID_SLOTS) list.push(null);
+        return list.slice(0, APP_GRID_SLOTS);
+    })();
+
+    const toggleAppInSelection = app => {
+        setSelectedAppSources(prev => (
+            prev.includes(app) ? prev.filter(v => v !== app) : [...prev, app]
+        ));
+    };
+
+    const saveAppSelection = async () => {
+        if (!adminUrl || !player?.entity_id) {
+            setAppsModalVisible(false);
+            return;
+        }
+        try {
+            setAppsSaving(true);
+            const base = adminUrl.endsWith('/') ? adminUrl.slice(0, -1) : adminUrl;
+            const headers = {
+                'Content-Type': 'application/json',
+                ...(_haToken ? { Authorization: `Bearer ${_haToken}` } : {}),
+            };
+            await fetch(`${base}/api/media-remote-apps`, {
+                method: 'PUT',
+                headers,
+                body: JSON.stringify({
+                    entity_id: player.entity_id,
+                    selected_apps: selectedAppSources.filter(app => allAppSources.includes(app)),
+                }),
+            });
+            setAppsConfigLoaded(true);
+            setAppsModalVisible(false);
+        } catch (e) {
+            setAppsModalVisible(false);
+        } finally {
+            setAppsSaving(false);
+        }
+    };
+
     return (
-        <View style={[styles.container, needsChange && { borderColor: '#8947ca', borderWidth: 2 }]}>
-            {/* Background Image */}
-            {thumbUrl && (
-                <View style={[StyleSheet.absoluteFillObject, { borderRadius: 24, overflow: 'hidden' }]}>
-                    <Image source={thumbUrl} style={[StyleSheet.absoluteFillObject, { opacity: 0.3 }]} resizeMode="cover" blurRadius={40} />
-                    <View style={[StyleSheet.absoluteFillObject, { backgroundColor: 'rgba(20,20,30,0.6)' }]} />
-                </View>
-            )}
-
-            {/* Top Row: Icon + Info + Power */}
-            <View style={styles.mainRow}>
-                <View style={[styles.iconBox, thumbUrl && styles.artBox]}>
-                    {activeIconUrl ? (
-                        <SvgUri width={24} height={24} uri={activeIconUrl} fill={isOn ? '#fff' : Colors.textDim} />
-                    ) : (
-                        thumbUrl ? (
-                            <Image source={thumbUrl} style={styles.thumbnail} resizeMode="cover" />
-                        ) : (
-                            <Animated.View style={animatedIconStyle}>
-                                {mapping?.mediaType?.type === 'game_console' || targetAttributes.device_class === 'game_console' ?
-                                    <Gamepad2 size={24} color={isPlaying ? activeColor : (isOn ? "#fff" : Colors.textDim)} /> :
-                                    (device_class === 'tv' || mapping?.mediaType?.type === 'tv' ?
-                                        <Tv size={24} color={isPlaying ? activeColor : (isOn ? "#fff" : Colors.textDim)} /> :
-                                        <Speaker size={24} color={isPlaying ? activeColor : (isOn ? "#fff" : Colors.textDim)} />
-                                    )
-                                }
-                            </Animated.View>
-                        )
-                    )}
-                </View>
-
-                <View style={styles.infoCol}>
-                    <Text style={styles.title} numberOfLines={1}>{title}</Text>
-                    <Text style={[styles.status, { color: isPlaying ? activeColor : Colors.textDim }]} numberOfLines={1}>
-                        {subtitle}
-                    </Text>
-                </View>
-
+        <>
+        <View style={[styles.container, needsChange && { borderColor: accentColor, borderWidth: 2 }]}>
+            <View style={styles.topRow}>
                 <TouchableOpacity
-                    style={[styles.ctrlBtn, isOn && { backgroundColor: 'rgba(255,255,255,0.1)' }]}
-                    onPress={() => handleAction(player, isOn ? 'turn_off' : 'turn_on')}
+                    style={[styles.iconBox, parentState === 'unavailable' && styles.iconBoxDisabled]}
+                    onPress={toggleTvPower}
+                    disabled={parentState === 'unavailable'}
+                    activeOpacity={0.75}
+                    hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                    accessibilityRole="button"
+                    accessibilityLabel={isOn ? 'Turn TV off' : 'Turn TV on'}
                 >
-                    <Power size={20} color={isOn ? activeColor : Colors.textDim} />
+                    {activeIconUrl ? (
+                        <SvgUri width={24} height={24} uri={activeIconUrl} fill={iconColor} />
+                    ) : (
+                        <Monitor size={24} color={iconColor} strokeWidth={ICON_STROKE} />
+                    )}
+                </TouchableOpacity>
+                <View style={{ flex: 1 }} />
+                <TouchableOpacity
+                    style={styles.chevronBtn}
+                    onPress={() => setExpanded(e => !e)}
+                    hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                >
+                    {expanded ? (
+                        <ChevronUp size={20} color="rgba(255,255,255,0.35)" />
+                    ) : (
+                        <ChevronDown size={20} color="rgba(255,255,255,0.35)" />
+                    )}
                 </TouchableOpacity>
             </View>
 
-            {/* Timeline Row */}
-            {isOn && (
-                <View style={styles.timelineRow}>
-                    {isLive ? (
-                        <View style={styles.liveBadge}>
-                            <View style={styles.liveDot} />
-                            <Text style={styles.liveText}>LIVE</Text>
-                        </View>
-                    ) : (
-                        duration > 0 && (
-                            <>
-                                <Text style={styles.timeText}>{formatTime(position)}</Text>
-                                <TimelineScrubber
-                                    duration={duration}
-                                    position={position}
-                                    onScrub={(val) => setPosition(val * duration)}
-                                    onCommit={(val) => {
-                                        handleAction(targetEntity, 'media_seek', { seek_position: val * duration });
-                                        setIsScrubbing(false);
-                                    }}
-                                    activeColor={activeColor}
-                                />
-                                <Text style={styles.timeText}>{formatTime(duration)}</Text>
-                            </>
-                        )
-                    )}
+            {parentState === 'unavailable' && (
+                <Text style={styles.offHint} numberOfLines={1}>
+                    Unavailable
+                </Text>
+            )}
+
+            {isOn && duration > 0 && (
+                <View style={styles.timelineBlock}>
+                    <View style={styles.timelineTimesRow}>
+                        <Text style={[styles.timeText, styles.timeTextTv]}>{fmtPos}</Text>
+                        <Text style={[styles.timeText, styles.timeTextTv]}>{fmtDur}</Text>
+                    </View>
+                    <TimelineScrubber
+                        duration={duration}
+                        position={position}
+                        onScrub={val => {
+                            setIsScrubbing(true);
+                            setPosition(val * duration);
+                        }}
+                        onCommit={val => {
+                            handleAction(targetEntity, 'media_seek', { seek_position: val * duration });
+                            setIsScrubbing(false);
+                        }}
+                    />
                 </View>
             )}
 
-
-            {/* Controls Row */}
-            {isOn && (
+            {showTvTransport && !expanded && (
                 <View style={styles.controlsRow}>
-                    {/* Left: Volume */}
-                    <View style={styles.leftGroup}>
-                        <View style={styles.volGroup}>
-                            <TouchableOpacity style={styles.muteSmallBtn} onPress={toggleMute}>
-                                {parentMuted ? <VolumeX size={18} color={Colors.textDim} /> : <Volume2 size={18} color={Colors.textDim} />}
-                            </TouchableOpacity>
-                            <TouchableOpacity style={styles.volBtn} onPress={() => onShowVolumeOverlay?.({
-                                player,
-                                parentVolume,
-                                activeChild,
-                                onVolumeChange: handleVolumeChange,
-                            })}>
-                                <Text style={styles.volText}>
-                                    {parentVolume !== undefined ? `${Math.round(parentVolume * 100)}%` : '--'}
-                                </Text>
+                    <View style={styles.tvControlsBar}>
+                        <View style={styles.tvPlayAbsolute} pointerEvents="box-none">
+                            <TouchableOpacity
+                                style={styles.playBtnWrap}
+                                onPress={handlePlayPause}
+                                activeOpacity={0.85}
+                            >
+                                <LinearGradient
+                                    colors={BTN_GRADIENT}
+                                    start={BTN_GRADIENT_START}
+                                    end={BTN_GRADIENT_END}
+                                    style={styles.playBtn}
+                                >
+                                    {['playing', 'buffering'].includes(targetState) ? (
+                                        <Pause size={28} color="#fff" fill="#fff" stroke="#fff" strokeWidth={2.5} />
+                                    ) : (
+                                        <Play size={28} color="#fff" fill="#fff" stroke="#fff" strokeWidth={0} style={{ marginLeft: 4 }} />
+                                    )}
+                                </LinearGradient>
                             </TouchableOpacity>
                         </View>
                     </View>
+                </View>
+            )}
 
-                    {/* Center: Transport */}
-                    <View style={styles.transportGroup}>
-                        <TouchableOpacity onPress={() => handleAction(targetEntity, 'media_previous_track')} style={styles.miniTransportBtn}>
-                            <SkipBack size={20} color="#fff" />
-                        </TouchableOpacity>
-
-                        <TouchableOpacity
-                            style={[styles.playBtn, !isPlaying && { backgroundColor: 'rgba(255,255,255,0.1)' }]}
-                            onPress={() => handleAction(targetEntity, 'media_play_pause')}
-                        >
-                            {['playing', 'buffering', 'on'].includes(targetState) ? <Pause size={20} color="#fff" /> : <Play size={20} color="#fff" style={{ marginLeft: 2 }} />}
-                        </TouchableOpacity>
-
-                        <TouchableOpacity onPress={() => handleAction(targetEntity, 'media_next_track')} style={styles.miniTransportBtn}>
-                            <SkipForward size={20} color="#fff" />
-                        </TouchableOpacity>
-                    </View>
-
-                    {/* Right: Remote & Source */}
-                    <View style={styles.rightGroup}>
-                        <TouchableOpacity style={[styles.remoteBtn, showRemote && { backgroundColor: activeColor }]} onPress={() => setShowRemote(!showRemote)}>
-                            <Smartphone size={18} color="#fff" />
-                        </TouchableOpacity>
-
-                        {source_list && onShowSourceOverlay && (
-                            <TouchableOpacity style={styles.sourceBtn} onPress={() => onShowSourceOverlay({
-                                player,
-                                sourceList: source_list,
-                                currentSource: source,
-                                childPlayers,
-                                mediaMappings,
-                                onSelect: handleSourceSelect,
-                            })}>
-                                <List size={18} color="#fff" />
+            {expanded && (
+                <View style={styles.expandedSection}>
+                    {/* D-pad: gradient ring, inner #13132A @ 23%, cardinal dots only (no arrows / no center dot) */}
+                    <View style={styles.dPadBlock}>
+                        <View style={styles.dPadFrame}>
+                            <LinearGradient
+                                colors={BTN_GRADIENT}
+                                start={BTN_GRADIENT_START}
+                                end={BTN_GRADIENT_END}
+                                style={styles.dPadRingFill}
+                            />
+                            <TouchableOpacity
+                                style={styles.dPadHitUp}
+                                onPress={() => handleAction(targetEntity, 'remote_up')}
+                                hitSlop={{ bottom: 8, left: 20, right: 20 }}
+                                accessibilityLabel="Up"
+                            >
+                                <View style={styles.dPadDirDot} />
                             </TouchableOpacity>
-                        )}
+                            <TouchableOpacity
+                                style={styles.dPadHitDown}
+                                onPress={() => handleAction(targetEntity, 'remote_down')}
+                                hitSlop={{ top: 8, left: 20, right: 20 }}
+                                accessibilityLabel="Down"
+                            >
+                                <View style={styles.dPadDirDot} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.dPadHitLeft}
+                                onPress={() => handleAction(targetEntity, 'remote_left')}
+                                hitSlop={{ right: 8, top: 20, bottom: 20 }}
+                                accessibilityLabel="Left"
+                            >
+                                <View style={styles.dPadDirDot} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.dPadHitRight}
+                                onPress={() => handleAction(targetEntity, 'remote_right')}
+                                hitSlop={{ left: 8, top: 20, bottom: 20 }}
+                                accessibilityLabel="Right"
+                            >
+                                <View style={styles.dPadDirDot} />
+                            </TouchableOpacity>
+                            <TouchableOpacity
+                                style={styles.dPadCenterDisc}
+                                onPress={() => handleAction(targetEntity, 'remote_select')}
+                                activeOpacity={0.88}
+                                accessibilityLabel="Select"
+                            />
+                        </View>
                     </View>
+
+                    {/*
+                      Two columns: Back + Play/Mute share one vertical center; Home + volume pill share the other (Figma alignment).
+                    */}
+                    <View style={styles.expandedControlGrid}>
+                        <View style={styles.expandedControlCol}>
+                            <RemoteCircleBtn onPress={() => handleAction(targetEntity, 'remote_back')}>
+                                <ChevronLeft size={24} color="#fff" strokeWidth={ICON_STROKE} />
+                            </RemoteCircleBtn>
+                            <View style={styles.expandedColMidGap} />
+                            <View style={styles.expandedStackInCol}>
+                                <RemoteCircleBtn onPress={handlePlayPause}>
+                                    {['playing', 'buffering'].includes(targetState) ? (
+                                        <Pause size={24} color="#fff" fill="#fff" stroke="#fff" strokeWidth={2} />
+                                    ) : (
+                                        <Play size={24} color="#fff" fill="#fff" stroke="#fff" strokeWidth={0} style={{ marginLeft: 4 }} />
+                                    )}
+                                </RemoteCircleBtn>
+                                <RemoteCircleBtn onPress={toggleMute}>
+                                    {is_volume_muted ? (
+                                        <VolumeX size={22} color="#fff" strokeWidth={ICON_STROKE} />
+                                    ) : (
+                                        <Volume2 size={22} color="#fff" strokeWidth={ICON_STROKE} />
+                                    )}
+                                </RemoteCircleBtn>
+                            </View>
+                        </View>
+                        <View style={styles.expandedControlCol}>
+                            <RemoteCircleBtn onPress={() => handleAction(targetEntity, 'remote_home')}>
+                                <Home size={24} color="#fff" strokeWidth={ICON_STROKE} />
+                            </RemoteCircleBtn>
+                            <View style={styles.expandedColMidGap} />
+                            <View style={styles.volPillFigma}>
+                                <LinearGradient
+                                    colors={BTN_GRADIENT}
+                                    start={BTN_GRADIENT_START}
+                                    end={BTN_GRADIENT_END}
+                                    style={styles.volPillGradientFill}
+                                />
+                                <TouchableOpacity
+                                    style={styles.volPillHalf}
+                                    onPressIn={() => startVolumeRepeat('up')}
+                                    onPressOut={stopVolumeRepeat}
+                                >
+                                    <Plus size={20} color="#fff" strokeWidth={2.5} />
+                                </TouchableOpacity>
+                                <View style={styles.volPillDivider} />
+                                <TouchableOpacity
+                                    style={styles.volPillHalf}
+                                    onPressIn={() => startVolumeRepeat('down')}
+                                    onPressOut={stopVolumeRepeat}
+                                >
+                                    <Minus size={20} color="#fff" strokeWidth={2.5} />
+                                </TouchableOpacity>
+                            </View>
+                        </View>
+                    </View>
+
+                    {appGridSources.some(Boolean) && (
+                        <>
+                            <View style={styles.appGridHeader}>
+                                <Text style={styles.appGridHeading}>Apps</Text>
+                                <TouchableOpacity hitSlop={8} onPress={() => setAppsModalVisible(true)} accessibilityLabel="Edit app shortcuts">
+                                    <Text style={styles.appGridEdit}>Edit</Text>
+                                </TouchableOpacity>
+                            </View>
+                            <View style={styles.appGrid}>
+                                {[0, 2, 4, 6].map(rowStart => (
+                                    <View key={`row-${rowStart}`} style={styles.appGridRow}>
+                                        {appGridSources.slice(rowStart, rowStart + 2).map((srcName, j) => (
+                                            <TouchableOpacity
+                                                key={srcName || `empty-${rowStart + j}`}
+                                                style={[styles.appGridCellWide, !srcName && styles.appGridCellWideEmpty]}
+                                                onPress={() => srcName && handleSourceSelect(srcName)}
+                                                disabled={!srcName}
+                                                activeOpacity={srcName ? 0.85 : 1}
+                                            >
+                                                {srcName ? (
+                                                    <Text style={styles.appGridLabel} numberOfLines={1}>
+                                                        {srcName}
+                                                    </Text>
+                                                ) : null}
+                                            </TouchableOpacity>
+                                        ))}
+                                    </View>
+                                ))}
+                            </View>
+                        </>
+                    )}
+
+                    <TouchableOpacity
+                        style={styles.sourcePill}
+                        onPress={openSourcePicker}
+                        disabled={!source_list?.length}
+                    >
+                        <Text style={[styles.sourcePillText, !source_list?.length && styles.sourcePillTextDim]}>Source</Text>
+                    </TouchableOpacity>
                 </View>
             )}
-
-            {/* Remote Control Area (Expandable) */}
-            {showRemote && isOn && (
-                <View style={styles.remoteArea}>
-                    <View style={styles.dpad}>
-                        <TouchableOpacity style={styles.dpadUp} onPress={() => handleAction(targetEntity, 'remote_up')}><ArrowUp size={24} color="#fff" /></TouchableOpacity>
-                        <TouchableOpacity style={styles.dpadLeft} onPress={() => handleAction(targetEntity, 'remote_left')}><ArrowLeft size={24} color="#fff" /></TouchableOpacity>
-                        <TouchableOpacity style={styles.dpadCenter} onPress={() => handleAction(targetEntity, 'remote_select')}><Circle size={16} color="#fff" fill="#fff" /></TouchableOpacity>
-                        <TouchableOpacity style={styles.dpadRight} onPress={() => handleAction(targetEntity, 'remote_right')}><ArrowRight size={24} color="#fff" /></TouchableOpacity>
-                        <TouchableOpacity style={styles.dpadDown} onPress={() => handleAction(targetEntity, 'remote_down')}><ArrowDown size={24} color="#fff" /></TouchableOpacity>
-                    </View>
-                    <View style={styles.remoteRow}>
-                        <TouchableOpacity style={styles.remoteActBtn} onPress={() => handleAction(targetEntity, 'remote_back')}><Text style={styles.remoteText}>Back</Text></TouchableOpacity>
-                        <TouchableOpacity style={styles.remoteActBtn} onPress={() => handleAction(targetEntity, 'remote_home')}><Text style={styles.remoteText}>Home</Text></TouchableOpacity>
-                    </View>
-                    <Text style={styles.remoteHint}>Controlling: {targetEntity.displayName}</Text>
-                </View>
-            )}
-
-
         </View>
+        <Modal
+            visible={appsModalVisible}
+            transparent
+            animationType="slide"
+            onRequestClose={() => setAppsModalVisible(false)}
+        >
+            <View style={styles.appsModalBackdrop}>
+                <TouchableOpacity style={styles.appsModalBgPress} onPress={() => setAppsModalVisible(false)} />
+                <View style={styles.appsModalSheet}>
+                    <View style={styles.appsModalHandleTouchArea}>
+                        <View style={styles.appsModalHandle} />
+                    </View>
+                    <View style={styles.appsModalHeader}>
+                        <Text style={styles.appsModalTitle}>Edit Apps</Text>
+                        <TouchableOpacity onPress={() => setAppsModalVisible(false)} style={styles.appsModalCloseBtn}>
+                            <X size={18} color="#ededf5" />
+                        </TouchableOpacity>
+                    </View>
+                    <Text style={styles.appsModalSub}>
+                        {allAppSources.length} available · {selectedAppSources.filter(app => allAppSources.includes(app)).length} selected
+                    </Text>
+                    <ScrollView style={styles.appsModalList} showsVerticalScrollIndicator={false}>
+                        {allAppSources.map(app => {
+                            const selected = selectedAppSources.includes(app);
+                            return (
+                                <TouchableOpacity
+                                    key={app}
+                                    style={[styles.appsModalItem, selected && styles.appsModalItemSelected]}
+                                    onPress={() => toggleAppInSelection(app)}
+                                    activeOpacity={0.7}
+                                >
+                                    <Text style={[styles.appsModalItemText, selected && styles.appsModalItemTextSelected]} numberOfLines={1}>
+                                        {app}
+                                    </Text>
+                                    <View style={[styles.appsModalCheck, selected && styles.appsModalCheckOn]}>
+                                        {selected ? <Check size={12} color="#fff" strokeWidth={3} /> : null}
+                                    </View>
+                                </TouchableOpacity>
+                            );
+                        })}
+                    </ScrollView>
+                    <View style={styles.appsModalActions}>
+                        <TouchableOpacity style={styles.appsModalBtnGhost} onPress={() => setAppsModalVisible(false)} activeOpacity={0.8}>
+                            <Text style={styles.appsModalBtnGhostText}>Cancel</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.appsModalBtnSave, appsSaving && { opacity: 0.6 }]}
+                            onPress={saveAppSelection}
+                            disabled={appsSaving}
+                            activeOpacity={0.8}
+                        >
+                            <Text style={styles.appsModalBtnSaveText}>{appsSaving ? 'Saving...' : 'Save'}</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </View>
+        </Modal>
+        </>
     );
 }
 
-function TimelineScrubber({ duration, position, onScrub, onCommit, activeColor }) {
+function RemoteCircleBtn({ onPress, children }) {
+    return (
+        <TouchableOpacity style={styles.remoteCircleBtnFigma} onPress={onPress} activeOpacity={0.88}>
+            <LinearGradient
+                colors={BTN_GRADIENT}
+                start={BTN_GRADIENT_START}
+                end={BTN_GRADIENT_END}
+                style={styles.remoteCircleGradientFill}
+            />
+            <View style={styles.remoteCircleChildren}>{children}</View>
+        </TouchableOpacity>
+    );
+}
+
+function TimelineScrubber({ duration, position, onScrub, onCommit }) {
     const [width, setWidth] = useState(0);
-    const handleNative = (e, isEnd = false) => {
-        if (width === 0) return;
+    const handle = (e, isEnd = false) => {
+        if (width === 0 || !duration) return;
         const x = e.nativeEvent.locationX;
         const progress = Math.max(0, Math.min(x, width)) / width;
-        isEnd ? onCommit(progress) : onScrub(progress);
+        if (isEnd) onCommit(progress);
+        else onScrub(progress);
     };
     return (
-        <View style={styles.timelineTrack} onLayout={(e) => setWidth(e.nativeEvent.layout.width)} onTouchMove={(e) => handleNative(e, false)} onTouchEnd={(e) => handleNative(e, true)}>
-            <View style={[styles.timelineFill, { width: `${Math.min(100, (position / duration) * 100)}%` }]} />
+        <View
+            style={styles.timelineTrackFull}
+            onLayout={e => setWidth(e.nativeEvent.layout.width)}
+            onTouchMove={e => handle(e, false)}
+            onTouchEnd={e => handle(e, true)}
+        >
+            <View
+                style={[
+                    styles.timelineFill,
+                    {
+                        width: `${Math.min(100, duration ? (position / duration) * 100 : 0)}%`,
+                        backgroundColor: PROGRESS_FILL,
+                    },
+                ]}
+            />
         </View>
     );
 }
 
 const styles = StyleSheet.create({
-    container: { width: '100%', backgroundColor: 'rgba(30, 30, 40, 0.95)', borderRadius: 24, padding: 16, marginBottom: 12, overflow: 'hidden' },
-    mainRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-    iconBox: { width: 50, height: 50, borderRadius: 16, backgroundColor: 'rgba(255,255,255,0.05)', alignItems: 'center', justifyContent: 'center' },
-    artBox: { overflow: 'hidden', padding: 0, backgroundColor: '#000' },
-    thumbnail: { width: '100%', height: '100%' },
-    infoCol: { flex: 1, justifyContent: 'center' },
-    title: { color: '#fff', fontSize: 16, fontWeight: '600', marginBottom: 2 },
-    status: { fontSize: 13 },
-    ctrlBtn: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-
-    controlsRow: { flexDirection: 'row', alignItems: 'center', paddingTop: 14, marginTop: 14, borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)' },
-    leftGroup: { flex: 1, flexDirection: 'row', justifyContent: 'flex-start' },
-    rightGroup: { flex: 1, flexDirection: 'row', justifyContent: 'flex-end', gap: 8 },
-    transportGroup: { flexDirection: 'row', alignItems: 'center', gap: 16 },
-
-    volGroup: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.2)', borderRadius: 20, padding: 4 },
-    muteSmallBtn: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
-    volBtn: { paddingHorizontal: 10, paddingVertical: 6 },
-    volText: { color: '#ccc', fontSize: 12, fontWeight: '500' },
-
-    playBtn: { width: 48, height: 48, borderRadius: 24, backgroundColor: '#8947ca', alignItems: 'center', justifyContent: 'center' },
-    miniTransportBtn: { padding: 8 },
-    remoteBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
-    sourceBtn: { width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)', alignItems: 'center', justifyContent: 'center' },
-
-    timelineRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 12, paddingHorizontal: 4 },
-    timeText: { color: '#eee', fontSize: 11, fontVariant: ['tabular-nums'], minWidth: 35, textAlign: 'center' },
-    timelineTrack: { flex: 1, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, overflow: 'hidden' },
-    timelineFill: { height: '100%', backgroundColor: '#8947ca' },
-    liveBadge: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(255,0,0,0.2)', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+    container: {
+        width: '100%',
+        backgroundColor: TV_CARD_BG,
+        borderRadius: 22,
+        padding: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.06)',
+    },
+    topRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    iconBox: {
+        width: 42,
+        height: 42,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    iconBoxDisabled: {
+        opacity: 0.45,
+    },
+    chevronBtn: {
+        width: 36,
+        height: 36,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    timelineBlock: {
+        width: '100%',
+        marginTop: 12,
+        paddingHorizontal: 2,
+    },
+    timelineTimesRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 8,
+        paddingHorizontal: 2,
+    },
+    timeText: {
+        color: '#FFFFFF',
+        fontSize: 11,
+        fontVariant: ['tabular-nums'],
+        fontFamily: CF.light,
+        letterSpacing: 0.8,
+    },
+    timeTextTv: {
+        fontSize: 12,
+        minWidth: 72,
+    },
+    timelineTrackFull: {
+        width: '100%',
+        height: 4,
+        backgroundColor: TRACK_BG,
+        borderRadius: 2,
+        overflow: 'hidden',
+    },
+    timelineFill: {
+        height: '100%',
+        borderRadius: 2,
+    },
+    liveBadge: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+        backgroundColor: 'rgba(255,0,0,0.15)',
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 8,
+    },
     liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#ff4444' },
-    liveText: { color: '#ff4444', fontSize: 10, fontWeight: 'bold' },
-
-    remoteArea: { marginTop: 20, alignItems: 'center', paddingBottom: 10 },
-    remoteRow: { flexDirection: 'row', gap: 40, marginTop: 20 },
-    remoteActBtn: { padding: 10, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12 },
-    remoteText: { color: '#fff', fontWeight: 'bold' },
-    dpad: { width: 140, height: 140, position: 'relative' },
-    dpadUp: { position: 'absolute', top: 0, left: 46, padding: 12 },
-    dpadDown: { position: 'absolute', bottom: 0, left: 46, padding: 12 },
-    dpadLeft: { position: 'absolute', top: 46, left: 0, padding: 12 },
-    dpadRight: { position: 'absolute', top: 46, right: 0, padding: 12 },
-    dpadCenter: { position: 'absolute', top: 46, left: 46, width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(255,255,255,0.15)', alignItems: 'center', justifyContent: 'center' },
-    remoteHint: { color: Colors.textDim, fontSize: 12, marginTop: 10 },
-
-    closeBtn: { marginTop: 20 },
-    closeText: { color: Colors.textDim, fontSize: 16 }
+    liveText: { color: '#ff6b6b', fontSize: 10, fontFamily: CF.semibold },
+    controlsRow: {
+        marginTop: 18,
+    },
+    /** Play is truly centered on the card; mute sits on the right rail */
+    tvControlsBar: {
+        width: '100%',
+        height: 68,
+        position: 'relative',
+        justifyContent: 'center',
+    },
+    tvPlayAbsolute: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1,
+    },
+    tvMuteRail: {
+        position: 'absolute',
+        right: 0,
+        top: 0,
+        bottom: 0,
+        justifyContent: 'center',
+        alignItems: 'center',
+        width: 48,
+        zIndex: 2,
+    },
+    iconBtn: {
+        width: 44,
+        height: 44,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    playBtnWrap: {
+        marginHorizontal: 4,
+        shadowColor: '#0086CC',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.4,
+        shadowRadius: 12,
+        elevation: 8,
+    },
+    playBtn: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    offHint: {
+        marginTop: 12,
+        color: Colors.textDim,
+        fontSize: 13,
+        fontFamily: CF.regular,
+    },
+    expandedSection: {
+        marginTop: 10,
+        paddingTop: 16,
+        minHeight: 8,
+    },
+    dPadBlock: {
+        alignItems: 'center',
+        marginBottom: 22,
+    },
+    dPadFrame: {
+        width: DPAD_SIZE,
+        height: DPAD_SIZE,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    dPadRingFill: {
+        position: 'absolute',
+        width: DPAD_SIZE,
+        height: DPAD_SIZE,
+        borderRadius: DPAD_SIZE / 2,
+    },
+    dPadDirDot: {
+        width: DPAD_DOT,
+        height: DPAD_DOT,
+        borderRadius: Math.ceil(DPAD_DOT / 2),
+        backgroundColor: 'rgba(255,255,255,0.95)',
+    },
+    dPadHitUp: {
+        position: 'absolute',
+        top: 0,
+        left: DPAD_EDGE_INSET,
+        right: DPAD_EDGE_INSET,
+        height: DPAD_HIT_DEPTH,
+        alignItems: 'center',
+        justifyContent: 'flex-start',
+        paddingTop: DPAD_HIT_PAD_V,
+        zIndex: 4,
+    },
+    dPadHitDown: {
+        position: 'absolute',
+        bottom: 0,
+        left: DPAD_EDGE_INSET,
+        right: DPAD_EDGE_INSET,
+        height: DPAD_HIT_DEPTH,
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        paddingBottom: DPAD_HIT_PAD_V,
+        zIndex: 4,
+    },
+    dPadHitLeft: {
+        position: 'absolute',
+        left: 0,
+        top: DPAD_EDGE_INSET,
+        bottom: DPAD_EDGE_INSET,
+        width: DPAD_HIT_DEPTH,
+        justifyContent: 'center',
+        alignItems: 'flex-start',
+        paddingLeft: DPAD_HIT_PAD_H,
+        zIndex: 4,
+    },
+    dPadHitRight: {
+        position: 'absolute',
+        right: 0,
+        top: DPAD_EDGE_INSET,
+        bottom: DPAD_EDGE_INSET,
+        width: DPAD_HIT_DEPTH,
+        justifyContent: 'center',
+        alignItems: 'flex-end',
+        paddingRight: DPAD_HIT_PAD_H,
+        zIndex: 4,
+    },
+    dPadCenterDisc: {
+        position: 'absolute',
+        width: DPAD_INNER_W,
+        height: DPAD_INNER_H,
+        borderRadius: DPAD_INNER_RADIUS,
+        left: (DPAD_SIZE - DPAD_INNER_W) / 2,
+        top: (DPAD_SIZE - DPAD_INNER_H) / 2,
+        backgroundColor: DPAD_INNER_BG,
+        zIndex: 3,
+    },
+    expandedControlGrid: {
+        flexDirection: 'row',
+        justifyContent: 'center',
+        alignItems: 'flex-start',
+        gap: 36,
+        marginBottom: 24,
+        paddingHorizontal: 4,
+    },
+    /** Fixed width so top + bottom controls share one vertical center line */
+    expandedControlCol: {
+        width: 56,
+        alignItems: 'center',
+    },
+    expandedColMidGap: {
+        height: 20,
+    },
+    expandedStackInCol: {
+        gap: 14,
+        alignItems: 'center',
+    },
+    remoteCircleBtnFigma: {
+        width: 56,
+        height: 56,
+        borderRadius: 28,
+        alignItems: 'center',
+        justifyContent: 'center',
+        overflow: 'hidden',
+    },
+    remoteCircleGradientFill: {
+        ...StyleSheet.absoluteFillObject,
+        borderRadius: 28,
+    },
+    remoteCircleChildren: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1,
+    },
+    volPillFigma: {
+        width: 52,
+        height: 120,
+        borderRadius: 26,
+        overflow: 'hidden',
+    },
+    volPillGradientFill: {
+        ...StyleSheet.absoluteFillObject,
+        borderRadius: 26,
+    },
+    volPillHalf: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1,
+    },
+    volPillDivider: {
+        height: StyleSheet.hairlineWidth,
+        backgroundColor: 'rgba(0,0,0,0.25)',
+        zIndex: 1,
+    },
+    appGridHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 10,
+    },
+    appGridHeading: {
+        color: 'rgba(255,255,255,0.55)',
+        fontSize: 12,
+        fontFamily: CF.semibold,
+        letterSpacing: 0.6,
+        textTransform: 'uppercase',
+    },
+    appGridEdit: {
+        color: 'rgba(255,255,255,0.42)',
+        fontSize: 12,
+        fontFamily: CF.medium,
+    },
+    appGrid: {
+        width: '100%',
+        marginBottom: 12,
+    },
+    appGridRow: {
+        flexDirection: 'row',
+        width: '100%',
+        alignItems: 'center',
+        gap: APP_COL_GAP,
+        marginBottom: 10,
+    },
+    /** Two equal columns — wide, short pill */
+    appGridCellWide: {
+        flex: 1,
+        minWidth: 0,
+        height: APP_ROW_HEIGHT,
+        borderRadius: APP_ROW_HEIGHT / 2,
+        backgroundColor: '#13132A',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 10,
+    },
+    appGridCellWideEmpty: {
+        opacity: 0.28,
+        borderColor: 'rgba(255,255,255,0.06)',
+    },
+    appGridLabel: {
+        color: '#fff',
+        fontSize: 11,
+        fontFamily: CF.medium,
+        textAlign: 'center',
+    },
+    sourcePill: {
+        alignSelf: 'stretch',
+        paddingVertical: 13,
+        borderRadius: 28,
+        backgroundColor: '#13132A',
+        alignItems: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+    },
+    sourcePillText: {
+        color: '#fff',
+        fontSize: 13,
+        fontFamily: CF.semibold,
+        letterSpacing: 0.4,
+    },
+    sourcePillTextDim: {
+        opacity: 0.4,
+    },
+    appsModalBackdrop: {
+        ...StyleSheet.absoluteFillObject,
+        justifyContent: 'flex-end',
+        zIndex: 100,
+    },
+    appsModalBgPress: {
+        ...StyleSheet.absoluteFillObject,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+    },
+    appsModalSheet: {
+        backgroundColor: '#12132a',
+        borderTopLeftRadius: 24,
+        borderTopRightRadius: 24,
+        borderWidth: 1,
+        borderColor: '#212136',
+        paddingHorizontal: 20,
+        paddingTop: 0,
+        paddingBottom: 28,
+        maxHeight: '80%',
+    },
+    appsModalHandleTouchArea: {
+        alignSelf: 'stretch',
+        alignItems: 'center',
+        paddingVertical: 10,
+        marginTop: 4,
+    },
+    appsModalHandle: {
+        width: 36,
+        height: 4,
+        borderRadius: 2,
+        backgroundColor: 'rgba(255,255,255,0.15)',
+    },
+    appsModalHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 4,
+    },
+    appsModalTitle: {
+        color: '#ededf5',
+        fontSize: 18,
+        fontFamily: CF.bold,
+    },
+    appsModalCloseBtn: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: 'rgba(237,237,245,0.1)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    appsModalSub: {
+        color: '#4a4957',
+        fontSize: 13,
+        fontFamily: CF.regular,
+        marginBottom: 12,
+    },
+    appsModalList: {
+        maxHeight: 360,
+    },
+    appsModalItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.06)',
+        backgroundColor: 'rgba(255,255,255,0.03)',
+        paddingHorizontal: 16,
+        paddingVertical: 14,
+        marginBottom: 8,
+    },
+    appsModalItemSelected: {
+        backgroundColor: 'rgba(137,71,202,0.08)',
+        borderColor: 'rgba(137,71,202,0.35)',
+    },
+    appsModalItemText: {
+        color: '#ededf5',
+        fontSize: 14,
+        fontFamily: CF.medium,
+        flex: 1,
+        marginRight: 12,
+        letterSpacing: 0.1,
+    },
+    appsModalItemTextSelected: {
+        color: '#ededf5',
+    },
+    appsModalCheck: {
+        width: 24,
+        height: 24,
+        borderRadius: 12,
+        borderWidth: 1.5,
+        borderColor: 'rgba(255,255,255,0.2)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'transparent',
+    },
+    appsModalCheckOn: {
+        backgroundColor: '#8947ca',
+        borderColor: '#8947ca',
+    },
+    appsModalActions: {
+        marginTop: 12,
+        flexDirection: 'row',
+        justifyContent: 'flex-end',
+        gap: 10,
+    },
+    appsModalBtnGhost: {
+        borderRadius: 14,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        borderWidth: 1,
+        borderColor: '#212136',
+        backgroundColor: '#1a1b2e',
+    },
+    appsModalBtnGhostText: {
+        color: '#ededf5',
+        fontSize: 14,
+        fontFamily: CF.medium,
+    },
+    appsModalBtnSave: {
+        borderRadius: 14,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        backgroundColor: '#8947ca',
+    },
+    appsModalBtnSaveText: {
+        color: '#fff',
+        fontSize: 14,
+        fontFamily: CF.bold,
+    },
 });

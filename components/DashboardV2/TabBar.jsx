@@ -81,7 +81,7 @@ function TabBar({ activeTab, onTabPress }) {
     return (
         <View style={[styles.container, { bottom: 25 }]}>
             {/* Bar itself — clips to rounded rect */}
-            <BlurView intensity={30} tint="dark" style={styles.blurContainer}>
+            <BlurView intensity={80} tint="dark" style={styles.blurContainer}>
                 {tabs.map((tab) => {
                     const isActive = activeTab === tab.id;
                     const color = isActive ? '#FFFFFF' : '#FFFFFF';
@@ -158,10 +158,10 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#222242',
+        backgroundColor: 'transparent',
         paddingHorizontal: 16,
         borderWidth: 1,
-        borderColor: '#181828',
+        borderColor: 'rgba(255, 255, 255, 0.08)',
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.45,

@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
+import { useRef, useState, useEffect, useMemo, useCallback, useContext } from 'react';
 import * as Notifications from 'expo-notifications';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
@@ -22,10 +22,9 @@ import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import NetworkModal from '../components/DashboardV2/NetworkModal';
 import QuickScenes from '../components/DashboardV2/QuickScenes';
-import YouTubeLauncherModal from '../components/DashboardV2/YouTubeLauncherModal';
 import AppleTVRemoteModal from '../components/DashboardV2/AppleTVRemoteModal';
-import RoomsList from '../components/DashboardV2/RoomsList';
 import DraggableRoomList from '../components/DashboardV2/DraggableRoomList';
+import RoomsList from '../components/DashboardV2/RoomsList';
 import CamerasList from '../components/DashboardV2/CamerasList';
 import FrigateEventsFeed from '../components/DashboardV2/FrigateEventsFeed';
 import HACamerasList from '../components/DashboardV2/HACamerasList';
@@ -51,6 +50,7 @@ import { FrigateService } from '../services/frigate';
 import * as SecureStore from 'expo-secure-store';
 import { startHeartbeat, stopHeartbeat, updateAppState } from '../services/heartbeat';
 import { getRoomEntities } from '../utils/roomHelpers';
+import { NotifContext } from '../services/NotifContext';
 
 export default function DashboardV2() {
     const router = useRouter();
@@ -78,7 +78,6 @@ export default function DashboardV2() {
     const [selectedFrigateCamera, setSelectedFrigateCamera] = useState(null);
     const [showFrigateModal, setShowFrigateModal] = useState(false);
     const [frigateInitialView, setFrigateInitialView] = useState('live'); // 'live' or 'history'
-    const [showYoutubeLauncher, setShowYoutubeLauncher] = useState(false);
     const [showAppleTVRemote, setShowAppleTVRemote] = useState(false);
     const [showNetworkModal, setShowNetworkModal] = useState(false);
     const [roomTrackingLookup, setRoomTrackingLookup] = useState({}); // Tracking state -> area_id mapping
@@ -219,6 +218,16 @@ export default function DashboardV2() {
     // Cascade starts as soon as entities arrive.
     // Each step only waits for the data ITS section needs before advancing.
     useEffect(() => {
+        // If an alert modal is pending, skip straight to fully revealed so the
+        // dashboard loads behind the modal — even if resetReveal() was called
+        // after the alertNotif was set (e.g. connectionConfig load with
+        // fetchMappings({ resetRevealCascade: true })).
+        if (alertNotif) {
+            clearTimeout(revealRef.current);
+            setRevealStep(5);
+            return;
+        }
+
         if (entities.length === 0) return;   // nothing to show yet
         if (revealStep >= 5) return;          // fully revealed
 
@@ -233,7 +242,7 @@ export default function DashboardV2() {
             setRevealStep(s => Math.min(s + 1, 5));
         }, 180);
         return () => clearTimeout(revealRef.current);
-    }, [entities.length, scenesFetched, homeAccessFetched, frigateFetched, revealStep]);
+    }, [entities.length, scenesFetched, homeAccessFetched, frigateFetched, revealStep, alertNotif]);
 
     // Reset on config change so cascade re-runs on profile switch
     const resetReveal = () => {
@@ -246,7 +255,9 @@ export default function DashboardV2() {
 
     const mappingsAbortRef = useRef(null);
 
-    const fetchMappings = () => {
+    /** @param {{ resetRevealCascade?: boolean }} [opts] — set false when refreshing after edits / resume so skeletons do not re-run */
+    const fetchMappings = (opts = {}) => {
+        const { resetRevealCascade = true } = opts;
         // Config not ready yet — wait, don't touch any flags
         if (!connectionConfig.loaded) return;
 
@@ -258,8 +269,8 @@ export default function DashboardV2() {
             return;
         }
 
-        // Reset so cascade re-runs cleanly
-        resetReveal();
+        // Only reset the progressive-reveal cascade on initial / connection change loads
+        if (resetRevealCascade) resetReveal();
 
         // Abort any in-flight mapping requests
         if (mappingsAbortRef.current) mappingsAbortRef.current.abort();
@@ -825,20 +836,25 @@ export default function DashboardV2() {
     const [showNotifications, setShowNotifications] = useState(false);
     // Alert modal shown when user taps a push notification
     const [alertNotif, setAlertNotif] = useState(null); // { title, body, category, timestamp }
-    // Read pending notification immediately so the modal shows before entities load
-    const alertReadRef = useRef(false);
-    if (!alertReadRef.current) {
-        alertReadRef.current = true;
-        SecureStore.getItemAsync('pending_notif_data').then(val => {
-            if (val) {
-                SecureStore.deleteItemAsync('pending_notif_data').catch(() => {});
-                SecureStore.deleteItemAsync('pending_notif_open').catch(() => {});
-                try { setAlertNotif(JSON.parse(val)); } catch (_) {}
-            }
-        }).catch(() => {});
-    }
 
-    // When a notification alert opens, skip the loading cascade so the full
+    // Read the pending notification from context (_layout.jsx captures it via
+    // both getLastNotificationResponseAsync [cold start] and the tap listener
+    // [background/foreground]). Context is always populated before this screen
+    // mounts, so there is no race condition.
+    const { pendingNotif, clearNotif } = useContext(NotifContext);
+    const handledNotifRef = useRef(false);
+
+    useEffect(() => {
+        console.log('[Dashboard] pendingNotif from context:', pendingNotif);
+        if (pendingNotif && !handledNotifRef.current) {
+            handledNotifRef.current = true;
+            console.log('[Dashboard] ✅ Showing alert modal for:', pendingNotif.title);
+            setAlertNotif(pendingNotif);
+            clearNotif();
+        }
+    }, [pendingNotif]);
+
+    // When an alert modal is pending, skip the loading cascade so the full
     // dashboard renders behind the modal immediately — no frozen skeleton.
     useEffect(() => {
         if (alertNotif) {
@@ -1141,21 +1157,10 @@ export default function DashboardV2() {
                 lastActiveRoomRef.current = null;
                 navigateToPresenceRoomRef.current(true);
                 // Refresh config
-                fetchMappings();
+                fetchMappings({ resetRevealCascade: false });
 
-                // Show alert modal if user tapped a push from lock screen / notification centre
-                SecureStore.getItemAsync('pending_notif_data').then(val => {
-                    if (val) {
-                        SecureStore.deleteItemAsync('pending_notif_data').catch(() => {});
-                        SecureStore.deleteItemAsync('pending_notif_open').catch(() => {});
-                        try {
-                            setAlertNotif(JSON.parse(val));
-                            // Fast-forward cascade so dashboard is fully visible behind the modal
-                            clearTimeout(revealRef.current);
-                            setRevealStep(5);
-                        } catch (_) {}
-                    }
-                }).catch(() => {});
+                // Note: notification tap modal (alertNotif) is handled automatically
+                // by useLastNotificationResponse() — no SecureStore polling needed here.
             }
             appState.current = nextAppState;
             updateAppState(nextAppState === 'active' ? 'foreground' : 'background');
@@ -1286,7 +1291,6 @@ export default function DashboardV2() {
         if (key === 'showPreferenceButton') setShowPreferenceButton(val);
     }, []);
 
-    const handlePlayMedia = useCallback(() => setShowYoutubeLauncher(true), []);
     const handleNetworkPress = useCallback(() => setShowNetworkModal(true), []);
     const handleAiExit = useCallback(() => setActiveTab('home'), []);
     const handleOpenOpacitySettings = useCallback(() => setSettingsModalVisible(true), []);
@@ -1327,7 +1331,7 @@ export default function DashboardV2() {
             });
 
             // Use the sophisticated helper with Sensor Mappings
-            const roomEntities = getRoomEntities(area, registryDevices, registryEntities, entities, sensorMappings, coverMappings);
+            const roomEntities = getRoomEntities(area, registryDevices, registryEntities, entities, sensorMappings, coverMappings, mediaMappings);
 
             // Active Counts using processed entities
             const activeLights = roomEntities.lights.filter(l => l.stateObj.state === 'on').length;
@@ -1611,15 +1615,6 @@ export default function DashboardV2() {
                 />
             )}
 
-            {showYoutubeLauncher && (
-                <YouTubeLauncherModal
-                    visible={showYoutubeLauncher}
-                    onClose={() => setShowYoutubeLauncher(false)}
-                    mediaPlayers={entities.filter(e => e.entity_id.startsWith('media_player.'))}
-                    callService={callService}
-                />
-            )}
-
             {showAppleTVRemote && (
                 <AppleTVRemoteModal
                     visible={showAppleTVRemote}
@@ -1822,7 +1817,7 @@ export default function DashboardV2() {
                                 lockPassageConfigs={lockPassageConfigs}
                                 adminUrl={connectionConfig.adminUrl}
                                 haToken={connectionConfig.token}
-                                onConfigSaved={fetchMappings}
+                                onConfigSaved={() => fetchMappings({ resetRevealCascade: false })}
                                 onToggleLock={(entityId, state) => {
                                     const isUnlocked = state === 'unlocked' || state === 'open';
                                     callService('lock', isUnlocked ? 'lock' : 'unlock', { entity_id: entityId });
@@ -2033,7 +2028,6 @@ export default function DashboardV2() {
                     showPreferenceButton={showPreferenceButton}
                     adminUrl={connectionConfig.adminUrl}
                     onSettingChange={handleSettingChange}
-                    onPlayMedia={handlePlayMedia}
                     onNetwork={handleNetworkPress}
                     onEntitiesChanged={refreshEntityRefs}
                 /> : null}

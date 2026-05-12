@@ -16,9 +16,7 @@ import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import NetworkModal from '../components/DashboardV2/NetworkModal';
 import QuickScenes from '../components/DashboardV2/QuickScenes';
-import YouTubeLauncherModal from '../components/DashboardV2/YouTubeLauncherModal';
 import AppleTVRemoteModal from '../components/DashboardV2/AppleTVRemoteModal';
-import RoomsList from '../components/DashboardV2/RoomsList';
 import DraggableRoomList from '../components/DashboardV2/DraggableRoomList';
 import CamerasList from '../components/DashboardV2/CamerasList';
 import HACamerasList from '../components/DashboardV2/HACamerasList';
@@ -70,7 +68,6 @@ export default function DashboardV2Tablet() {
     const [selectedFrigateCamera, setSelectedFrigateCamera] = useState(null);
     const [showFrigateModal, setShowFrigateModal] = useState(false);
     const [frigateInitialView, setFrigateInitialView] = useState('live'); // 'live' or 'history'
-    const [showYoutubeLauncher, setShowYoutubeLauncher] = useState(false);
     const [showAppleTVRemote, setShowAppleTVRemote] = useState(false);
     const [showNetworkModal, setShowNetworkModal] = useState(false);
     const [roomTrackingLookup, setRoomTrackingLookup] = useState({}); // Tracking state -> area_id mapping
@@ -826,7 +823,7 @@ export default function DashboardV2Tablet() {
             });
 
             // Use the sophisticated helper with Sensor Mappings
-            const roomEntities = getRoomEntities(area, registryDevices, registryEntities, entities, sensorMappings, coverMappings);
+            const roomEntities = getRoomEntities(area, registryDevices, registryEntities, entities, sensorMappings, coverMappings, mediaMappings);
 
             // Active Counts using processed entities
             const activeLights = roomEntities.lights.filter(l => l.stateObj.state === 'on').length;
@@ -1326,7 +1323,6 @@ export default function DashboardV2Tablet() {
                             if (key === 'showVoiceAssistant') setShowVoiceAssistant(val);
                             if (key === 'showPreferenceButton') setShowPreferenceButton(val);
                         }}
-                        onPlayMedia={() => setShowYoutubeLauncher(true)}
                         onNetwork={() => setShowNetworkModal(true)}
                     />
                 </View>
@@ -1388,15 +1384,6 @@ export default function DashboardV2Tablet() {
                     service={frigateService.current}
                     initialView={frigateInitialView}
                     onClose={() => setShowFrigateModal(false)}
-                />
-            )}
-
-            {showYoutubeLauncher && (
-                <YouTubeLauncherModal
-                    visible={showYoutubeLauncher}
-                    onClose={() => setShowYoutubeLauncher(false)}
-                    mediaPlayers={entities.filter(e => e.entity_id.startsWith('media_player.'))}
-                    callService={callService}
                 />
             )}
 

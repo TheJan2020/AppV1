@@ -148,7 +148,7 @@ export default function RoomPage() {
     }
 
     const room = { area_id, name, picture };
-    const { lights, fans, climates, covers, medias, cameras, sensors, doors, switches, automations, scripts } = getRoomEntities(room, registryDevices, registryEntities, entities);
+    const { lights, fans, climates, covers, medias, cameras, sensors, doors, switches, automations, scripts } = getRoomEntities(room, registryDevices, registryEntities, entities, [], [], []);
 
     return (
         <View style={{ flex: 1, backgroundColor: '#000' }}>

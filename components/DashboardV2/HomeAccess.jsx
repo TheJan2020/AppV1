@@ -38,7 +38,7 @@ import Animated, {
     cancelAnimation,
 } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import Svg, { Path } from 'react-native-svg';
 import { CF } from '../../utils/typography';
 
@@ -623,6 +623,9 @@ function EditModal({
     const [localCovers, setLocalCovers] = useState([]);  // string[]
     const [garages,     setGarages]     = useState([]);
     const [loading,     setLoading]     = useState(false);
+    /** POSTs from toggleLock/toggleCover — must settle before parent refresh or GET races the server */
+    const pendingWritesRef = useRef([]);
+    const dismissingRef = useRef(false);
 
     // Drag-to-dismiss + slide-in animation
     const sheetY = useSharedValue(700);
@@ -635,6 +638,19 @@ function EditModal({
         }
     }, [visible]);
 
+    const flushPendingWritesAndClose = useCallback(async () => {
+        if (dismissingRef.current) return;
+        dismissingRef.current = true;
+        try {
+            const pending = pendingWritesRef.current.splice(0);
+            await Promise.all(pending.map(p => p.catch(() => {})));
+            onSaved?.();
+            onClose();
+        } finally {
+            dismissingRef.current = false;
+        }
+    }, [onSaved, onClose]);
+
     const dismissGesture = Gesture.Pan()
         .activeOffsetY(5)
         .onUpdate(e => {
@@ -642,8 +658,8 @@ function EditModal({
         })
         .onEnd(e => {
             if (e.translationY > 100 || e.velocityY > 600) {
-                sheetY.value = withTiming(700, { duration: 250 }, () => {
-                    runOnJS(onClose)();
+                sheetY.value = withTiming(700, { duration: 250 }, (finished) => {
+                    if (finished) runOnJS(flushPendingWritesAndClose)();
                 });
             } else {
                 sheetY.value = withSpring(0, { damping: 20 });
@@ -665,6 +681,7 @@ function EditModal({
     // Fetch covers from backend + current selection when modal opens
     useEffect(() => {
         if (!visible || !base) return;
+        pendingWritesRef.current = [];
         setLoading(true);
 
         Promise.all([
@@ -707,25 +724,26 @@ function EditModal({
         const isOn = localLocks.includes(entity_id);
         const action = isOn ? 'remove' : 'add';
         setLocalLocks(prev => isOn ? prev.filter(id => id !== entity_id) : [...prev, entity_id]);
-        fetch(`${base}api/home-access`, {
+        const p = fetch(`${base}api/home-access`, {
             method: 'POST', headers: authHeaders,
             body: JSON.stringify({ type: 'lock', entity_id, action }),
+        }).then(res => {
+            if (!res.ok) console.warn('[HomeAccess] toggleLock HTTP', res.status);
         }).catch(e => console.error('[HomeAccess] toggleLock:', e));
+        pendingWritesRef.current.push(p);
     };
 
     const toggleCover = (entity_id) => {
         const isOn = localCovers.includes(entity_id);
         const action = isOn ? 'remove' : 'add';
         setLocalCovers(prev => isOn ? prev.filter(id => id !== entity_id) : [...prev, entity_id]);
-        fetch(`${base}api/home-access`, {
+        const p = fetch(`${base}api/home-access`, {
             method: 'POST', headers: authHeaders,
             body: JSON.stringify({ type: 'cover', entity_id, action }),
+        }).then(res => {
+            if (!res.ok) console.warn('[HomeAccess] toggleCover HTTP', res.status);
         }).catch(e => console.error('[HomeAccess] toggleCover:', e));
-    };
-
-    const handleDone = () => {
-        onSaved && onSaved();
-        onClose();
+        pendingWritesRef.current.push(p);
     };
 
     const isEmpty = allLockEntities.length === 0 && garages.length === 0;
@@ -735,7 +753,7 @@ function EditModal({
             visible={visible}
             transparent
             animationType="none"
-            onRequestClose={handleDone}
+            onRequestClose={() => { void flushPendingWritesAndClose(); }}
         >
             <View style={mStyles.overlay}>
                 <Animated.View style={[mStyles.sheet, sheetAnimStyle]}>
@@ -749,7 +767,7 @@ function EditModal({
                     {/* Header */}
                     <View style={mStyles.header}>
                         <Text style={mStyles.title}>Home Access</Text>
-                        <TouchableOpacity onPress={handleDone} style={mStyles.closeBtn}>
+                        <TouchableOpacity onPress={() => { void flushPendingWritesAndClose(); }} style={mStyles.closeBtn}>
                             <X size={18} color="rgba(255,255,255,0.5)" />
                         </TouchableOpacity>
                     </View>
@@ -805,7 +823,7 @@ function EditModal({
                     )}
 
                     {/* Done button */}
-                    <TouchableOpacity style={mStyles.doneBtn} onPress={handleDone} activeOpacity={0.8}>
+                    <TouchableOpacity style={mStyles.doneBtn} onPress={() => { void flushPendingWritesAndClose(); }} activeOpacity={0.8}>
                         <LinearGradient
                             colors={['#602FBE', '#8947ca']}
                             start={{ x: 0, y: 0 }}

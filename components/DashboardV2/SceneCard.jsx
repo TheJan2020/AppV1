@@ -1,7 +1,7 @@
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing } from 'react-native';
 import { Zap, Moon, Sun, LogOut, Home } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 
 function getSceneIcon(name = '') {
     const n = (name || '').toLowerCase();
@@ -14,19 +14,85 @@ function getSceneIcon(name = '') {
 
 export default function SceneCard({ id, label, onPress, style }) {
     const Icon = getSceneIcon(label || '');
+    const glowAnim = useRef(new Animated.Value(0)).current;
+
+    useEffect(() => {
+        return () => {
+            glowAnim.stopAnimation();
+        };
+    }, [glowAnim]);
+
+    const handlePress = () => {
+        glowAnim.stopAnimation();
+        glowAnim.setValue(0);
+        Animated.sequence([
+            Animated.timing(glowAnim, {
+                toValue: 1,
+                duration: 220,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: false,
+            }),
+            Animated.timing(glowAnim, {
+                toValue: 0.55,
+                duration: 550,
+                easing: Easing.inOut(Easing.quad),
+                useNativeDriver: false,
+            }),
+            Animated.timing(glowAnim, {
+                toValue: 1,
+                duration: 450,
+                easing: Easing.inOut(Easing.quad),
+                useNativeDriver: false,
+            }),
+            Animated.timing(glowAnim, {
+                toValue: 0,
+                duration: 780,
+                easing: Easing.out(Easing.quad),
+                useNativeDriver: false,
+            }),
+        ]).start();
+        if (onPress) onPress(id);
+    };
+
+    const glowContainerStyle = {
+        shadowColor: '#8947ca',
+        shadowOffset: { width: 0, height: 0 },
+        shadowOpacity: glowAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, 0.85],
+        }),
+        shadowRadius: glowAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, 12],
+        }),
+        elevation: glowAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, 8],
+        }),
+    };
+
+    const glowOverlayStyle = {
+        opacity: glowAnim.interpolate({
+            inputRange: [0, 1],
+            outputRange: [0, 0.18],
+        }),
+    };
 
     return (
-        <TouchableOpacity
-            key={id}
-            style={[styles.card, style]}
-            onPress={() => onPress && onPress(id)}
-            activeOpacity={0.75}
-        >
-            <View style={styles.iconContainer}>
-                <Icon size={26} color="#8947ca" />
-            </View>
-            <Text style={styles.label} numberOfLines={1}>{label}</Text>
-        </TouchableOpacity>
+        <Animated.View style={glowContainerStyle}>
+            <TouchableOpacity
+                key={id}
+                style={[styles.card, style]}
+                onPress={handlePress}
+                activeOpacity={0.75}
+            >
+                <Animated.View pointerEvents="none" style={[styles.glowOverlay, glowOverlayStyle]} />
+                <View style={styles.iconContainer}>
+                    <Icon size={26} color="#8947ca" />
+                </View>
+                <Text style={styles.label} numberOfLines={1}>{label}</Text>
+            </TouchableOpacity>
+        </Animated.View>
     );
 }
 
@@ -42,6 +108,16 @@ const styles = StyleSheet.create({
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
+        overflow: 'visible',
+    },
+    glowOverlay: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        top: 0,
+        bottom: 0,
+        borderRadius: 48,
+        backgroundColor: '#8947ca',
     },
     iconContainer: {
         width: 36,

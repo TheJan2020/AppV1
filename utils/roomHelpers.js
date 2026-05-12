@@ -1,4 +1,4 @@
-export const getRoomEntities = (room, registryDevices = [], registryEntities = [], allEntities = [], sensorMappings = [], coverMappings = []) => {
+export const getRoomEntities = (room, registryDevices = [], registryEntities = [], allEntities = [], sensorMappings = [], coverMappings = [], mediaMappings = []) => {
     if (!room) return { lights: [], fans: [], climates: [], covers: [], medias: [], switches: [] };
 
     const safeRegistryDevices = Array.isArray(registryDevices) ? registryDevices : [];
@@ -6,6 +6,7 @@ export const getRoomEntities = (room, registryDevices = [], registryEntities = [
     const safeAllEntities = Array.isArray(allEntities) ? allEntities : [];
     const safeSensorMappings = Array.isArray(sensorMappings) ? sensorMappings : [];
     const safeCoverMappings = Array.isArray(coverMappings) ? coverMappings : [];
+    const safeMediaMappings = Array.isArray(mediaMappings) ? mediaMappings : [];
 
     const areaDevices = safeRegistryDevices.filter(d => d.area_id === room.area_id);
     const areaDeviceIds = areaDevices.map(d => d.id);
@@ -27,7 +28,25 @@ export const getRoomEntities = (room, registryDevices = [], registryEntities = [
     const fanEntries = potentialEntities.filter(re => re.entity_id.startsWith('fan.'));
     const climateEntries = potentialEntities.filter(re => re.entity_id.startsWith('climate.'));
     const coverEntries = potentialEntities.filter(re => re.entity_id.startsWith('cover.'));
-    const mediaEntries = potentialEntities.filter(re => re.entity_id.startsWith('media_player.'));
+    /**
+     * Room “Media” = TV-style players only. Many integrations omit `device_class: tv`,
+     * so we **exclude** obvious music/speaker entities instead of requiring a TV signal.
+     */
+    const excludedMediaTypes = new Set(['speaker', 'music']);
+    const isTvMediaPlayer = re => {
+        const map = safeMediaMappings.find(m => m.entity_id === re.entity_id);
+        const t = (map?.mediaType?.type || '').toLowerCase();
+        if (excludedMediaTypes.has(t)) return false;
+
+        const stateObj = safeAllEntities.find(e => e.entity_id === re.entity_id);
+        const dc = stateObj?.attributes?.device_class;
+        if (dc === 'speaker') return false;
+
+        return true;
+    };
+    const mediaEntries = potentialEntities.filter(
+        re => re.entity_id.startsWith('media_player.') && isTvMediaPlayer(re)
+    );
     const switchEntries = potentialEntities.filter(re => re.entity_id.startsWith('switch.'));
     const automationEntries = potentialEntities.filter(re => re.entity_id.startsWith('automation.'));
     const scriptEntries = potentialEntities.filter(re => re.entity_id.startsWith('script.'));
