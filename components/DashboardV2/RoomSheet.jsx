@@ -20,11 +20,14 @@ export default function RoomSheet({
     haToken,
     showPreferenceButton = true,
     sensorMappings = [],
-    coverMappings = []
+    coverMappings = [],
+    musicAssistantEntryIds = [],
+    browseMedia,
+    callServiceWithResponse,
 }) {
     if (!room) return null;
 
-    const { lights, fans, climates, covers, medias, cameras, sensors, doors, switches, automations, scripts } = getRoomEntities(room, registryDevices, registryEntities, allEntities, sensorMappings, coverMappings, mediaMappings);
+    const { lights, fans, climates, covers, medias, musicMedias, cameras, sensors, doors, switches, automations, scripts } = getRoomEntities(room, registryDevices, registryEntities, allEntities, sensorMappings, coverMappings, mediaMappings, musicAssistantEntryIds);
 
     return (
         <Modal
@@ -43,6 +46,7 @@ export default function RoomSheet({
                         covers={covers}
                         climates={climates}
                         medias={medias}
+                        musicMedias={musicMedias}
                         cameras={cameras}
                         sensors={sensors}
                         doors={doors}
@@ -59,6 +63,9 @@ export default function RoomSheet({
                         haUrl={haUrl}
                         haToken={haToken}
                         showPreferenceButton={showPreferenceButton}
+                        musicAssistantEntryIds={musicAssistantEntryIds}
+                        browseMedia={browseMedia}
+                        callServiceWithResponse={callServiceWithResponse}
                     />
                 </GestureHandlerRootView>
             </View>

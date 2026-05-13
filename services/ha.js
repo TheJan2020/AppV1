@@ -116,6 +116,8 @@ export class HAService {
     handleMessage(data) {
         if (data.type === 'auth_required') {
             this.sendAuth();
+        } else if (data.type === 'auth_invalid') {
+            this.notifyListeners({ type: 'auth_failed', message: data.message });
         } else if (data.type === 'auth_ok') {
             this.authenticated = true;
             this.notifyListeners({ type: 'connected' });
@@ -124,9 +126,16 @@ export class HAService {
         } else if (data.type === 'event' && data.event && data.event.event_type === 'state_changed') {
             this.notifyListeners({ type: 'state_changed', event: data.event });
         } else if (data.id && this.pending.has(data.id)) {
-            const { resolve } = this.pending.get(data.id);
-            resolve(data.result);
+            const pending = this.pending.get(data.id);
             this.pending.delete(data.id);
+            const { resolve, reject } = pending;
+            if (data.success === false) {
+                const err = new Error(data.error?.message || data.error?.code || 'Home Assistant request failed');
+                if (data.error?.code) err.code = data.error.code;
+                reject(err);
+            } else {
+                resolve(data.result);
+            }
         }
     }
 
@@ -137,13 +146,38 @@ export class HAService {
         }));
     }
 
-    async callService(domain, service, serviceData = {}) {
-        return this.sendMessage({
+    /**
+     * @param {object} [options]
+     * @param {boolean} [options.returnResponse] — set true for services that return data (e.g. Music Assistant `get_queue`)
+     */
+    async callService(domain, service, serviceData = {}, options = {}) {
+        const { returnResponse = false } = options;
+        const msg = {
             type: 'call_service',
             domain,
             service,
-            service_data: serviceData
-        });
+            service_data: serviceData,
+        };
+        if (returnResponse) {
+            msg.return_response = true;
+        }
+        return this.sendMessage(msg);
+    }
+
+    /**
+     * Browse media for a media_player (Music Assistant library folders, filesystem, etc.).
+     * Omit type/id for root listing.
+     */
+    async browseMedia(entityId, mediaContentType, mediaContentId) {
+        const payload = {
+            type: 'media_player/browse_media',
+            entity_id: entityId,
+        };
+        if (mediaContentType != null && mediaContentType !== '' && mediaContentId != null && mediaContentId !== '') {
+            payload.media_content_type = mediaContentType;
+            payload.media_content_id = mediaContentId;
+        }
+        return this.sendMessage(payload);
     }
 
     async getAreaRegistry() {
@@ -164,6 +198,13 @@ export class HAService {
         });
     }
 
+    /** All integrations’ config entries (entry_id, domain, …). Used to tie entities → Music Assistant. */
+    async getConfigEntries() {
+        return this.sendMessage({
+            type: 'config_entries/get',
+        });
+    }
+
     async getFloorRegistry() {
         return this.sendMessage({
             type: 'config/floor_registry/list',
@@ -176,9 +217,15 @@ export class HAService {
         });
     }
 
-    async getCategoryRegistry() {
+    /**
+     * List category registry entries for a scope (required by HA 2025+).
+     * Scopes are integration-defined (e.g. `automation`, `script`, `zone`).
+     * @param {string} [scope='automation'] — default matches HA core tests / common use
+     */
+    async getCategoryRegistry(scope = 'automation') {
         return this.sendMessage({
             type: 'config/category_registry/list',
+            scope,
         });
     }
 

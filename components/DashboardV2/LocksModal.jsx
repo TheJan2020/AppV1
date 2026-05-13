@@ -80,9 +80,7 @@ export default function LocksModal({
         const isUnlocked = item.state === 'unlocked' || item.state === 'open';
         const isTransit  = item.state === 'locking' || item.state === 'unlocking';
         const name       = item.attributes?.friendly_name || item.entity_id.replace(/_/g, ' ');
-        const lockLabel  = isTransit
-            ? (item.state === 'locking' ? 'Locking…' : 'Unlocking…')
-            : isUnlocked ? 'Unlocked' : 'Locked';
+        const statusBadgeLabel = isUnlocked ? 'Unlocked' : 'Locked';
 
         // Sensor linked to this lock (if configured)
         const sensorEntityId = lockPassageConfigs[item.entity_id]?.sensor_entity_id;
@@ -99,26 +97,48 @@ export default function LocksModal({
 
         return (
             <View key={item.entity_id} style={styles.row}>
-                {/* Lock icon — reflects lock state */}
-                <View style={[styles.iconWrap, { borderColor: isUnlocked ? C_CYAN : 'rgba(255,255,255,0.1)' }]}>
-                    {isUnlocked
-                        ? <LockOpen size={18} color={C_CYAN} />
-                        : <Lock    size={18} color="rgba(237,237,245,0.35)" />
-                    }
+                {/* Lock icon — transit shows target-state icon, dimmed (disabled) */}
+                <View style={[
+                    styles.iconWrap,
+                    {
+                        borderColor: isTransit
+                            ? 'rgba(255,255,255,0.08)'
+                            : (isUnlocked ? C_CYAN : 'rgba(255,255,255,0.1)'),
+                        opacity: isTransit ? 0.5 : 1,
+                    },
+                ]}>
+                    {isTransit ? (
+                        item.state === 'locking' ? (
+                            <Lock size={18} color="rgba(237,237,245,0.42)" />
+                        ) : (
+                            <LockOpen size={18} color="rgba(237,237,245,0.42)" />
+                        )
+                    ) : isUnlocked ? (
+                        <LockOpen size={18} color={C_CYAN} />
+                    ) : (
+                        <Lock size={18} color="rgba(237,237,245,0.35)" />
+                    )}
                 </View>
 
                 <View style={{ flex: 1, gap: 4 }}>
-                    <Text style={styles.rowName} numberOfLines={1}>{name}</Text>
+                    <Text style={styles.rowName} numberOfLines={1}>
+                        {isTransit
+                            ? item.state === 'locking'
+                                ? 'Locking…'
+                                : 'Unlocking…'
+                            : name}
+                    </Text>
 
-                    {/* Badges row */}
+                    {/* Badges row — lock Locked/Unlocked badge hidden during transit (title line is the status) */}
                     <View style={{ flexDirection: 'row', gap: 6, flexWrap: 'wrap' }}>
-                        {/* Lock state badge */}
-                        <View style={[styles.badge, { borderColor: isUnlocked ? C_CYAN : 'rgba(255,255,255,0.08)' }]}>
-                            <View style={[styles.dot, { backgroundColor: isUnlocked ? C_CYAN : 'rgba(237,237,245,0.2)' }]} />
-                            <Text style={[styles.badgeText, { color: isUnlocked ? C_CYAN : 'rgba(237,237,245,0.45)' }]}>
-                                {lockLabel}
-                            </Text>
-                        </View>
+                        {!isTransit && (
+                            <View style={[styles.badge, { borderColor: isUnlocked ? C_CYAN : 'rgba(255,255,255,0.08)' }]}>
+                                <View style={[styles.dot, { backgroundColor: isUnlocked ? C_CYAN : 'rgba(237,237,245,0.2)' }]} />
+                                <Text style={[styles.badgeText, { color: isUnlocked ? C_CYAN : 'rgba(237,237,245,0.45)' }]}>
+                                    {statusBadgeLabel}
+                                </Text>
+                            </View>
+                        )}
 
                         {/* Sensor state badge — only if sensor is configured */}
                         {sensorEntity && (

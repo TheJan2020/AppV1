@@ -1,7 +1,7 @@
-import { useState, useEffect, memo } from 'react';
+import { useState, useEffect, memo, useMemo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, FlatList, TextInput, Alert, ActivityIndicator, Switch } from 'react-native';
 import { Colors } from '../../constants/Colors';
-import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles, Monitor, LayoutGrid } from 'lucide-react-native';
+import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles, Monitor, LayoutGrid, Music } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { AIService } from '../../services/ai';
 import * as SecureStore from 'expo-secure-store';
@@ -11,9 +11,12 @@ import MonitoredEntitiesModal from './MonitoredEntitiesModal';
 import AlertEntitiesModal from './AlertEntitiesModal';
 import MyPreferencesModal from './MyPreferencesModal';
 import PreferencedEntitiesModal from './PreferencedEntitiesModal';
+import { getMusicAssistantPlayersByArea } from '../../utils/musicAssistantAreas';
 
 function SettingsView({
     areas = [],
+    /** Full HA area registry for labels (preferred over `areas` when present). */
+    registryAreas = [],
     entities = [],
     registryDevices = [],
     registryEntities = [],
@@ -26,6 +29,8 @@ function SettingsView({
     showPreferenceButton, // Prop from parent
     adminUrl, // From SecureStore profile
     onEntitiesChanged, // Called after monitored-entity changes so dashboard refreshes refs
+    /** Home Assistant `config_entries/get` entry_ids for domain `music_assistant` */
+    musicAssistantEntryIds = [],
 }) {
     const [activeTab, setActiveTab] = useState('general');
     const [selectedArea, setSelectedArea] = useState(null);
@@ -36,6 +41,18 @@ function SettingsView({
             setFaceIdEnabled(val === 'true');
         });
     }, []);
+
+    const musicAssistantByArea = useMemo(
+        () =>
+            getMusicAssistantPlayersByArea(
+                registryDevices,
+                registryEntities,
+                entities,
+                registryAreas?.length ? registryAreas : areas,
+                musicAssistantEntryIds
+            ),
+        [registryDevices, registryEntities, entities, areas, registryAreas, musicAssistantEntryIds]
+    );
 
     // Modals
     const [monitoredModalVisible, setMonitoredModalVisible] = useState(false);
@@ -447,6 +464,37 @@ function SettingsView({
                         trackColor={{ false: '#767577', true: Colors.primary }}
                         thumbColor={showPreferenceButton ? '#fff' : '#f4f3f4'}
                     />
+                </View>
+            </View>
+
+            <View style={styles.section}>
+                <Text style={styles.sectionHeader}>Music Assistant</Text>
+                <View style={styles.maAreaCard}>
+                    <View style={styles.maAreaCardHeader}>
+                        <Music size={18} color={Colors.primary} />
+                        <Text style={styles.maAreaCardTitle}>Players by Home Assistant area</Text>
+                    </View>
+                    <Text style={styles.maAreaCardHint}>
+                        Players are matched to Music Assistant via HA config entries (domain music_assistant), then grouped by entity/device area.
+                        If nothing appears, reload after HA connects so config_entries can load.
+                    </Text>
+                    {musicAssistantByArea.length === 0 ? (
+                        <Text style={styles.maAreaEmpty}>
+                            No Music Assistant media_player entities detected (registry platform music_assistant or state mass_player_type).
+                        </Text>
+                    ) : (
+                        musicAssistantByArea.map(g => (
+                            <View key={g.areaKey} style={styles.maAreaGroup}>
+                                <Text style={styles.maAreaName}>{g.areaName}</Text>
+                                {g.players.map(p => (
+                                    <Text key={p.entityId} style={styles.maPlayerLine} numberOfLines={2}>
+                                        {p.displayName}
+                                        <Text style={styles.maEntityIdSuffix}>{` · ${p.entityId}`}</Text>
+                                    </Text>
+                                ))}
+                            </View>
+                        ))
+                    )}
                 </View>
             </View>
 
@@ -1046,6 +1094,59 @@ const styles = StyleSheet.create({
         color: Colors.error,
         fontSize: 16,
         fontWeight: '600',
+    },
+    maAreaCard: {
+        marginHorizontal: 16,
+        marginBottom: 8,
+        padding: 16,
+        borderRadius: 14,
+        backgroundColor: 'rgba(255,255,255,0.04)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+    },
+    maAreaCardHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        marginBottom: 10,
+    },
+    maAreaCardTitle: {
+        color: Colors.text,
+        fontSize: 15,
+        fontWeight: '600',
+    },
+    maAreaCardHint: {
+        color: Colors.textDim,
+        fontSize: 12,
+        lineHeight: 18,
+        marginBottom: 12,
+    },
+    maAreaEmpty: {
+        color: Colors.textDim,
+        fontSize: 13,
+        lineHeight: 20,
+    },
+    maAreaGroup: {
+        marginTop: 12,
+        paddingTop: 12,
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: 'rgba(255,255,255,0.08)',
+    },
+    maAreaName: {
+        color: Colors.text,
+        fontSize: 15,
+        fontWeight: '600',
+        marginBottom: 6,
+    },
+    maPlayerLine: {
+        color: Colors.textDim,
+        fontSize: 13,
+        lineHeight: 20,
+        marginBottom: 4,
+    },
+    maEntityIdSuffix: {
+        color: 'rgba(255,255,255,0.35)',
+        fontSize: 12,
     },
 });
 

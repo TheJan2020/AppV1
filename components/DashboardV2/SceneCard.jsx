@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing } from 'react-native';
 import { Zap, Moon, Sun, LogOut, Home } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
 import { CF } from '../../utils/typography';
 import React, { useEffect, useRef } from 'react';
 
@@ -15,14 +16,44 @@ function getSceneIcon(name = '') {
 export default function SceneCard({ id, label, onPress, style }) {
     const Icon = getSceneIcon(label || '');
     const glowAnim = useRef(new Animated.Value(0)).current;
+    const scaleAnim = useRef(new Animated.Value(1)).current;
 
     useEffect(() => {
         return () => {
             glowAnim.stopAnimation();
+            scaleAnim.stopAnimation();
         };
-    }, [glowAnim]);
+    }, [glowAnim, scaleAnim]);
+
+    const playPressScale = () => {
+        scaleAnim.stopAnimation();
+        scaleAnim.setValue(1);
+        Animated.sequence([
+            Animated.timing(scaleAnim, {
+                toValue: 0.94,
+                duration: 70,
+                easing: Easing.out(Easing.cubic),
+                useNativeDriver: true,
+            }),
+            Animated.spring(scaleAnim, {
+                toValue: 1.045,
+                friction: 4,
+                tension: 420,
+                useNativeDriver: true,
+            }),
+            Animated.spring(scaleAnim, {
+                toValue: 1,
+                friction: 7,
+                tension: 320,
+                useNativeDriver: true,
+            }),
+        ]).start();
+    };
 
     const handlePress = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        playPressScale();
+
         glowAnim.stopAnimation();
         glowAnim.setValue(0);
         Animated.sequence([
@@ -80,18 +111,20 @@ export default function SceneCard({ id, label, onPress, style }) {
 
     return (
         <Animated.View style={glowContainerStyle}>
-            <TouchableOpacity
-                key={id}
-                style={[styles.card, style]}
-                onPress={handlePress}
-                activeOpacity={0.75}
-            >
-                <Animated.View pointerEvents="none" style={[styles.glowOverlay, glowOverlayStyle]} />
-                <View style={styles.iconContainer}>
-                    <Icon size={26} color="#8947ca" />
-                </View>
-                <Text style={styles.label} numberOfLines={1}>{label}</Text>
-            </TouchableOpacity>
+            <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
+                <TouchableOpacity
+                    key={id}
+                    style={[styles.card, style]}
+                    onPress={handlePress}
+                    activeOpacity={0.92}
+                >
+                    <Animated.View pointerEvents="none" style={[styles.glowOverlay, glowOverlayStyle]} />
+                    <View style={styles.iconContainer}>
+                        <Icon size={26} color="#8947ca" />
+                    </View>
+                    <Text style={styles.label} numberOfLines={1}>{label}</Text>
+                </TouchableOpacity>
+            </Animated.View>
         </Animated.View>
     );
 }

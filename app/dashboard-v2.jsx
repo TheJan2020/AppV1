@@ -193,6 +193,8 @@ export default function DashboardV2() {
     const [allowedQuickScenes, setAllowedQuickScenes] = useState([]);
     const [sensorMappings, setSensorMappings] = useState([]);
     const [coverMappings, setCoverMappings] = useState([]);
+    /** `entry_id`s from HA config_entries where domain is music_assistant — ties entities → MA without relying on state attrs */
+    const [musicAssistantEntryIds, setMusicAssistantEntryIds] = useState([]);
     // null = never configured (show all), [] = none selected, [...] = selected ids
     const [selectedLockIds, setSelectedLockIds] = useState(null);
     const [selectedCoverIds, setSelectedCoverIds] = useState(null);
@@ -497,7 +499,8 @@ export default function DashboardV2() {
                         service.current.getCategoryRegistry(),
                         service.current.getAreaRegistry(),
                         service.current.getFloorRegistry(),
-                    ]).then(([states, config, devices, regs, cats, areas, floors]) => {
+                        service.current.getConfigEntries().catch(() => []),
+                    ]).then(([states, config, devices, regs, cats, areas, floors, configEntries]) => {
                         // Batch all state updates — React 18 batches these automatically
                         setEntities(states || []);
                         if (config?.location_name) setCityName(config.location_name);
@@ -512,7 +515,11 @@ export default function DashboardV2() {
                         } else {
                             setRegistryFloors(floors || []);
                         }
-                        console.log(`[Dashboard] Loaded: ${(states||[]).length} states, ${(areas||[]).length} areas, ${(floors||[]).length} floors`);
+                        const maIds = (Array.isArray(configEntries) ? configEntries : [])
+                            .filter(e => e?.domain === 'music_assistant' && e?.entry_id)
+                            .map(e => e.entry_id);
+                        setMusicAssistantEntryIds(maIds);
+                        console.log(`[Dashboard] Loaded: ${(states||[]).length} states, ${(areas||[]).length} areas, ${(floors||[]).length} floors, Music Assistant config entries: ${maIds.length}`);
                     }).catch(e => console.log('[Dashboard] Initial load error:', e.message));
 
                 } else if (data.type === 'state_changed' && data.event && data.event.data) {
@@ -1331,7 +1338,7 @@ export default function DashboardV2() {
             });
 
             // Use the sophisticated helper with Sensor Mappings
-            const roomEntities = getRoomEntities(area, registryDevices, registryEntities, entities, sensorMappings, coverMappings, mediaMappings);
+            const roomEntities = getRoomEntities(area, registryDevices, registryEntities, entities, sensorMappings, coverMappings, mediaMappings, musicAssistantEntryIds);
 
             // Active Counts using processed entities
             const activeLights = roomEntities.lights.filter(l => l.stateObj.state === 'on').length;
@@ -1395,6 +1402,8 @@ export default function DashboardV2() {
         entities,
         sensorMappings,
         coverMappings,
+        mediaMappings,
+        musicAssistantEntryIds,
         savedRoomOrder
     ]);
 
@@ -2018,6 +2027,7 @@ export default function DashboardV2() {
             <View style={[{ flex: 1 }, activeTab !== 'settings' && { display: 'none' }]}>
                 {activeTab === 'settings' ? <SettingsView
                     areas={(badgeConfig?.selected_areas && badgeConfig.selected_areas.length > 0) ? badgeConfig.selected_areas : registryAreas}
+                    registryAreas={registryAreas}
                     entities={entities}
                     registryDevices={registryDevices}
                     registryEntities={registryEntities}
@@ -2030,6 +2040,7 @@ export default function DashboardV2() {
                     onSettingChange={handleSettingChange}
                     onNetwork={handleNetworkPress}
                     onEntitiesChanged={refreshEntityRefs}
+                    musicAssistantEntryIds={musicAssistantEntryIds}
                 /> : null}
             </View>
 
@@ -2061,6 +2072,13 @@ export default function DashboardV2() {
                     showPreferenceButton={showPreferenceButton}
                     sensorMappings={sensorMappings}
                     coverMappings={coverMappings}
+                    musicAssistantEntryIds={musicAssistantEntryIds}
+                    browseMedia={(entityId, mediaContentType, mediaContentId) =>
+                        service.current?.browseMedia?.(entityId, mediaContentType, mediaContentId)
+                    }
+                    callServiceWithResponse={(domain, serviceName, serviceData) =>
+                        service.current?.callService?.(domain, serviceName, serviceData, { returnResponse: true })
+                    }
                 />
             )}
 

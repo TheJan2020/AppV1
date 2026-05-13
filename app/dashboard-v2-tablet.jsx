@@ -169,6 +169,7 @@ export default function DashboardV2Tablet() {
     const [allowedQuickScenes, setAllowedQuickScenes] = useState([]);
     const [sensorMappings, setSensorMappings] = useState([]);
     const [coverMappings, setCoverMappings] = useState([]);
+    const [musicAssistantEntryIds, setMusicAssistantEntryIds] = useState([]);
 
     const mappingsAbortRef = useRef(null);
 
@@ -387,6 +388,12 @@ export default function DashboardV2Tablet() {
                             const sorted = floors.sort((a, b) => (a.level || 0) - (b.level || 0));
                             setSelectedFloor(sorted[0].floor_id);
                         }
+                    });
+                    service.current.getConfigEntries().catch(() => []).then(configEntries => {
+                        const maIds = (Array.isArray(configEntries) ? configEntries : [])
+                            .filter(e => e?.domain === 'music_assistant' && e?.entry_id)
+                            .map(e => e.entry_id);
+                        setMusicAssistantEntryIds(maIds);
                     });
 
                 } else if (data.type === 'state_changed' && data.event && data.event.data) {
@@ -823,7 +830,7 @@ export default function DashboardV2Tablet() {
             });
 
             // Use the sophisticated helper with Sensor Mappings
-            const roomEntities = getRoomEntities(area, registryDevices, registryEntities, entities, sensorMappings, coverMappings, mediaMappings);
+            const roomEntities = getRoomEntities(area, registryDevices, registryEntities, entities, sensorMappings, coverMappings, mediaMappings, musicAssistantEntryIds);
 
             // Active Counts using processed entities
             const activeLights = roomEntities.lights.filter(l => l.stateObj.state === 'on').length;
@@ -887,6 +894,8 @@ export default function DashboardV2Tablet() {
         entities,
         sensorMappings,
         coverMappings,
+        mediaMappings,
+        musicAssistantEntryIds,
         savedRoomOrder
     ]);
 
@@ -1307,6 +1316,7 @@ export default function DashboardV2Tablet() {
                 <View style={[{ flex: 1 }, isLandscape && sidebarPadding]}>
                     <SettingsView
                         areas={(badgeConfig?.selected_areas && badgeConfig.selected_areas.length > 0) ? badgeConfig.selected_areas : registryAreas}
+                        registryAreas={registryAreas}
                         entities={entities}
                         registryDevices={registryDevices}
                         registryEntities={registryEntities}
@@ -1324,6 +1334,7 @@ export default function DashboardV2Tablet() {
                             if (key === 'showPreferenceButton') setShowPreferenceButton(val);
                         }}
                         onNetwork={() => setShowNetworkModal(true)}
+                        musicAssistantEntryIds={musicAssistantEntryIds}
                     />
                 </View>
             );
@@ -1436,6 +1447,13 @@ export default function DashboardV2Tablet() {
                     showPreferenceButton={showPreferenceButton}
                     sensorMappings={sensorMappings}
                     coverMappings={coverMappings}
+                    musicAssistantEntryIds={musicAssistantEntryIds}
+                    browseMedia={(entityId, mediaContentType, mediaContentId) =>
+                        service.current?.browseMedia?.(entityId, mediaContentType, mediaContentId)
+                    }
+                    callServiceWithResponse={(domain, serviceName, serviceData) =>
+                        service.current?.callService?.(domain, serviceName, serviceData, { returnResponse: true })
+                    }
                 />
             )}
 

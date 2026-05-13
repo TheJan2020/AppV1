@@ -7,10 +7,18 @@ import RoomDetailView from '../components/DashboardV2/RoomDetailView';
 import { getRoomEntities } from '../utils/roomHelpers';
 import { StatusBar } from 'expo-status-bar';
 
+/** Expo Router may pass repeated query keys as string[]. Normalize for area matching. */
+const paramString = (v) => {
+    if (v == null) return '';
+    return Array.isArray(v) ? (v[0] ?? '') : String(v);
+};
+
 export default function RoomPage() {
     const params = useLocalSearchParams();
     const router = useRouter();
-    const { area_id, name, picture } = params;
+    const area_id = paramString(params.area_id);
+    const name = paramString(params.name);
+    const picture = paramString(params.picture);
 
     // We need to re-fetch state here or pass it?
     // Passing large state via params is bad. Better to re-subscribe or use a global store.
@@ -21,6 +29,7 @@ export default function RoomPage() {
     // Here we duplicate the HAService logic for isolation as requested by "new page".
 
     const [entities, setEntities] = useState([]);
+    const [musicAssistantEntryIds, setMusicAssistantEntryIds] = useState([]);
     const [registryDevices, setRegistryDevices] = useState([]);
     const [registryEntities, setRegistryEntities] = useState([]);
     const [lightMappings, setLightMappings] = useState([]);
@@ -76,7 +85,11 @@ export default function RoomPage() {
     useEffect(() => {
         if (!connectionConfig.loaded) return;
         const { url, token } = connectionConfig;
-        if (!url || !token) return;
+
+        if (!url || !token) {
+            setLoading(false);
+            return;
+        }
 
         service.current = new HAService(url, token);
         service.current.connect();
@@ -86,13 +99,24 @@ export default function RoomPage() {
                 Promise.all([
                     service.current.getStates(),
                     service.current.getDeviceRegistry(),
-                    service.current.getEntityRegistry()
-                ]).then(([states, devices, regs]) => {
+                    service.current.getEntityRegistry(),
+                    service.current.getConfigEntries().catch(() => []),
+                ]).then(([states, devices, regs, configEntries]) => {
                     setEntities(states || []);
                     setRegistryDevices(devices || []);
                     setRegistryEntities(regs || []);
+                    const maIds = (Array.isArray(configEntries) ? configEntries : [])
+                        .filter(e => e?.domain === 'music_assistant' && e?.entry_id)
+                        .map(e => e.entry_id);
+                    setMusicAssistantEntryIds(maIds);
+                    setLoading(false);
+                }).catch((e) => {
+                    console.log('[RoomPage] Failed to load states/registries:', e);
                     setLoading(false);
                 });
+            } else if (data.type === 'auth_failed') {
+                console.log('[RoomPage] HA auth failed:', data.message);
+                setLoading(false);
             } else if (data.type === 'state_changed' && data.event) {
                 const newEvent = data.event.data.new_state;
                 setEntities(prev => {
@@ -116,7 +140,7 @@ export default function RoomPage() {
                 }
             }
         };
-    }, [connectionConfig.loaded]);
+    }, [connectionConfig.loaded, connectionConfig.url, connectionConfig.token]);
 
     // Fetch Light Mappings
     useEffect(() => {
@@ -148,7 +172,7 @@ export default function RoomPage() {
     }
 
     const room = { area_id, name, picture };
-    const { lights, fans, climates, covers, medias, cameras, sensors, doors, switches, automations, scripts } = getRoomEntities(room, registryDevices, registryEntities, entities, [], [], []);
+    const { lights, fans, climates, covers, medias, musicMedias, cameras, sensors, doors, switches, automations, scripts } = getRoomEntities(room, registryDevices, registryEntities, entities, [], [], [], musicAssistantEntryIds);
 
     return (
         <View style={{ flex: 1, backgroundColor: '#000' }}>
@@ -161,6 +185,7 @@ export default function RoomPage() {
                 covers={covers}
                 climates={climates}
                 medias={medias}
+                musicMedias={musicMedias}
                 cameras={cameras}
                 sensors={sensors}
                 doors={doors}
@@ -176,6 +201,13 @@ export default function RoomPage() {
                 haUrl={connectionConfig.url}
                 haToken={connectionConfig.token}
                 showPreferenceButton={showPreferenceButton}
+                musicAssistantEntryIds={musicAssistantEntryIds}
+                browseMedia={(entityId, mediaContentType, mediaContentId) =>
+                    service.current?.browseMedia?.(entityId, mediaContentType, mediaContentId)
+                }
+                callServiceWithResponse={(domain, serviceName, serviceData) =>
+                    service.current?.callService?.(domain, serviceName, serviceData, { returnResponse: true })
+                }
             />
         </View>
     );

@@ -14,6 +14,7 @@ import LightControlModal from './LightControlModal';
 import ClimateCard from './ClimateCard';
 import CoverCard from './CoverCard';
 import MediaCard from './MediaCard';
+import MusicMediaCard from './MusicMediaCard';
 import HACamerasList from './HACamerasList';
 import RoomClimateChart from './RoomClimateChart';
 import ActivatePreferencesButton from './ActivatePreferencesButton';
@@ -328,6 +329,7 @@ export default function RoomDetailView({
     covers = [],
     climates = [],
     medias = [],
+    musicMedias = [],
     cameras = [],
     sensors = [],
     allEntities = [],
@@ -345,7 +347,10 @@ export default function RoomDetailView({
     adminUrl,
     haUrl,
     haToken,
-    showPreferenceButton = true
+    showPreferenceButton = true,
+    musicAssistantEntryIds = [],
+    browseMedia,
+    callServiceWithResponse,
 }) {
     const cardWidth = columns > 2 ? `${Math.floor(100 / columns) - 2}%` : '48%';
     const [selectedLight, setSelectedLight] = useState(null);
@@ -841,8 +846,8 @@ export default function RoomDetailView({
                         </View>
                     )}
 
-                    {/* ── 7. Media — TV players only (`getRoomEntities` filters non-TV media_player) ── */}
-                    {medias.length > 0 && (() => {
+                    {/* ── 7. Media — TV (`medias`) + music/speakers (`musicMedias` from `getRoomEntities`) ── */}
+                    {(medias.length > 0 || musicMedias.length > 0) && (() => {
                         const rootRows = medias
                             .filter(m => {
                                 const map = mediaMappings.find(x => x.entity_id === m.entity_id);
@@ -857,7 +862,21 @@ export default function RoomDetailView({
                                 return { media, mapping: map, children };
                             });
 
-                        if (rootRows.length === 0) return null;
+                        const musicRoots = musicMedias
+                            .filter(m => {
+                                const map = mediaMappings.find(x => x.entity_id === m.entity_id);
+                                return !map || !map.parentId;
+                            })
+                            .map(media => {
+                                const map = mediaMappings.find(x => x.entity_id === media.entity_id);
+                                const children = musicMedias.filter(c => {
+                                    const cm = mediaMappings.find(x => x.entity_id === c.entity_id);
+                                    return cm && cm.parentId === media.entity_id;
+                                });
+                                return { media, mapping: map, children };
+                            });
+
+                        if (rootRows.length === 0 && musicRoots.length === 0) return null;
 
                         return (
                             <View style={{ marginBottom: 20, marginTop: 12 }}>
@@ -890,6 +909,29 @@ export default function RoomDetailView({
                                                 haToken={haToken}
                                                 onShowSourceOverlay={setSourceOverlay}
                                                 onShowVolumeOverlay={setVolumeOverlay}
+                                            />
+                                        ))}
+                                        {musicRoots.map(row => (
+                                            <MusicMediaCard
+                                                key={row.media.entity_id}
+                                                player={row.media}
+                                                childPlayers={row.children}
+                                                speakerPeers={musicMedias.filter(
+                                                    m => m.entity_id !== row.media.entity_id
+                                                )}
+                                                mapping={row.mapping}
+                                                mediaMappings={mediaMappings}
+                                                needsChange={checkNeedsChange(row.media.entity_id)}
+                                                onUpdate={(id, domain, service, data) => {
+                                                    if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
+                                                }}
+                                                adminUrl={adminUrl}
+                                                haUrl={haUrl}
+                                                haToken={haToken}
+                                                onShowSourceOverlay={setSourceOverlay}
+                                                musicAssistantEntryIds={musicAssistantEntryIds}
+                                                browseMedia={browseMedia}
+                                                callServiceWithResponse={callServiceWithResponse}
                                             />
                                         ))}
                                     </View>
@@ -985,7 +1027,7 @@ export default function RoomDetailView({
                 <View style={styles.fullOverlay}>
                     <TouchableOpacity style={styles.fullOverlayBg} onPress={() => setSourceOverlay(null)} />
                     <View style={styles.overlayContent}>
-                        <Text style={styles.overlayTitle}>Select Source</Text>
+                        <Text style={styles.overlayTitle}>{sourceOverlay.title || 'Select Source'}</Text>
                         <ScrollView style={{ maxHeight: 300 }}>
                             {sourceOverlay.sourceList?.map((s) => (
                                 <TouchableOpacity

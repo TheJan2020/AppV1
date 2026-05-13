@@ -31,8 +31,10 @@ const APP_ROW_HEIGHT = 68;
 const APP_COL_GAP = 12;
 const PROGRESS_FILL = '#00C2FF';
 const TRACK_BG = '#2A2A40';
-/** 90deg — all control buttons: #0066A7 → #0086CC */
+/** 90deg — D-pad, remote circles, volume pill (Figma system blues) */
 const BTN_GRADIENT = ['#0066A7', '#0086CC'];
+/** 90deg — primary play / pause disc (TV + music; matches Figma) */
+const PLAY_BTN_GRADIENT = ['#245072', '#187FB2'];
 const BTN_GRADIENT_START = { x: 0, y: 0.5 };
 const BTN_GRADIENT_END = { x: 1, y: 0.5 };
 const ICON_STROKE = 2;
@@ -303,14 +305,20 @@ export default function MediaCard({
         });
     };
 
-    /** App shortcut grid (HA `source_list`) — 2×4 slots, design height per tile */
+    /** App shortcut grid (HA `source_list`) — 2 columns; only real apps (no empty placeholder rows). */
     const APP_GRID_SLOTS = 8;
     const allAppSources = Array.isArray(source_list) ? source_list.filter(Boolean) : [];
     const effectiveSelectedApps = selectedAppSources.filter(app => allAppSources.includes(app));
     const appGridSources = (() => {
         const list = (appsConfigLoaded && effectiveSelectedApps.length > 0) ? [...effectiveSelectedApps] : [...allAppSources];
-        while (list.length < APP_GRID_SLOTS) list.push(null);
-        return list.slice(0, APP_GRID_SLOTS);
+        return list.filter(Boolean).slice(0, APP_GRID_SLOTS);
+    })();
+    const appGridRows = (() => {
+        const rows = [];
+        for (let i = 0; i < appGridSources.length; i += 2) {
+            rows.push(appGridSources.slice(i, i + 2));
+        }
+        return rows;
     })();
 
     const toggleAppInSelection = app => {
@@ -418,7 +426,7 @@ export default function MediaCard({
                                 activeOpacity={0.85}
                             >
                                 <LinearGradient
-                                    colors={BTN_GRADIENT}
+                                    colors={PLAY_BTN_GRADIENT}
                                     start={BTN_GRADIENT_START}
                                     end={BTN_GRADIENT_END}
                                     style={styles.playBtn}
@@ -497,7 +505,7 @@ export default function MediaCard({
                             </RemoteCircleBtn>
                             <View style={styles.expandedColMidGap} />
                             <View style={styles.expandedStackInCol}>
-                                <RemoteCircleBtn onPress={handlePlayPause}>
+                                <RemoteCircleBtn onPress={handlePlayPause} gradientColors={PLAY_BTN_GRADIENT}>
                                     {['playing', 'buffering'].includes(targetState) ? (
                                         <Pause size={24} color="#fff" fill="#fff" stroke="#fff" strokeWidth={2} />
                                     ) : (
@@ -544,7 +552,7 @@ export default function MediaCard({
                         </View>
                     </View>
 
-                    {appGridSources.some(Boolean) && (
+                    {appGridSources.length > 0 && (
                         <>
                             <View style={styles.appGridHeader}>
                                 <Text style={styles.appGridHeading}>Apps</Text>
@@ -553,23 +561,21 @@ export default function MediaCard({
                                 </TouchableOpacity>
                             </View>
                             <View style={styles.appGrid}>
-                                {[0, 2, 4, 6].map(rowStart => (
-                                    <View key={`row-${rowStart}`} style={styles.appGridRow}>
-                                        {appGridSources.slice(rowStart, rowStart + 2).map((srcName, j) => (
+                                {appGridRows.map((row, rowIdx) => (
+                                    <View key={`app-row-${rowIdx}`} style={styles.appGridRow}>
+                                        {row.map(srcName => (
                                             <TouchableOpacity
-                                                key={srcName || `empty-${rowStart + j}`}
-                                                style={[styles.appGridCellWide, !srcName && styles.appGridCellWideEmpty]}
-                                                onPress={() => srcName && handleSourceSelect(srcName)}
-                                                disabled={!srcName}
-                                                activeOpacity={srcName ? 0.85 : 1}
+                                                key={srcName}
+                                                style={styles.appGridCellWide}
+                                                onPress={() => handleSourceSelect(srcName)}
+                                                activeOpacity={0.85}
                                             >
-                                                {srcName ? (
-                                                    <Text style={styles.appGridLabel} numberOfLines={1}>
-                                                        {srcName}
-                                                    </Text>
-                                                ) : null}
+                                                <Text style={styles.appGridLabel} numberOfLines={1}>
+                                                    {srcName}
+                                                </Text>
                                             </TouchableOpacity>
                                         ))}
+                                        {row.length === 1 ? <View style={styles.appGridCellSpacer} /> : null}
                                     </View>
                                 ))}
                             </View>
@@ -647,11 +653,11 @@ export default function MediaCard({
     );
 }
 
-function RemoteCircleBtn({ onPress, children }) {
+function RemoteCircleBtn({ onPress, children, gradientColors = BTN_GRADIENT }) {
     return (
         <TouchableOpacity style={styles.remoteCircleBtnFigma} onPress={onPress} activeOpacity={0.88}>
             <LinearGradient
-                colors={BTN_GRADIENT}
+                colors={gradientColors}
                 start={BTN_GRADIENT_START}
                 end={BTN_GRADIENT_END}
                 style={styles.remoteCircleGradientFill}
@@ -797,7 +803,7 @@ const styles = StyleSheet.create({
     },
     playBtnWrap: {
         marginHorizontal: 4,
-        shadowColor: '#0086CC',
+        shadowColor: '#187FB2',
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.4,
         shadowRadius: 12,
@@ -998,9 +1004,10 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         paddingHorizontal: 10,
     },
-    appGridCellWideEmpty: {
-        opacity: 0.28,
-        borderColor: 'rgba(255,255,255,0.06)',
+    /** Balances the row when there is a single app (keeps pill half-width like two-column layout). */
+    appGridCellSpacer: {
+        flex: 1,
+        minWidth: 0,
     },
     appGridLabel: {
         color: '#fff',
