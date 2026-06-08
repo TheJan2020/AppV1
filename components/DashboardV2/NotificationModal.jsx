@@ -4,6 +4,7 @@ import {
     ScrollView, Pressable,
 } from 'react-native';
 import { X, Bell, Lock, Thermometer, Camera, Zap, DoorOpen, Shield, Sun } from 'lucide-react-native';
+import { Heading } from '../../utils/typography';
 
 // ── Icon config per notification category ──────────────────────────────────
 const CATEGORY_CONFIG = {
@@ -178,8 +179,7 @@ const styles = StyleSheet.create({
         paddingBottom: 14,
     },
     headerTitle: {
-        fontSize: 17,
-        fontWeight: '700',
+        ...Heading.md17,
         color: '#ededf5',
         letterSpacing: -0.2,
     },

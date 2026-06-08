@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
+    "buffer": "^6.0.3",
     "expo": "~54.0.32",
     "expo-application": "~7.0.8",
     "expo-av": "~16.0.8",
@@ -26,6 +27,7 @@
     "expo-local-authentication": "~17.0.8",
     "expo-network": "~8.0.8",
     "expo-notifications": "~0.32.16",
+    "expo-pcm-player": "file:./modules/expo-pcm-player",
     "expo-router": "~6.0.21",
     "expo-screen-orientation": "~9.0.8",
     "expo-secure-store": "~15.0.8",
@@ -39,6 +41,7 @@
     "react-native-chart-kit": "^6.12.0",
     "react-native-draggable-flatlist": "^4.0.3",
     "react-native-gesture-handler": "~2.28.0",
+    "react-native-live-audio-stream": "^1.1.1",
     "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
@@ -48,6 +51,11 @@
     "react-native-worklets": "^0.5.1"
   },
   "private": true,
+  "expo": {
+    "autolinking": {
+      "searchPaths": ["./modules"]
+    }
+  },
   "devDependencies": {
     "babel-preset-expo": "^54.0.9"
   }

@@ -107,7 +107,6 @@ const styles = StyleSheet.create({
         height: 100, // Fixed height to prevent layout jumps
     },
     scroll: {
-        paddingHorizontal: 20,
         gap: 20,
         alignItems: 'center'
     },

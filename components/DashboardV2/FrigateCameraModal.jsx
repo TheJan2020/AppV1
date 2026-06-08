@@ -1,10 +1,12 @@
 import { Modal, View, Text, StyleSheet, TouchableOpacity, FlatList, Image, ActivityIndicator, ScrollView } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { X, User, Car, Dog, AlertTriangle, Clock, Video } from 'lucide-react-native';
+import { X, User, Car, Dog, AlertTriangle, Clock, Play } from 'lucide-react-native';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CF } from '../../utils/typography';
 import CameraSensorOverlay, { isSensorActive, buildEntityMap, resolveSensorIds } from './CameraSensorOverlay';
+import { dedupeEventsById, paginationBeforeCursor } from '../../utils/frigateEvents';
+import FrigateEventPlayerModal from './FrigateEventPlayerModal';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -49,16 +51,15 @@ function labelColor(label) {
 
 // ── Event Card ────────────────────────────────────────────────────────────────
 
-function EventCard({ event, adminUrl, authHeaders }) {
+function EventCard({ event, adminUrl, authHeaders, onPress }) {
     const [thumbError, setThumbError] = useState(false);
     const thumbUrl = `${adminUrl}/api/frigate/events/${event.id}/thumbnail`;
     const color = labelColor(event.label);
     const score = event.data?.top_score ?? event.top_score;
     const scoreText = score ? `${Math.round(score * 100)}%` : null;
 
-    return (
+    const card = (
         <View style={styles.card}>
-            {/* Thumbnail */}
             <View style={styles.thumb}>
                 {thumbError ? (
                     <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
@@ -81,14 +82,11 @@ function EventCard({ event, adminUrl, authHeaders }) {
                     <Text style={styles.labelText}>{event.label || 'unknown'}</Text>
                     {scoreText && <Text style={styles.scoreText}>{scoreText}</Text>}
                 </View>
-                {event.has_clip && (
-                    <View style={styles.clipBadge}>
-                        <Video size={10} color="#fff" />
-                    </View>
-                )}
+                <View style={styles.playBadge}>
+                    <Play size={14} color="#fff" fill="#fff" />
+                </View>
             </View>
 
-            {/* Info */}
             <View style={styles.info}>
                 <Text style={styles.cameraName} numberOfLines={1}>{event.camera}</Text>
                 <View style={styles.timeRow}>
@@ -98,6 +96,14 @@ function EventCard({ event, adminUrl, authHeaders }) {
                 <Text style={styles.agoText}>{timeAgo(event.start_time)}</Text>
             </View>
         </View>
+    );
+
+    if (!onPress) return card;
+
+    return (
+        <TouchableOpacity activeOpacity={0.85} onPress={() => onPress(event)}>
+            {card}
+        </TouchableOpacity>
     );
 }
 
@@ -141,6 +147,14 @@ export default function FrigateCameraModal({ visible, camera, service, onClose, 
     const [selectedLabel, setSelectedLabel] = useState(null);
     const [availableLabels, setAvailableLabels] = useState([]);
     const [hasMore, setHasMore] = useState(true);
+    const [selectedEvent, setSelectedEvent] = useState(null);
+
+    const eventsRef = useRef([]);
+    eventsRef.current = events;
+    const beforeRef = useRef(null);
+    const loadMoreLockRef = useRef(false);
+    const dedupeTrackerRef = useRef({ seenIds: new Set(), seenFingerprints: new Set() });
+    const fetchGenRef = useRef(0);
 
     const ready = !!camera && !!service;
 
@@ -167,24 +181,42 @@ export default function FrigateCameraModal({ visible, camera, service, onClose, 
 
     const fetchEvents = async (loadMore = false) => {
         if (!ready) return;
+        const gen = fetchGenRef.current;
         try {
             loadMore ? setLoadingMore(true) : setLoadingEvents(true);
-            const options = { camera: camera.name, limit: loadMore ? 20 : 10 };
+            const limit = loadMore ? 20 : 12;
+            const options = { camera: camera.name, limit, include_thumbnails: 0 };
             if (selectedLabel) options.label = selectedLabel;
-            if (loadMore && events.length > 0) {
-                const last = Number(events[events.length - 1].start_time);
-                if (!isNaN(last)) options.before = last - 0.001;
+            if (loadMore && beforeRef.current != null) {
+                options.before = beforeRef.current;
             }
             const data = await service.getEvents(options);
-            const newEvents = Array.isArray(data) ? data : [];
-            setEvents(prev => loadMore ? [...prev, ...newEvents] : newEvents);
+            if (gen !== fetchGenRef.current) return;
+
+            const page = Array.isArray(data) ? data : [];
+            const tracker = dedupeTrackerRef.current;
+            if (!loadMore) {
+                tracker.seenIds = new Set();
+                tracker.seenFingerprints = new Set();
+            }
+            const incoming = dedupeEventsById(page, tracker.seenIds, tracker.seenFingerprints);
+
+            setEvents(prev => (loadMore ? [...prev, ...incoming] : incoming));
             if (!loadMore) setEventsLoaded(true);
-            setHasMore(newEvents.length === options.limit);
+            setHasMore(page.length >= limit);
+            if (page.length > 0) {
+                beforeRef.current = paginationBeforeCursor(page[page.length - 1]);
+            }
+            if (loadMore && incoming.length === 0 && page.length >= limit) {
+                setHasMore(false);
+            }
         } catch {
-            if (!loadMore) setEvents([]);
+            if (gen === fetchGenRef.current && !loadMore) setEvents([]);
         } finally {
-            setLoadingEvents(false);
-            setLoadingMore(false);
+            if (gen === fetchGenRef.current) {
+                setLoadingEvents(false);
+                setLoadingMore(false);
+            }
         }
     };
 
@@ -192,14 +224,19 @@ export default function FrigateCameraModal({ visible, camera, service, onClose, 
         if (!visible || !ready) {
             setEvents([]);
             setSelectedLabel(null);
+            setSelectedEvent(null);
             setHasMore(true);
             setEventsLoaded(false);
             return;
         }
-        // Initial fetch: small page to show results quickly
-        if (!eventsLoaded) fetchEvents(false);
+        fetchGenRef.current += 1;
+        beforeRef.current = null;
+        dedupeTrackerRef.current = { seenIds: new Set(), seenFingerprints: new Set() };
+        setEventsLoaded(false);
+        setEvents([]);
+        fetchEvents(false);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [visible, camera?.name, service?.baseUrl, selectedLabel, eventsLoaded]);
+    }, [visible, camera?.name, service?.baseUrl, selectedLabel]);
 
     const labelPills = [
         { value: null, label: 'All' },
@@ -253,6 +290,13 @@ export default function FrigateCameraModal({ visible, camera, service, onClose, 
 
     return (
         <Modal animationType="slide" transparent={false} visible={visible} onRequestClose={onClose}>
+            <FrigateEventPlayerModal
+                visible={!!selectedEvent}
+                event={selectedEvent}
+                adminUrl={service?.adminUrl}
+                authHeaders={service?.headers || {}}
+                onClose={() => setSelectedEvent(null)}
+            />
             <View style={styles.container}>
                 <View style={styles.header}>
                     <Text style={styles.title}>{camera?.name ?? 'Camera'}</Text>
@@ -271,12 +315,13 @@ export default function FrigateCameraModal({ visible, camera, service, onClose, 
 
                 <FlatList
                     data={events}
-                    keyExtractor={(item, index) => item.id ? `${item.id}-${index}` : String(index)}
+                    keyExtractor={(item) => String(item.id)}
                     renderItem={({ item }) => (
                         <EventCard
                             event={item}
                             adminUrl={service?.adminUrl}
                             authHeaders={service?.headers}
+                            onPress={setSelectedEvent}
                         />
                     )}
                     numColumns={2}
@@ -284,8 +329,16 @@ export default function FrigateCameraModal({ visible, camera, service, onClose, 
                     ListHeaderComponent={ListHeader}
                     contentContainerStyle={styles.listContent}
                     showsVerticalScrollIndicator={false}
-                    onEndReached={() => hasMore && !loadingMore && fetchEvents(true)}
+                    onEndReached={() => {
+                        if (loadMoreLockRef.current || !hasMore || loadingMore || loadingEvents) return;
+                        loadMoreLockRef.current = true;
+                        fetchEvents(true).finally(() => { loadMoreLockRef.current = false; });
+                    }}
                     onEndReachedThreshold={0.4}
+                    initialNumToRender={6}
+                    maxToRenderPerBatch={8}
+                    windowSize={7}
+                    removeClippedSubviews
                     ListFooterComponent={
                         loadingMore ? (
                             <View style={styles.loadMoreWrap}>
@@ -426,13 +479,20 @@ const styles = StyleSheet.create({
         fontSize: 9,
         fontFamily: CF.regular,
     },
-    clipBadge: {
+    playBadge: {
         position: 'absolute',
-        top: 5,
-        right: 5,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        borderRadius: 4,
-        padding: 3,
+        top: '50%',
+        left: '50%',
+        marginTop: -16,
+        marginLeft: -16,
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: 'rgba(0,0,0,0.55)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.25)',
     },
     info: {
         padding: 8,

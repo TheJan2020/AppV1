@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, memo } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Keyboard, Image } from 'react-native';
 import { Colors } from '../../constants/Colors';
+import { Heading, CF } from '../../utils/typography';
 import { Send, Bot, User as UserIcon, Mic, Volume2, VolumeX, ChevronLeft } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { AIService } from '../../services/ai';
@@ -505,8 +506,7 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     title: {
-        fontSize: 22,
-        fontWeight: 'bold',
+        ...Heading.lg,
         color: '#fff',
     },
     chatContent: {
@@ -562,7 +562,7 @@ const styles = StyleSheet.create({
     aiAvatarText: {
         color: '#fff',
         fontSize: 11,
-        fontWeight: '700',
+        fontFamily: CF.bold,
         letterSpacing: 0.5,
     },
     bubbleWrapper: {
@@ -680,7 +680,7 @@ const styles = StyleSheet.create({
     },
     cancelText: {
         color: '#ff4444',
-        fontWeight: 'bold'
+        fontFamily: CF.bold,
     },
     audioToggle: {
         padding: 8
@@ -699,8 +699,8 @@ const styles = StyleSheet.create({
     exitText: {
         color: 'rgba(255,255,255,0.5)',
         fontSize: 14,
-        fontWeight: '500'
-    }
+        fontFamily: CF.medium,
+    },
 });
 
 export default memo(BrainView);

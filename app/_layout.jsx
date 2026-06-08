@@ -13,6 +13,9 @@ import { NotifContext } from '../services/NotifContext';
 
 LogBox.ignoreLogs([
     "It looks like you might be using shared value's .value",
+    /\[Mappings\]/,
+    /\[Cameras\]/,
+    /\[Config\]/,
 ]);
 
 // Polyfill console.warn to suppress terminal spam

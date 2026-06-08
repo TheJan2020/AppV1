@@ -117,6 +117,8 @@ export const getRoomEntities = (
             displayName: reg.name || reg.original_name || stateObj?.attributes?.friendly_name || reg.entity_id,
             sensorType: mapping?.sensorType || null,
             coverType: coverMapping?.coverType || null,
+            coverLayer: coverMapping?.coverLayer || null,
+            windowId: coverMapping?.windowId || null,
             linkedSensorId: coverMapping?.linkedSensorId || null
         };
     };

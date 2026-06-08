@@ -21,6 +21,7 @@ import {
 import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { X } from 'lucide-react-native';
+import ModalBackdrop from '../ModalBackdrop';
 import { CF } from '../../utils/typography';
 
 // ── Category → accent colour (used for gradient tint only, no icon) ───────────
@@ -87,7 +88,8 @@ function AlertNotificationModal({ visible, title, body, category = 'default', ti
         >
             {/* Backdrop blur */}
             <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
-            <View style={styles.overlay}>
+            <ModalBackdrop onPress={handleDismiss} />
+            <View style={styles.overlay} pointerEvents="box-none">
                 <Animated.View style={[styles.card, { transform: [{ scale: scaleAnim }], opacity: opacityAnim }]}>
                     {/* Gradient tint — colour follows category */}
                     <LinearGradient

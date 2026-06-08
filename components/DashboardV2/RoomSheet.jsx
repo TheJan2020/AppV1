@@ -21,9 +21,12 @@ export default function RoomSheet({
     showPreferenceButton = true,
     sensorMappings = [],
     coverMappings = [],
+    coverWindows = [],
     musicAssistantEntryIds = [],
     browseMedia,
     callServiceWithResponse,
+    systemHealthBanner = null,
+    canControlHa = true,
 }) {
     if (!room) return null;
 
@@ -63,9 +66,14 @@ export default function RoomSheet({
                         haUrl={haUrl}
                         haToken={haToken}
                         showPreferenceButton={showPreferenceButton}
+                        sensorMappings={sensorMappings}
+                        coverMappings={coverMappings}
+                        coverWindows={coverWindows}
                         musicAssistantEntryIds={musicAssistantEntryIds}
                         browseMedia={browseMedia}
                         callServiceWithResponse={callServiceWithResponse}
+                        systemHealthBanner={systemHealthBanner}
+                        canControlHa={canControlHa}
                     />
                 </GestureHandlerRootView>
             </View>

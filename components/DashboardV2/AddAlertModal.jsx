@@ -4,6 +4,7 @@ import { X, ArrowRight, Check, Search, Save } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
 import { useState, useEffect } from 'react';
 import { authFetch } from '../../utils/authFetch';
+import ModalBackdrop from '../ModalBackdrop';
 
 export default function AddAlertModal({ visible, onClose, onSuccess, initialRule = null, adminUrl }) {
     const [step, setStep] = useState(1);
@@ -199,6 +200,7 @@ export default function AddAlertModal({ visible, onClose, onSuccess, initialRule
         >
             <View style={styles.overlay}>
                 <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+                <ModalBackdrop onPress={onClose} />
                 <View style={[styles.contentContainer, { height: step === 1 ? '85%' : '75%' }]}>
                     <View style={styles.header}>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn}>

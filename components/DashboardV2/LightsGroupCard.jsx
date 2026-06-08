@@ -2,7 +2,7 @@
  * LightsGroupCard  (v2 – fully rewritten)
  * ────────────────────────────────────────
  * Collapsed  → header + adaptive dots row + master-brightness slider + chevron
- * Expanded   → 2-column grid of ExpandedLightCard with capability borders
+ * Expanded   → CCT/RGB master sliders (if supported) + 2-column grid of ExpandedLightCard
  *
  * Figma-exact border colours:
  *   CCT   → linear-gradient(90deg, #FFE95F 0%, #FFFFFF 49%, #7FB2FF 100%)
@@ -11,21 +11,105 @@
  *   Off   → solid #606060
  */
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
-    View, Text, StyleSheet, TouchableOpacity,
+    View, Text, StyleSheet, TouchableOpacity, Image,
     PanResponder, LayoutAnimation, Platform, UIManager, Animated,
+    useWindowDimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Lightbulb, Power, ChevronDown, ChevronUp, Bookmark, BookmarkCheck, Zap, Sun } from 'lucide-react-native';
+import { Power, ChevronDown, ChevronUp, Bookmark, BookmarkCheck, Zap, Sun } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { SvgUri } from 'react-native-svg';
 import * as SecureStore from 'expo-secure-store';
 import { getAdminUrl } from '../../utils/storage';
+import { Heading } from '../../utils/typography';
 import LightControlModal from './LightControlModal';
+import SmoothSlider, { SMOOTH_SLIDER_THUMB as THUMB, SMOOTH_SLIDER_TRACK as TRACK } from './SmoothSlider';
+import RoomGroupIconButton from './RoomGroupIconButton';
+
+const LIGHTS_MASTER_ICON = require('../../assets/ligth_new_icon.png');
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
+/** Match RoomDetailView display names — DB `room_name` may use slug or Title Case */
+function labelizeRoomSlug(name = '') {
+    if (!name) return '';
+    const t = name.trim();
+    if (t.includes(' ')) return t;
+    return t.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Try every variant when loading `/api/light-scenes` (avoids missing rows after renames / param drift) */
+function collectRoomNameLookupKeys(roomName) {
+    if (!roomName) return [];
+    const raw = roomName.trim();
+    const keys = [];
+    const add = (k) => {
+        const x = (k || '').trim();
+        if (x && !keys.includes(x)) keys.push(x);
+    };
+    add(raw);
+    add(labelizeRoomSlug(raw));
+    add(raw.toLowerCase().replace(/\s+/g, '_'));
+    return keys;
+}
+
+/** True if rgb arrays match within small tolerance (HA rounding). */
+function rgbNearEqual(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== 3 || b.length !== 3) return false;
+    return a.every((v, i) => Math.abs(v - b[i]) <= 3);
+}
+
+/**
+ * True when live states match the bookmarked scene (no Restore needed).
+ * Bookmark only stores lights that were ON; all other controllable lights should be OFF.
+ */
+function liveMatchesSavedScene(savedScene, lights, isMasterController, getCap) {
+    if (!Array.isArray(savedScene) || !savedScene.length) return true;
+
+    const controllable = lights.filter(l =>
+        isMasterController ? true : !l.entity_id.toLowerCase().includes('master_controller')
+    );
+    const savedById = new Map(savedScene.map(e => [e.entity_id, e]));
+
+    for (const entry of savedScene) {
+        if (!controllable.some(l => l.entity_id === entry.entity_id)) return false;
+    }
+
+    for (const l of controllable) {
+        const saved = savedById.get(l.entity_id);
+        const state = l.stateObj?.state || 'off';
+        const isOn = state === 'on';
+
+        if (!saved) {
+            if (isOn) return false;
+            continue;
+        }
+        if (!isOn) return false;
+
+        const attrs = l.stateObj?.attributes || {};
+        const cap = getCap(l);
+
+        if (saved.brightness != null) {
+            const cur = attrs.brightness;
+            if (cur == null) return false;
+            if (Math.abs(cur - saved.brightness) > 5) return false;
+        }
+        if (saved.color_temp_kelvin != null && (cap === 'cct' || cap === 'rgb')) {
+            const cur = attrs.color_temp_kelvin;
+            if (cur == null) return false;
+            if (Math.abs(cur - saved.color_temp_kelvin) > 80) return false;
+        }
+        if (saved.rgb_color && cap === 'rgb') {
+            const cur = attrs.rgb_color;
+            if (!rgbNearEqual(saved.rgb_color, cur)) return false;
+        }
+    }
+
+    return true;
 }
 
 // ── Border gradient definitions (Figma exact) ─────────────────────────────
@@ -91,223 +175,84 @@ function DotsRow({ lights }) {
     );
 }
 
-// ── Unified horizontal slider (brightness + spectrum) ─────────────────────
-/**
- * Uses Animated.Value for thumb + fill so position updates run on the native
- * thread — zero React re-renders during drag = buttery smooth 60 fps.
- *
- * Props:
- *   value          number   current raw value (synced from HA when not dragging)
- *   max            number   max raw value (255 for brightness, 100 for spectrum)
- *   minVal         number   min clamp (default 0; use 1 for brightness)
- *   onChange       fn(v)    called live during drag — update local state only
- *   onRelease      fn(v)    called ONCE on finger-up — fire the HA API call
- *   trackBg        element  static track background (rail or LinearGradient)
- *   showFill       bool     render an animated fill bar (brightness only)
- *   thumbColor     string   thumb background colour
- *   thumbBorder    bool     white border on thumb (spectrum sliders)
- *   showBubble     bool     floating % tooltip above thumb while dragging
- */
-function HSlider({
-    value, max = 255, minVal = 0,
-    onChange, onRelease,
-    trackBg, showFill = false,
-    thumbColor = '#3A7BD5', thumbBorder = false, showBubble = false,
-    disabled = false,
-}) {
-    // Animated values — setValue() bypasses React render cycle entirely
-    const thumbAnim = useRef(new Animated.Value(0)).current;
-    const fillAnim  = useRef(new Animated.Value(0)).current;
-
-    const trackWRef   = useRef(0);
-    const [trackW, setTrackW] = useState(0);   // only drives initial layout-dependent render
-
-    const latestRaw   = useRef(value);
-    const startPageX  = useRef(0);
-    const startRaw    = useRef(value);
-    const isDragging  = useRef(false);
-    const [dragging, setDragging]     = useState(false);
-    const [bubblePct, setBubblePct]   = useState(Math.round((value / max) * 100));
-
-    // Keep disabled in a ref so PanResponder closure always reads the latest value
-    const disabledRef = useRef(disabled);
-    disabledRef.current = disabled;
-
-    // Keep callbacks fresh inside the stable PanResponder closure
-    const maxRef      = useRef(max);
-    const minValRef   = useRef(minVal);
-    const onChangeRef  = useRef(onChange);
-    const onReleaseRef = useRef(onRelease);
-    maxRef.current     = max;
-    minValRef.current  = minVal;
-    onChangeRef.current  = onChange;
-    onReleaseRef.current = onRelease;
-
-    // Update animated positions without a React re-render
-    const applyRaw = useCallback((raw, w) => {
-        if (w <= 0) return;
-        const thumbX = Math.max(0, Math.min(w - THUMB, (raw / max) * w - THUMB / 2));
-        const fillW  = Math.max(0, (raw / max) * w);
-        thumbAnim.setValue(thumbX);
-        fillAnim.setValue(fillW);
-    }, [max]);  // max is stable in practice
-
-    // Sync from HA when finger is not on screen
-    useEffect(() => {
-        if (!isDragging.current) {
-            latestRaw.current = value;
-            applyRaw(value, trackWRef.current);
-            setBubblePct(Math.round((value / max) * 100));
-        }
-    }, [value]);
-
-    // After first layout, position thumb for the initial value
-    useEffect(() => {
-        if (trackW > 0) applyRaw(latestRaw.current, trackW);
-    }, [trackW]);
-
-    const pan = useRef(PanResponder.create({
-        onStartShouldSetPanResponder:        () => !disabledRef.current,
-        onStartShouldSetPanResponderCapture: () => !disabledRef.current,
-        onMoveShouldSetPanResponder:         () => !disabledRef.current,
-        onMoveShouldSetPanResponderCapture:  () => !disabledRef.current,
-        onPanResponderTerminateRequest:      () => false,   // never surrender mid-drag
-
-        onPanResponderGrant: (e) => {
-            isDragging.current = true;
-            setDragging(true);
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            startPageX.current = e.nativeEvent.pageX;
-            startRaw.current   = latestRaw.current;   // drag from current value, no tap-jump
-        },
-
-        onPanResponderMove: (e) => {
-            const w   = trackWRef.current;
-            if (!w) return;
-            const dx  = e.nativeEvent.pageX - startPageX.current;
-            const raw = Math.max(
-                minValRef.current,
-                Math.min(maxRef.current, startRaw.current + (dx / w) * maxRef.current),
-            );
-            latestRaw.current = raw;
-
-            // Direct Animated.Value mutations — NO setState, NO re-render
-            const thumbX = Math.max(0, Math.min(w - THUMB, (raw / maxRef.current) * w - THUMB / 2));
-            thumbAnim.setValue(thumbX);
-            fillAnim.setValue(Math.max(0, (raw / maxRef.current) * w));
-
-            setBubblePct(Math.round((raw / maxRef.current) * 100));  // only bubble text re-renders
-            onChangeRef.current?.(raw);
-        },
-
-        // Fire HA call exactly once, when finger lifts
-        onPanResponderRelease: () => {
-            isDragging.current = false;
-            setDragging(false);
-            onReleaseRef.current?.(Math.round(latestRaw.current));
-        },
-
-        // Safety net — if iOS arbitrator steals the gesture, still fire the call
-        onPanResponderTerminate: () => {
-            isDragging.current = false;
-            setDragging(false);
-            onReleaseRef.current?.(Math.round(latestRaw.current));
-        },
-    })).current;
-
-    const thumbSz  = dragging ? THUMB + 4 : THUMB;
-    const thumbTop = (THUMB + 18 - thumbSz) / 2;
-    const bubbleLeft = trackW > 0
-        ? Math.max(0, Math.min(trackW - 36, (bubblePct / 100) * trackW - 18))
-        : 0;
-
-    return (
-        <View
-            style={styles.sliderWrap}
-            onLayout={e => {
-                const w = e.nativeEvent.layout.width;
-                trackWRef.current = w;
-                setTrackW(w);
-            }}
-            {...pan.panHandlers}
-        >
-            {/* Static track background — gradient or dark rail */}
-            {trackBg}
-
-            {/* Animated fill bar — brightness only */}
-            {showFill && (
-                <Animated.View style={[styles.sliderFill, { width: fillAnim }]} />
-            )}
-
-            {/* % tooltip above thumb */}
-            {dragging && showBubble && (
-                <View style={[styles.sliderBubble, { left: bubbleLeft }]}>
-                    <Text style={styles.sliderBubbleText}>{bubblePct}%</Text>
-                </View>
-            )}
-
-            {/* Animated thumb — moves without re-rendering the parent */}
-            <Animated.View style={[
-                styles.sliderThumb,
-                {
-                    width:           thumbSz,
-                    height:          thumbSz,
-                    borderRadius:    thumbSz / 2,
-                    top:             thumbTop,
-                    left:            thumbAnim,
-                    backgroundColor: thumbColor,
-                    borderWidth:     thumbBorder ? 2.5 : 0,
-                    borderColor:     thumbBorder ? 'rgba(255,255,255,0.9)' : 'transparent',
-                },
-                dragging && { shadowOpacity: 1, shadowRadius: 16 },
-                disabled && { backgroundColor: '#444' },
-            ]} />
-
-            {/* Disabled overlay — blocks interaction visually */}
-            {disabled && (
-                <View
-                    pointerEvents="none"
-                    style={[StyleSheet.absoluteFillObject, { borderRadius: 6, backgroundColor: 'rgba(0,0,0,0.35)' }]}
-                />
-            )}
-        </View>
-    );
-}
-
 // ── Convenience wrappers ──────────────────────────────────────────────────
-function BrightnessSlider({ value, onChange, onRelease, disabled = false }) {
+function BrightnessSlider({ value, onChange, onRelease, onDragStart, onDragEnd, disabled = false }) {
     return (
-        <HSlider
+        <SmoothSlider
             value={value} max={255} minVal={1}
-            onChange={onChange} onRelease={onRelease}
+            onChange={onChange} onRelease={onRelease} onDragStart={onDragStart} onDragEnd={onDragEnd}
             trackBg={<View style={styles.sliderRail} />}
             showFill
             thumbColor="#3A7BD5"
             showBubble
+            showPctLabel
             disabled={disabled}
         />
     );
 }
 
-function SpectrumSlider({ value, colors, thumbColor, label, onChange, onRelease, active = true, onIconPress }) {
-    // active = true  → sun is in control  → icon purple + large, slider disabled
-    // active = false → manual mode         → icon gray, slider enabled
+const SPECTRUM_ICON = 28; // circular CCT / RGB chips (px)
+
+function SpectrumSlider({ value, colors, thumbColor, label, onChange, onRelease, onDragStart, onDragEnd, active = true, onIconPress, compact = false }) {
+    // active = true  → white balance / hue follow the main light level (“sun” / brightness drives it)
+    // active = false → you drag this spectrum manually (CCT: yellow↔white disc; RGB: round rainbow)
+    const isCct = String(label).toUpperCase() === 'CCT';
+    const discR = SPECTRUM_ICON / 2;
+
+    // Linked: warm yellow sun (brightness drives spectrum)
+    const sunLinkedStroke = '#C9A227';
+    const sunLinkedFill = '#FFE082';
+
+    const discShell = [
+        styles.spectrumRoundDisc,
+        { width: SPECTRUM_ICON, height: SPECTRUM_ICON, borderRadius: discR },
+    ];
+    const discGradientFill = [StyleSheet.absoluteFillObject, { borderRadius: discR }];
+
+    const modeIcon = active ? (
+        <Sun
+            size={26}
+            color={sunLinkedStroke}
+            fill={sunLinkedFill}
+            stroke={sunLinkedStroke}
+            strokeWidth={1.5}
+        />
+    ) : isCct ? (
+        <View style={discShell}>
+            <LinearGradient
+                colors={['#FFEB3B', '#FFF9C4', '#FFFFFF']}
+                locations={[0, 0.35, 1]}
+                start={{ x: 0, y: 0.5 }}
+                end={{ x: 1, y: 0.5 }}
+                style={discGradientFill}
+            />
+        </View>
+    ) : (
+        <View style={discShell}>
+            <LinearGradient
+                colors={[
+                    '#FF0844', '#FFB347', '#FFEB3B', '#69F0AE',
+                    '#18FFFF', '#448AFF', '#B388FF', '#FF0844',
+                ]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+                style={discGradientFill}
+            />
+        </View>
+    );
+
     return (
-        <View style={styles.spectrumBlock}>
+        <View style={[styles.spectrumBlock, compact && styles.spectrumBlockTabletSplit]}>
             <TouchableOpacity
                 onPress={onIconPress}
                 activeOpacity={0.6}
                 style={styles.spectrumIconPlain}
             >
-                <Sun
-                    size={26}
-                    color={active ? '#7B2FBE' : 'rgba(255,255,255,0.25)'}
-                    fill={active ? '#7B2FBE' : 'rgba(255,255,255,0.25)'}
-                />
+                {modeIcon}
             </TouchableOpacity>
-            <HSlider
+            <SmoothSlider
                 value={value} max={100} minVal={0}
-                onChange={onChange} onRelease={onRelease}
+                onChange={onChange} onRelease={onRelease} onDragStart={onDragStart} onDragEnd={onDragEnd}
                 trackBg={
                     <LinearGradient
                         colors={colors}
@@ -346,7 +291,10 @@ function hueToRgb(h) {
     return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
 }
 
-function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessChange, onLongPress, onColorTap, masterBrightness }) {
+function ExpandedLightCard({
+    light, mapping, adminUrl, onToggle, onBrightnessChange, onLongPress, onColorTap, masterBrightness,
+    onSliderDragStart, onSliderDragEnd,
+}) {
     const isOn      = light.stateObj.state === 'on';
     const mappedCap = mapping?.colorCapability || 'normal';
     const attrs     = light.stateObj?.attributes || {};
@@ -381,6 +329,7 @@ function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessCha
     const [isDraggingCard, setIsDragging] = useState(false);
 
     const isDragging       = useRef(false);
+    const scrollLocked     = useRef(false);
     const cardW            = useRef(0);
     const startPageX       = useRef(0);
     const startPageY       = useRef(0);
@@ -396,6 +345,8 @@ function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessCha
     const onBrightRef      = useRef(onBrightnessChange);
     const onToggleRef      = useRef(onToggle);
     const onColorTapRef    = useRef(onColorTap);
+    const onSliderDragStartRef = useRef(onSliderDragStart);
+    const onSliderDragEndRef   = useRef(onSliderDragEnd);
     const entityRef        = useRef(light.entity_id);
     const stateRef         = useRef(light.stateObj.state);
     isOnRef.current        = isOn;
@@ -403,6 +354,8 @@ function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessCha
     onBrightRef.current    = onBrightnessChange;
     onToggleRef.current    = onToggle;
     onColorTapRef.current  = onColorTap;
+    onSliderDragStartRef.current = onSliderDragStart;
+    onSliderDragEndRef.current   = onSliderDragEnd;
     entityRef.current      = light.entity_id;
     stateRef.current       = light.stateObj.state;
 
@@ -456,6 +409,10 @@ function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessCha
             // Only treat as brightness drag once the finger clearly moved horizontally
             if (Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy)) {
                 isTap.current = false;
+                if (!scrollLocked.current) {
+                    scrollLocked.current = true;
+                    onSliderDragStartRef.current?.();
+                }
                 // Cancel long-press since we're dragging
                 if (longPressTimer.current) {
                     clearTimeout(longPressTimer.current);
@@ -474,6 +431,10 @@ function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessCha
         onPanResponderRelease: (e) => {
             isDragging.current = false;
             setIsDragging(false);
+            if (scrollLocked.current) {
+                scrollLocked.current = false;
+                onSliderDragEndRef.current?.();
+            }
             if (longPressTimer.current) {
                 clearTimeout(longPressTimer.current);
                 longPressTimer.current = null;
@@ -495,6 +456,10 @@ function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessCha
         onPanResponderTerminate: () => {
             isDragging.current = false;
             setIsDragging(false);
+            if (scrollLocked.current) {
+                scrollLocked.current = false;
+                onSliderDragEndRef.current?.();
+            }
             if (longPressTimer.current) {
                 clearTimeout(longPressTimer.current);
                 longPressTimer.current = null;
@@ -529,13 +494,13 @@ function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessCha
                 <View style={styles.cardTouch}>
                     <View style={[styles.cardIcon, { backgroundColor: iconBg }]}>
                         {iconUrl
-                            ? <SvgUri width={22} height={22} uri={iconUrl} fill={iconColor} stroke={iconColor} />
-                            : <Power size={22} color={iconColor} />}
+                            ? <SvgUri width={20} height={20} uri={iconUrl} fill={iconColor} stroke={iconColor} />
+                            : <Power size={20} color={iconColor} />}
                     </View>
                     <View style={styles.cardText}>
                         <Text style={styles.cardName} numberOfLines={1}>{light.displayName}</Text>
                         <Text style={[styles.cardLabel, isOn && styles.cardLabelOn]}>
-                            {!isOn ? 'Off' : hasBrightness && displayPct > 0 ? `On ${displayPct}%` : 'On'}
+                            {!isOn ? 'OFF' : hasBrightness && displayPct > 0 ? `ON ${displayPct}%` : 'ON'}
                         </Text>
                     </View>
                 </View>
@@ -548,7 +513,12 @@ function ExpandedLightCard({ light, mapping, adminUrl, onToggle, onBrightnessCha
 export default function LightsGroupCard({
     lights = [], lightMappings = [], adminUrl, roomName = '',
     onToggle, onBrightnessChange, onColorTempChange, onRgbChange, onLongPress, onTurnOn,
+    onSliderDragStart, onSliderDragEnd,
+    contentWidth,
+    gridColumns = 2,
+    variant = 'default',
 }) {
+    const isTabletSplit = variant === 'tabletSplit';
     // Show master controls if the room is named "Master Controller"
     // OR if any light entity in the room has "master_controller" in its entity_id
     const isMasterController =
@@ -556,7 +526,7 @@ export default function LightsGroupCard({
         lights.some(l => l.entity_id.toLowerCase().includes('master_controller'));
 
     // ── effectiveCap must be declared first — used by all callbacks below ─
-    const effectiveCap = (l) => {
+    const effectiveCap = useCallback((l) => {
         const m     = lightMappings.find(m => m.entity_id === l.entity_id);
         const cap   = m?.colorCapability || 'normal';
         const attrs = l.stateObj?.attributes || {};
@@ -570,46 +540,74 @@ export default function LightsGroupCard({
         if (attrs.color_mode === 'color_temp' || attrs.color_temp_kelvin) return 'cct';
         if (attrs.brightness !== undefined) return 'dimmable';
         return 'normal';
-    };
+    }, [lightMappings]);
 
     const [expanded, setExpanded] = useState(false);
     const [colorModalLight, setColorModalLight] = useState(null); // { light, colorCapability }
     const [cctActive, setCctActive] = useState(true);
     const [rgbActive, setRgbActive] = useState(true);
 
+    const { width: windowWidth } = useWindowDimensions();
+    /** RoomDetailView `content` uses padding 20+20; this card uses paddingHorizontal 18+18 */
+    const lightCellWidth = useMemo(() => {
+        const colGap = 10;
+        const cols = Math.max(1, gridColumns);
+        const ww = windowWidth > 0 ? windowWidth : 375;
+        const inner =
+            contentWidth != null && contentWidth > 0
+                ? contentWidth - 36
+                : ww - 40 - 36;
+        return Math.max(0, Math.floor((inner - colGap * (cols - 1)) / cols));
+    }, [windowWidth, contentWidth, gridColumns]);
+
     // ── Light Scene (Save / Restore) ──────────────────────────────────────
     const sceneKey = `light_scene_${roomName.toLowerCase().replace(/\s+/g, '_')}`;
     const [savedScene, setSavedScene] = useState(null); // array of { entity_id, brightness, rgb_color, color_temp_kelvin }
     const [saveFeedback, setSaveFeedback] = useState(false); // brief "Saved!" flash
 
-    // Load saved scene on mount / room change — try backend first, fall back to SecureStore
+    // Load saved scene — local first (instant), then API with every room-name variant the DB might use
     useEffect(() => {
         let cancelled = false;
+        setSavedScene(null);
+
+        const applyScene = (arr) => {
+            if (cancelled || !Array.isArray(arr) || !arr.length) return false;
+            setSavedScene(arr);
+            return true;
+        };
+
         (async () => {
             try {
-                const adminUrl = await getAdminUrl();
-                if (adminUrl) {
-                    const res = await fetch(
-                        `${adminUrl}/api/light-scenes?room=${encodeURIComponent(roomName)}`
-                    );
-                    if (res.ok) {
-                        const json = await res.json();
-                        if (!cancelled && json.success && json.scene?.lights?.length) {
-                            setSavedScene(json.scene.lights);
-                            // Keep SecureStore in sync for offline fallback
-                            await SecureStore.setItemAsync(sceneKey, JSON.stringify(json.scene.lights));
-                            return;
-                        }
-                    }
+                const raw = await SecureStore.getItemAsync(sceneKey);
+                if (!cancelled && raw) {
+                    const parsed = JSON.parse(raw);
+                    if (Array.isArray(parsed) && parsed.length) applyScene(parsed);
                 }
             } catch (_) {}
 
-            // Fallback: SecureStore (offline / no backend)
             try {
-                const raw = await SecureStore.getItemAsync(sceneKey);
-                if (!cancelled && raw) setSavedScene(JSON.parse(raw));
+                const adminUrl = await getAdminUrl();
+                if (!adminUrl || cancelled) return;
+
+                for (const key of collectRoomNameLookupKeys(roomName)) {
+                    if (cancelled) return;
+                    const res = await fetch(
+                        `${adminUrl}/api/light-scenes?room=${encodeURIComponent(key)}`
+                    );
+                    if (!res.ok) continue;
+                    const json = await res.json();
+                    if (cancelled) return;
+                    if (json.success && json.scene?.lights?.length) {
+                        setSavedScene(json.scene.lights);
+                        try {
+                            await SecureStore.setItemAsync(sceneKey, JSON.stringify(json.scene.lights));
+                        } catch (_) {}
+                        return;
+                    }
+                }
             } catch (_) {}
         })();
+
         return () => { cancelled = true; };
     }, [sceneKey, roomName]);
 
@@ -636,6 +634,13 @@ export default function LightsGroupCard({
                 return entry;
             });
 
+        // Never overwrite a saved scene with an empty capture — that hid Restore until re-saved
+        if (!scene.length) {
+            return;
+        }
+
+        const canonicalRoom = roomName.trim().toLowerCase().replace(/\s+/g, '_') || roomName.trim();
+
         // Always save locally first (instant, works offline)
         await SecureStore.setItemAsync(sceneKey, JSON.stringify(scene));
         setSavedScene(scene);
@@ -650,13 +655,13 @@ export default function LightsGroupCard({
                 await fetch(`${adminUrl}/api/light-scenes`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ room_name: roomName, lights: scene }),
+                    body: JSON.stringify({ room_name: canonicalRoom, lights: scene }),
                 });
             }
         } catch (err) {
             console.warn('[LightsGroupCard] Could not save scene to backend:', err);
         }
-    }, [lights, sceneKey, roomName, lightMappings]);
+    }, [lights, sceneKey, roomName, effectiveCap, isMasterController]);
 
     // ── Auto-snapshot: captures state before group-off so we can restore it ──
     // This is separate from the manually saved scene (Bookmark button).
@@ -698,6 +703,12 @@ export default function LightsGroupCard({
     const hasCCT = lights.some(l => effectiveCap(l) === 'cct');
     const hasRGB = lights.some(l => effectiveCap(l) === 'rgb');
     const hasDimmable = lights.some(l => ['dimmable', 'cct', 'rgb'].includes(effectiveCap(l)));
+
+    /** Restore only when bookmark exists and live room state has drifted from it */
+    const showRestoreButton = useMemo(
+        () => !!(savedScene?.length && !liveMatchesSavedScene(savedScene, lights, isMasterController, effectiveCap)),
+        [savedScene, lights, isMasterController, effectiveCap],
+    );
 
     // For master controller rooms: only show CCT/RGB sliders if the master
     // controller entity itself supports those capabilities.
@@ -1011,24 +1022,27 @@ export default function LightsGroupCard({
     };
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, isTabletSplit && styles.containerTabletSplit]}>
+            <View style={isTabletSplit ? styles.tabletSplitInner : null}>
             {/* Header */}
-            <View style={styles.header}>
-                <TouchableOpacity
-                    style={[styles.bulbCircle, masterIsOn && styles.bulbCircleOn]}
+            <View style={[styles.header, isTabletSplit && styles.headerTabletSplit]}>
+                <RoomGroupIconButton
+                    active={masterIsOn}
                     onPress={handleMasterToggle}
-                    activeOpacity={0.75}
+                    accessibilityLabel="Toggle all lights"
                 >
-                    <Lightbulb size={26} color="#fff" fill={masterIsOn ? '#fff' : 'none'} />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>Lights</Text>
-                <View style={styles.onBadge}>
-                    <Text style={styles.onBadgeText}>{onLightsCount} On</Text>
+                    <Image source={LIGHTS_MASTER_ICON} style={styles.masterLightIcon} resizeMode="contain" />
+                </RoomGroupIconButton>
+                <View style={styles.headerTextBlock}>
+                    <Text style={styles.headerTitle}>Lights</Text>
+                    <Text style={[styles.headerStatus, onLightsCount > 0 && styles.headerStatusOn]}>
+                        {onLightsCount > 0 ? `${onLightsCount} ON` : 'OFF'}
+                    </Text>
                 </View>
 
                 <View style={styles.sceneButtons}>
-                    {/* Restore button — only shown when a scene is saved */}
-                    {savedScene?.length > 0 && (
+                    {/* Restore — bookmark exists and current lights differ from that snapshot */}
+                    {showRestoreButton && (
                         <TouchableOpacity
                             style={styles.restoreBtn}
                             onPress={handleRestoreScene}
@@ -1060,22 +1074,35 @@ export default function LightsGroupCard({
 
             {/* Brightness slider — shown for any room with dimmable/CCT/RGB lights */}
             {hasDimmable && (
-                <View style={styles.spectrumBlock}>
-                    <View style={styles.brightnessIconRow}>
-                        <Text style={styles.brightnessAvgLabel}>
-                            {Math.round((masterBrightness / 255) * 100)}%
-                        </Text>
-                    </View>
+                <View style={[styles.spectrumBlock, isTabletSplit && styles.spectrumBlockTabletSplit]}>
                     <BrightnessSlider
                         value={masterBrightness}
-                        onChange={(v) => { setMasterBrightness(v); setActiveMasterBrightness(v); }}
-                        onRelease={(v) => { setActiveMasterBrightness(null); handleBrightnessRelease(v); }}
+                        onChange={setMasterBrightness}
+                        onDragStart={() => {
+                            blockSync(brightnessBlocked, brightnessBlockTimer);
+                            onSliderDragStart?.();
+                        }}
+                        onDragEnd={onSliderDragEnd}
+                        onRelease={(v) => {
+                            setMasterBrightness(v);
+                            setActiveMasterBrightness(null);
+                            handleBrightnessRelease(v);
+                        }}
                         disabled={onLightsCount === 0}
                     />
                 </View>
             )}
 
-            {/* CCT slider — shown for any room with CCT lights */}
+            {/* Chevron */}
+            <TouchableOpacity style={styles.chevron} onPress={toggle} activeOpacity={0.7}>
+                {expanded
+                    ? <ChevronUp   size={22} color="rgba(255,255,255,0.45)" />
+                    : <ChevronDown size={22} color="rgba(255,255,255,0.45)" />}
+            </TouchableOpacity>
+
+            {/* Expanded — CCT/RGB + per-light grid */}
+            {expanded && (
+                <>
             {hasCCT && (
                 <SpectrumSlider
                     label="CCT"
@@ -1083,16 +1110,21 @@ export default function LightsGroupCard({
                     colors={['#FF9F43', '#FFE082', '#FFF8E1', '#D6F5FF', '#A8CFFF']}
                     thumbColor={cctThumbColor}
                     onChange={setMasterCCTPct}
+                    onDragStart={() => {
+                        blockSync(cctBlocked, cctBlockTimer);
+                        onSliderDragStart?.();
+                    }}
+                    onDragEnd={onSliderDragEnd}
                     onRelease={handleCCTRelease}
                     active={cctActive}
                     onIconPress={() => {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                         setCctActive(v => !v);
                     }}
+                    compact={isTabletSplit}
                 />
             )}
 
-            {/* RGB slider — shown for any room with RGB lights */}
             {hasRGB && (
                 <SpectrumSlider
                     label="RGB"
@@ -1104,30 +1136,27 @@ export default function LightsGroupCard({
                     ]}
                     thumbColor={rgbThumbColor}
                     onChange={setMasterRGBPct}
+                    onDragStart={() => {
+                        blockSync(rgbBlocked, rgbBlockTimer);
+                        onSliderDragStart?.();
+                    }}
+                    onDragEnd={onSliderDragEnd}
                     onRelease={handleRGBRelease}
                     active={rgbActive}
                     onIconPress={() => {
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                         setRgbActive(v => !v);
                     }}
+                    compact={isTabletSplit}
                 />
             )}
 
-            {/* Chevron */}
-            <TouchableOpacity style={styles.chevron} onPress={toggle} activeOpacity={0.7}>
-                {expanded
-                    ? <ChevronUp   size={22} color="rgba(255,255,255,0.45)" />
-                    : <ChevronDown size={22} color="rgba(255,255,255,0.45)" />}
-            </TouchableOpacity>
-
-            {/* Expanded grid — master controller is excluded (controlled by sliders above) */}
-            {expanded && (
                 <View style={styles.grid}>
                     {lights
                         .filter(l => !l.entity_id.toLowerCase().includes('master_controller') &&
                                      !l.displayName?.toLowerCase().includes('master controller'))
                         .map(l => (
-                        <View key={l.entity_id} style={styles.cell}>
+                        <View key={l.entity_id} style={[styles.cell, lightCellWidth > 0 && { width: lightCellWidth }]}>
                             <ExpandedLightCard
                                 light={l}
                                 mapping={lightMappings.find(m => m.entity_id === l.entity_id)}
@@ -1141,10 +1170,13 @@ export default function LightsGroupCard({
                                     setColorModalLight({ light: tappedLight, colorCapability: cap });
                                 }}
                                 masterBrightness={activeMasterBrightness}
+                                onSliderDragStart={onSliderDragStart}
+                                onSliderDragEnd={onSliderDragEnd}
                             />
                         </View>
                     ))}
                 </View>
+                </>
             )}
 
             {/* Per-light color control modal */}
@@ -1169,14 +1201,12 @@ export default function LightsGroupCard({
                     }}
                 />
             )}
+            </View>
         </View>
     );
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────
-const THUMB = 28;
-const TRACK = 7;
-
 const styles = StyleSheet.create({
     container: {
         backgroundColor: '#13132A',
@@ -1186,27 +1216,43 @@ const styles = StyleSheet.create({
         paddingBottom: 8,
         marginBottom: 12,
     },
+    containerTabletSplit: {
+        backgroundColor: 'transparent',
+        borderRadius: 0,
+        paddingHorizontal: 0,
+        paddingTop: 0,
+        paddingBottom: 0,
+        marginBottom: 0,
+        flex: 1,
+    },
 
     // Header
     header:      { flexDirection: 'row', alignItems: 'center', marginBottom: 18 },
-    bulbCircle: {
-        width: 52, height: 52, borderRadius: 26,
-        backgroundColor: '#3A1A6E',
-        alignItems: 'center', justifyContent: 'center',
-        marginRight: 14,
-        shadowColor: '#8947ca', shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.5, shadowRadius: 8, elevation: 4,
+    headerTabletSplit: {
+        marginBottom: 12,
     },
-    bulbCircleOn: {
-        backgroundColor: '#7B2ECA',
-        shadowOpacity: 0.9, shadowRadius: 14, elevation: 8,
+    tabletSplitInner: {
+        flex: 1,
+        justifyContent: 'space-between',
     },
-    headerTitle: { flex: 1, color: '#fff', fontSize: 20, fontWeight: '600' },
-    onBadge: {
-        backgroundColor: 'rgba(255,255,255,0.12)',
-        paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20,
+    headerTitle: { ...Heading.md, color: '#fff' },
+    headerTextBlock: {
+        flex: 1,
+        justifyContent: 'center',
     },
-    onBadgeText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+    headerStatus: {
+        marginTop: 2,
+        fontSize: 13,
+        fontStyle: 'italic',
+        color: 'rgba(255,255,255,0.45)',
+    },
+    headerStatusOn: {
+        color: '#44C8CA',
+    },
+    masterLightIcon: {
+        width: 26,
+        height: 26,
+    },
     sceneButtons: {
         flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 8,
     },
@@ -1238,46 +1284,12 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
 
-    // ── Unified HSlider container ──
-    // Tall enough for comfortable touch (44 + extra), centres rail+thumb vertically
-    sliderWrap: {
-        height: THUMB + 18,       // ~46 px touch target
-        justifyContent: 'center',
-        marginBottom: 6,
-        overflow: 'visible',      // lets the grow-effect thumb + bubble render outside bounds
-    },
     sliderRail: {
         position: 'absolute', left: 0, right: 0,
         height: TRACK, borderRadius: TRACK / 2,
         backgroundColor: 'rgba(255,255,255,0.12)',
         top: (THUMB + 18 - TRACK) / 2,
     },
-    sliderFill: {
-        position: 'absolute', left: 0,
-        height: TRACK, borderRadius: TRACK / 2,
-        backgroundColor: 'rgba(255,255,255,0.40)',
-        top: (THUMB + 18 - TRACK) / 2,
-        // width is set by Animated.Value — do NOT set it here
-    },
-    // Thumb — pixel-positioned via Animated.Value, no marginLeft trick
-    sliderThumb: {
-        position: 'absolute',
-        // top is set inline per-render (accounts for thumb growing on drag)
-        shadowColor: '#3A7BD5', shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.8, shadowRadius: 10, elevation: 8,
-    },
-    // Tooltip bubble — absolute, sits above the thumb
-    sliderBubble: {
-        position: 'absolute',
-        bottom: THUMB + 18,   // just above the sliderWrap top
-        minWidth: 36,
-        backgroundColor: '#3A7BD5',
-        borderRadius: 8,
-        paddingHorizontal: 7, paddingVertical: 3,
-        alignItems: 'center',
-        zIndex: 30,
-    },
-    sliderBubbleText: { color: '#fff', fontSize: 11, fontWeight: '700' },
 
     // Slider section row (sun icon + slider)
     sliderSection: {
@@ -1291,10 +1303,12 @@ const styles = StyleSheet.create({
         flexDirection: 'column',
         marginBottom: 12,
     },
+    spectrumBlockTabletSplit: {
+        marginBottom: 6,
+    },
     spectrumIcon: {
         marginBottom: 4, marginLeft: 2,
     },
-    // Sun icon — gradient pill when in control, plain dim when CCT/RGB takes over
     sunIconBg: {
         width: 26, height: 26, borderRadius: 13,
         alignItems: 'center', justifyContent: 'center',
@@ -1306,10 +1320,16 @@ const styles = StyleSheet.create({
         marginBottom: 4,
         backgroundColor: 'rgba(255,255,255,0.05)',
     },
-    // CCT / RGB icon — no border, just a plain tappable icon
+    // CCT / RGB icon — tap toggles sun-linked vs manual spectrum
     spectrumIconPlain: {
         alignSelf: 'flex-start',
         marginBottom: 4, paddingHorizontal: 2,
+    },
+    /** Perfect circle: equal width/height, overflow clip + matching gradient corner radius */
+    spectrumRoundDisc: {
+        overflow: 'hidden',
+        borderWidth: 1.5,
+        borderColor: 'rgba(255,255,255,0.28)',
     },
     spectrumIconBtn: {
         alignSelf: 'flex-start',
@@ -1358,29 +1378,29 @@ const styles = StyleSheet.create({
 
     chevron: { alignItems: 'center', paddingVertical: 6 },
 
-    // Expanded grid
-    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 10, marginBottom: 8 },
-    cell: { width: '48.5%' },
+    // Expanded grid — cell width set in JS so two columns fit on narrow phones (see lightCellWidth)
+    grid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 10, marginBottom: 8, justifyContent: 'flex-start' },
+    cell: { flexGrow: 0, flexShrink: 0 },
 
     // Card
-    cardBorder:   { borderRadius: 36, padding: 1.5 },
+    cardBorder:   { borderRadius: 32, padding: 1.5 },
     cardInner: {
-        borderRadius: 34.5, backgroundColor: '#12122B',
-        overflow: 'hidden', minHeight: 76,
+        borderRadius: 30.5, backgroundColor: '#12122B',
+        overflow: 'hidden', minHeight: 64,
         justifyContent: 'center', position: 'relative',
     },
     cardInnerOff: { backgroundColor: '#0D0D1C' },
     cardFill:     { position: 'absolute', left: 0, top: 0, bottom: 0 },
     cardTouch: {
         flexDirection: 'row', alignItems: 'center',
-        paddingHorizontal: 14, paddingVertical: 14, gap: 12,
+        paddingHorizontal: 12, paddingVertical: 10, gap: 10,
     },
     cardIcon: {
-        width: 44, height: 44, borderRadius: 22,
+        width: 38, height: 38, borderRadius: 19,
         alignItems: 'center', justifyContent: 'center',
     },
     cardText:    { flex: 1 },
-    cardName:    { color: '#fff', fontSize: 13, fontWeight: '600', marginBottom: 4 },
+    cardName:    { color: '#fff', fontSize: 12, fontWeight: '600', marginBottom: 2 },
     cardLabel:   { color: 'rgba(255,255,255,0.40)', fontSize: 12, fontWeight: '500' },
     cardLabelOn: { color: '#44C8CA' },
 

@@ -1,8 +1,16 @@
 import { AppState } from 'react-native';
 
+function hostFromWsUrl(url) {
+    try {
+        return new URL(url).host;
+    } catch {
+        return 'unknown host';
+    }
+}
+
 export class HAService {
     constructor(url, token) {
-        const cleanUrl = url.replace(/\/$/, '');
+        const cleanUrl = String(url || '').replace(/\/$/, '');
         this.url = cleanUrl.replace(/^https/i, 'wss').replace(/^http(?!s)/i, 'ws') + '/api/websocket';
         this.token = token;
         this.socket = null;
@@ -40,6 +48,13 @@ export class HAService {
         // Don't reconnect if app is backgrounded
         if (this.appState !== 'active') return;
 
+        if (!this.token || !String(this.url).startsWith('ws')) {
+            if (__DEV__) {
+                console.warn('[HAService] Skipping connect — missing token or invalid WebSocket URL');
+            }
+            return;
+        }
+
         this.socket = new WebSocket(this.url);
 
         this.socket.onopen = () => {
@@ -55,31 +70,51 @@ export class HAService {
             }
         };
 
-        this.socket.onclose = () => {
+        this.socket.onclose = (event) => {
+            const closeCode = event?.code ?? 0;
+            const closeReason = (event?.reason || '').trim();
+            const host = hostFromWsUrl(this.url);
+
             this.authenticated = false;
             this.socket = null;
+            this.notifyListeners({
+                type: 'disconnected',
+                code: closeCode,
+                reason: closeReason || undefined,
+            });
 
             // Silently resolve pending promises so callers don't get unhandled rejections.
-            // The reconnect mechanism below will re-establish the connection.
             this.pending.forEach(({ resolve }) => {
                 try { resolve(null); } catch (e) { /* ignore */ }
             });
             this.pending.clear();
 
-            // Only reconnect if app is active and under max retries
-            if (this.appState === 'active' && this.reconnectAttempts < this.maxReconnectAttempts) {
-                const delay = Math.min(5000 * Math.pow(2, this.reconnectAttempts), 60000); // 5s, 10s, 20s, 40s, 60s
+            const willRetry = this.appState === 'active' && this.reconnectAttempts < this.maxReconnectAttempts;
+
+            // RN WebSocket onerror often has no message; log once per close with code/reason.
+            if (__DEV__ && closeCode !== 1000) {
+                const retryNote = willRetry
+                    ? ` — retry ${this.reconnectAttempts + 1}/${this.maxReconnectAttempts}`
+                    : ' — not retrying';
+                console.warn(
+                    `[HAService] WebSocket closed (${host}, code ${closeCode}${closeReason ? `, ${closeReason}` : ''})${retryNote}`,
+                );
+            }
+
+            if (willRetry) {
+                const delay = Math.min(5000 * Math.pow(2, this.reconnectAttempts), 60000);
                 this.reconnectAttempts++;
                 this.reconnectTimer = setTimeout(() => {
                     this.reconnectTimer = null;
                     this.connect();
                 }, delay);
+            } else if (__DEV__ && closeCode !== 1000 && this.reconnectAttempts >= this.maxReconnectAttempts) {
+                console.warn(`[HAService] WebSocket gave up reconnecting to ${host}`);
             }
         };
 
-        this.socket.onerror = (e) => {
-            console.error('Socket Error', e.message);
-        };
+        // React Native does not populate error.message — details arrive via onclose.
+        this.socket.onerror = () => {};
     }
 
     disconnect() {

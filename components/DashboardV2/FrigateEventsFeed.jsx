@@ -1,33 +1,22 @@
 /**
  * FrigateEventsFeed
  *
- * Displays a paginated feed of Frigate detection events.
- * Each card shows:
- *   - Thumbnail from /api/frigate/events/{id}/thumbnail
- *   - Camera name, detected label, confidence score
- *   - Time ago / formatted timestamp
- *   - Duration (if clip available)
- *
- * Supports:
- *   - Per-camera filtering (pill selector at top)
- *   - Per-label filtering (person / car / animal / all)
- *   - Infinite scroll (load more)
- *   - Pull-to-refresh
- *   - Tap to open FrigateCameraModal in events/clip view
+ * Paginated Frigate detection events (Cameras → Events tab).
  */
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import {
     View, Text, StyleSheet, FlatList, Image, TouchableOpacity,
     ActivityIndicator, RefreshControl, ScrollView,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { User, Car, Dog, AlertTriangle, Clock, Video } from 'lucide-react-native';
+import { User, Car, Dog, AlertTriangle, Clock, Play } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
+import { dedupeEventsById, paginationBeforeCursor } from '../../utils/frigateEvents';
+import FrigateEventPlayerModal from './FrigateEventPlayerModal';
 
+const INITIAL_PAGE_SIZE = 12;
 const PAGE_SIZE = 20;
-
-// ── Helpers ──────────────────────────────────────────────────────────────────
 
 function timeAgo(unixTs) {
     const diff = Math.floor(Date.now() / 1000) - unixTs;
@@ -69,21 +58,20 @@ function labelColor(label) {
     return '#FFA000';
 }
 
-// ── Single event card (grid style — vertical) ─────────────────────────────────
-
-function EventCard({ event, adminUrl, authHeaders, onPress }) {
+const EventCard = memo(function EventCard({ event, adminUrl, authHeaders, onPress }) {
     const [thumbError, setThumbError] = useState(false);
-    const thumbUrl = `${adminUrl}/api/frigate/events/${event.id}/thumbnail`;
+    const thumbUrl = adminUrl
+        ? `${adminUrl.replace(/\/$/, '')}/api/frigate/events/${encodeURIComponent(String(event.id))}/thumbnail`
+        : null;
     const color = labelColor(event.label);
     const score = event.data?.top_score ?? event.top_score;
     const scoreText = score ? `${Math.round(score * 100)}%` : null;
 
-    return (
+    const content = (
         <View style={styles.card}>
-            {/* Thumbnail — top, 16:9 */}
             <View style={styles.thumb}>
                 {thumbError ? (
-                    <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
+                    <View style={[StyleSheet.absoluteFill, styles.thumbFallback]}>
                         <LabelIcon label={event.label} size={28} color="rgba(255,255,255,0.15)" />
                     </View>
                 ) : (
@@ -98,34 +86,36 @@ function EventCard({ event, adminUrl, authHeaders, onPress }) {
                     colors={['transparent', 'rgba(0,0,0,0.75)']}
                     style={StyleSheet.absoluteFill}
                 />
-                {/* Label badge */}
                 <View style={[styles.labelBadge, { backgroundColor: `${color}cc` }]}>
                     <LabelIcon label={event.label} size={10} color="#fff" />
                     <Text style={styles.labelText}>{event.label || 'unknown'}</Text>
-                    {scoreText && <Text style={styles.scoreText}>{scoreText}</Text>}
+                    {scoreText ? <Text style={styles.scoreText}>{scoreText}</Text> : null}
                 </View>
-                {/* Clip indicator */}
-                {event.has_clip && (
-                    <View style={styles.clipBadge}>
-                        <Video size={10} color="#fff" />
-                    </View>
-                )}
+                <View style={styles.playBadge}>
+                    <Play size={14} color="#fff" fill="#fff" />
+                </View>
             </View>
-
-            {/* Info — below thumbnail */}
             <View style={styles.info}>
                 <Text style={styles.cameraName} numberOfLines={1}>{event.camera}</Text>
                 <View style={styles.timeRow}>
                     <Clock size={10} color="rgba(255,255,255,0.4)" />
-                    <Text style={styles.timeText}>{formatDate(event.start_time)} · {formatTime(event.start_time)}</Text>
+                    <Text style={styles.timeText}>
+                        {formatDate(event.start_time)} · {formatTime(event.start_time)}
+                    </Text>
                 </View>
                 <Text style={styles.agoText}>{timeAgo(event.start_time)}</Text>
             </View>
         </View>
     );
-}
 
-// ── Filter pills ──────────────────────────────────────────────────────────────
+    if (!onPress) return content;
+
+    return (
+        <TouchableOpacity activeOpacity={0.85} onPress={() => onPress(event)}>
+            {content}
+        </TouchableOpacity>
+    );
+});
 
 function FilterPills({ items, selected, onSelect, style }) {
     return (
@@ -150,9 +140,7 @@ function FilterPills({ items, selected, onSelect, style }) {
     );
 }
 
-// ── Main component ────────────────────────────────────────────────────────────
-
-export default function FrigateEventsFeed({ adminUrl, authHeaders = {}, frigateService, frigateCameras = [], onEventPress }) {
+export default function FrigateEventsFeed({ adminUrl, authHeaders = {}, frigateCameras = [], onEventPress }) {
     const [events, setEvents] = useState([]);
     const [loading, setLoading] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
@@ -160,68 +148,131 @@ export default function FrigateEventsFeed({ adminUrl, authHeaders = {}, frigateS
     const [hasMore, setHasMore] = useState(true);
     const [cameraFilter, setCameraFilter] = useState('all');
     const [labelFilter, setLabelFilter] = useState('all');
-    const afterRef = useRef(null); // unix timestamp for pagination
+    const [selectedEvent, setSelectedEvent] = useState(null);
+
+    const beforeRef = useRef(null);
+    const fetchGenRef = useRef(0);
+    const loadMoreLockRef = useRef(false);
+    const abortRef = useRef(null);
+    const dedupeTrackerRef = useRef({ seenIds: new Set(), seenFingerprints: new Set() });
+    const authHeadersRef = useRef(authHeaders);
+    authHeadersRef.current = authHeaders;
 
     const base = adminUrl ? (adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`) : '';
 
-    const buildUrl = useCallback((after = null) => {
+    const buildUrl = useCallback((before = null, limit = INITIAL_PAGE_SIZE) => {
         const params = new URLSearchParams();
-        params.set('limit', PAGE_SIZE);
+        params.set('limit', String(limit));
         params.set('include_thumbnails', '0');
         if (cameraFilter !== 'all') params.set('camera', cameraFilter);
         if (labelFilter !== 'all') params.set('label', labelFilter);
-        if (after) params.set('before', after);
+        if (before != null) params.set('before', String(before));
         return `${base}api/frigate/events?${params.toString()}`;
     }, [base, cameraFilter, labelFilter]);
 
-    const fetchEvents = useCallback(async (reset = false) => {
-        if (!base) return;
-        try {
-            const url = buildUrl(reset ? null : afterRef.current);
-            const res = await fetch(url, { headers: authHeaders });
-            if (!res.ok) return;
-            const data = await res.json();
-            if (!Array.isArray(data)) return;
+    const loadPage = useCallback(async ({ reset, limit, signal }) => {
+        if (!base) return { ok: false, data: [] };
 
-            if (reset) {
-                setEvents(data);
-            } else {
-                setEvents(prev => [...prev, ...data]);
-            }
+        const url = buildUrl(reset ? null : beforeRef.current, limit);
+        const res = await fetch(url, { headers: authHeadersRef.current, signal });
+        if (!res.ok) return { ok: false, data: [] };
 
-            setHasMore(data.length === PAGE_SIZE);
-            if (data.length > 0) {
-                afterRef.current = data[data.length - 1].start_time;
-            }
-        } catch (e) {
-            // silently ignore
+        const data = await res.json();
+        if (!Array.isArray(data)) return { ok: false, data: [] };
+        return { ok: true, data: dedupeEventsById(data) };
+    }, [base, buildUrl]);
+
+    const applyPage = useCallback((data, reset, limit) => {
+        const tracker = dedupeTrackerRef.current;
+        if (reset) {
+            tracker.seenIds = new Set();
+            tracker.seenFingerprints = new Set();
         }
-    }, [buildUrl, authHeaders]);
 
-    // Initial load + filter changes
+        const incoming = dedupeEventsById(data, tracker.seenIds, tracker.seenFingerprints);
+
+        setEvents(prev => (reset ? incoming : [...prev, ...incoming]));
+
+        setHasMore(data.length >= limit);
+        if (data.length > 0) {
+            beforeRef.current = paginationBeforeCursor(data[data.length - 1]);
+        } else if (reset) {
+            beforeRef.current = null;
+        }
+
+        if (!reset && incoming.length === 0 && data.length >= limit) {
+            setHasMore(false);
+        }
+    }, []);
+
+    const runFetch = useCallback(async ({ reset, limit = reset ? INITIAL_PAGE_SIZE : PAGE_SIZE }) => {
+        if (!base) return;
+
+        if (abortRef.current) abortRef.current.abort();
+        const controller = new AbortController();
+        abortRef.current = controller;
+
+        const gen = fetchGenRef.current;
+
+        try {
+            const { ok, data } = await loadPage({ reset, limit, signal: controller.signal });
+            if (gen !== fetchGenRef.current) return;
+            if (!ok) {
+                if (reset) setEvents([]);
+                setHasMore(false);
+                return;
+            }
+            applyPage(data, reset, limit);
+        } catch (e) {
+            if (e?.name === 'AbortError') return;
+            if (gen === fetchGenRef.current && reset) setEvents([]);
+        }
+    }, [base, loadPage, applyPage]);
+
+    const handleEventPress = useCallback((event) => {
+        setSelectedEvent(event);
+        onEventPress?.(event);
+    }, [onEventPress]);
+
     useEffect(() => {
-        afterRef.current = null;
+        fetchGenRef.current += 1;
+        beforeRef.current = null;
+        dedupeTrackerRef.current = { seenIds: new Set(), seenFingerprints: new Set() };
         setLoading(true);
         setHasMore(true);
-        fetchEvents(true).finally(() => setLoading(false));
-    }, [cameraFilter, labelFilter]);
+
+        const gen = fetchGenRef.current;
+        runFetch({ reset: true }).finally(() => {
+            if (gen === fetchGenRef.current) setLoading(false);
+        });
+
+        return () => {
+            fetchGenRef.current += 1;
+            if (abortRef.current) abortRef.current.abort();
+        };
+    }, [cameraFilter, labelFilter, base, runFetch]);
 
     const onRefresh = useCallback(async () => {
-        afterRef.current = null;
+        beforeRef.current = null;
+        dedupeTrackerRef.current = { seenIds: new Set(), seenFingerprints: new Set() };
         setRefreshing(true);
         setHasMore(true);
-        await fetchEvents(true);
+        await runFetch({ reset: true });
         setRefreshing(false);
-    }, [fetchEvents]);
+    }, [runFetch]);
 
     const onLoadMore = useCallback(async () => {
-        if (loadingMore || !hasMore) return;
+        if (loadMoreLockRef.current || loadingMore || !hasMore || loading) return;
+        loadMoreLockRef.current = true;
         setLoadingMore(true);
-        await fetchEvents(false);
-        setLoadingMore(false);
-    }, [loadingMore, hasMore, fetchEvents]);
+        try {
+            await runFetch({ reset: false, limit: PAGE_SIZE });
+        } finally {
+            setLoadingMore(false);
+            loadMoreLockRef.current = false;
+        }
+    }, [loadingMore, hasMore, loading, runFetch]);
 
-    // Camera filter pills
     const cameraPills = [
         { value: 'all', label: 'All Cameras' },
         ...frigateCameras.map(c => ({ value: c.name || c.id, label: c.name || c.id })),
@@ -234,14 +285,14 @@ export default function FrigateEventsFeed({ adminUrl, authHeaders = {}, frigateS
         { value: 'dog', label: 'Animal' },
     ];
 
-    const renderItem = ({ item }) => (
+    const renderItem = useCallback(({ item }) => (
         <EventCard
             event={item}
             adminUrl={adminUrl}
-            authHeaders={authHeaders}
-            onPress={onEventPress}
+            authHeaders={authHeadersRef.current}
+            onPress={handleEventPress}
         />
-    );
+    ), [adminUrl, handleEventPress]);
 
     const renderFooter = () => {
         if (!loadingMore) return <View style={{ height: 32 }} />;
@@ -265,20 +316,16 @@ export default function FrigateEventsFeed({ adminUrl, authHeaders = {}, frigateS
 
     return (
         <View style={styles.container}>
-            {/* Filters block */}
+            <FrigateEventPlayerModal
+                visible={!!selectedEvent}
+                event={selectedEvent}
+                adminUrl={adminUrl}
+                authHeaders={authHeadersRef.current}
+                onClose={() => setSelectedEvent(null)}
+            />
             <View style={styles.filtersWrap}>
-                {/* Camera filter */}
-                <FilterPills
-                    items={cameraPills}
-                    selected={cameraFilter}
-                    onSelect={setCameraFilter}
-                />
-                {/* Label filter */}
-                <FilterPills
-                    items={labelPills}
-                    selected={labelFilter}
-                    onSelect={setLabelFilter}
-                />
+                <FilterPills items={cameraPills} selected={cameraFilter} onSelect={setCameraFilter} />
+                <FilterPills items={labelPills} selected={labelFilter} onSelect={setLabelFilter} />
             </View>
 
             {loading ? (
@@ -289,14 +336,18 @@ export default function FrigateEventsFeed({ adminUrl, authHeaders = {}, frigateS
             ) : (
                 <FlatList
                     data={events}
-                    keyExtractor={item => item.id}
+                    keyExtractor={item => String(item.id)}
                     renderItem={renderItem}
                     numColumns={2}
                     columnWrapperStyle={styles.columnWrapper}
                     ListEmptyComponent={renderEmpty}
                     ListFooterComponent={renderFooter}
                     onEndReached={onLoadMore}
-                    onEndReachedThreshold={0.3}
+                    onEndReachedThreshold={0.4}
+                    initialNumToRender={6}
+                    maxToRenderPerBatch={8}
+                    windowSize={7}
+                    removeClippedSubviews
                     refreshControl={
                         <RefreshControl
                             refreshing={refreshing}
@@ -311,8 +362,6 @@ export default function FrigateEventsFeed({ adminUrl, authHeaders = {}, frigateS
         </View>
     );
 }
-
-// ── Styles ────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
     container: {
@@ -374,6 +423,11 @@ const styles = StyleSheet.create({
         backgroundColor: '#0f0f1e',
         position: 'relative',
     },
+    thumbFallback: {
+        backgroundColor: '#111',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
     labelBadge: {
         position: 'absolute',
         bottom: 5,
@@ -396,13 +450,20 @@ const styles = StyleSheet.create({
         fontSize: 9,
         fontFamily: CF.regular,
     },
-    clipBadge: {
+    playBadge: {
         position: 'absolute',
-        top: 5,
-        right: 5,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        borderRadius: 4,
-        padding: 3,
+        top: '50%',
+        left: '50%',
+        marginTop: -16,
+        marginLeft: -16,
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        backgroundColor: 'rgba(0,0,0,0.55)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.25)',
     },
     info: {
         padding: 8,

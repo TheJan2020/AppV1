@@ -8,6 +8,7 @@ import SceneCard from './SceneCard';
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { authFetch } from '../../utils/authFetch';
 import { CF } from '../../utils/typography';
+import ModalBackdrop from '../ModalBackdrop';
 
 // ── Icon picker ───────────────────────────────────────────────────────────────
 function getSceneIcon(name = '') {
@@ -167,6 +168,7 @@ function EditScenesModal({ visible, onClose, adminUrl, onSave }) {
             onRequestClose={onClose}
         >
             <View style={modal.overlay}>
+                <ModalBackdrop onPress={onClose} />
                 <Animated.View style={[modal.sheet, { transform: [{ translateY: sheetAnim }] }]}>
                     {/* Handle — drag down to dismiss */}
                     <View style={modal.handleTouchArea} {...panResponder.panHandlers}>
@@ -254,9 +256,16 @@ function EditScenesModal({ visible, onClose, adminUrl, onSave }) {
     );
 }
 
+const SCENE_COL_GAP = 10;
+
 // ── Main component ────────────────────────────────────────────────────────────
-export default function QuickScenes({ scenes = [], onScenePress, adminUrl, onScenesUpdated }) {
+export default function QuickScenes({ scenes = [], onScenePress, adminUrl, onScenesUpdated, columns = 2 }) {
     const [editVisible, setEditVisible] = useState(false);
+    const [gridWidth, setGridWidth] = useState(0);
+    const sceneCellW =
+        gridWidth > 0
+            ? Math.floor((gridWidth - SCENE_COL_GAP * (columns - 1)) / columns)
+            : null;
 
     return (
         <View style={styles.container}>
@@ -279,9 +288,22 @@ export default function QuickScenes({ scenes = [], onScenePress, adminUrl, onSce
                     <Text style={styles.emptyText}>No scenes — tap Edit to add some</Text>
                 </View>
             ) : (
-                <View style={styles.grid}>
+                <View
+                    style={styles.grid}
+                    onLayout={(e) => {
+                        const w = e.nativeEvent.layout.width;
+                        if (w > 0 && w !== gridWidth) setGridWidth(w);
+                    }}
+                >
                     {scenes.map((scene) => (
-                        <View key={scene.id} style={{ width: '48.5%', paddingBottom: 6 }}>
+                        <View
+                            key={scene.id}
+                            style={[
+                                { paddingBottom: 6 },
+                                sceneCellW != null && { width: sceneCellW },
+                                columns >= 4 && styles.tabletCell,
+                            ]}
+                        >
                             <SceneCard id={scene.id} label={scene.label} onPress={onScenePress} />
                         </View>
                     ))}
@@ -327,40 +349,15 @@ const styles = StyleSheet.create({
         fontFamily: CF.semibold,
         letterSpacing: 1.4,
     },
-    // 2-column grid — no scroll
     grid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        gap: 10,
+        gap: SCENE_COL_GAP,
     },
-    card: {
-        // (100% - gap) / 2 columns
-        width: '48.5%',
-        height: 62,
-        backgroundColor: '#12132a',
-        borderRadius: 48,
-        borderWidth: 1,
-        borderColor: '#212136',
-        paddingHorizontal: 12,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-    },
-    iconContainer: {
-        width: 36,
-        height: 36,
-        borderRadius: 0,
-        backgroundColor: 'transparent',
-        alignItems: 'center',
-        justifyContent: 'center',
+    // Tablet: exactly 4 per row — flex prevents rounding overflow past container width
+    tabletCell: {
+        flexGrow: 0,
         flexShrink: 0,
-    },
-    label: {
-        flex: 1,
-        color: '#ededf5',
-        fontSize: 13,
-        fontFamily: CF.medium,
-        letterSpacing: 0.1,
     },
     emptyContainer: {
         padding: 20,

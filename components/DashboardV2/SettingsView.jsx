@@ -1,7 +1,9 @@
-import { useState, useEffect, memo, useMemo } from 'react';
+import { useState, useEffect, memo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, FlatList, TextInput, Alert, ActivityIndicator, Switch } from 'react-native';
 import { Colors } from '../../constants/Colors';
-import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles, Monitor, LayoutGrid, Music } from 'lucide-react-native';
+import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles, Monitor, LayoutGrid, Mic } from 'lucide-react-native';
+import { getButlerBackendOverride, setButlerBackendUrl, checkButlerBackendHealth } from '../../utils/butlerBackend';
+import { getNativeAudioStatus } from '../../services/butler/nativeAudio';
 import { router } from 'expo-router';
 import { AIService } from '../../services/ai';
 import * as SecureStore from 'expo-secure-store';
@@ -11,7 +13,12 @@ import MonitoredEntitiesModal from './MonitoredEntitiesModal';
 import AlertEntitiesModal from './AlertEntitiesModal';
 import MyPreferencesModal from './MyPreferencesModal';
 import PreferencedEntitiesModal from './PreferencedEntitiesModal';
-import { getMusicAssistantPlayersByArea } from '../../utils/musicAssistantAreas';
+import { Heading, CF } from '../../utils/typography';
+
+function capitalizeWords(str) {
+    if (!str) return '';
+    return str.replace(/\b\w/g, c => c.toUpperCase());
+}
 
 function SettingsView({
     areas = [],
@@ -28,31 +35,37 @@ function SettingsView({
     showVoiceAssistant, // Prop from parent
     showPreferenceButton, // Prop from parent
     adminUrl, // From SecureStore profile
+    userName = '',
     onEntitiesChanged, // Called after monitored-entity changes so dashboard refreshes refs
-    /** Home Assistant `config_entries/get` entry_ids for domain `music_assistant` */
-    musicAssistantEntryIds = [],
 }) {
     const [activeTab, setActiveTab] = useState('general');
     const [selectedArea, setSelectedArea] = useState(null);
     const [faceIdEnabled, setFaceIdEnabled] = useState(false);
+    const [storedUserName, setStoredUserName] = useState('');
+    const [butlerBackendUrl, setButlerBackendUrlState] = useState('');
+    const [butlerHealth, setButlerHealth] = useState(null);
 
     useEffect(() => {
         SecureStore.getItemAsync('face_id_enabled').then(val => {
             setFaceIdEnabled(val === 'true');
         });
+        getButlerBackendOverride().then(setButlerBackendUrlState);
     }, []);
 
-    const musicAssistantByArea = useMemo(
-        () =>
-            getMusicAssistantPlayersByArea(
-                registryDevices,
-                registryEntities,
-                entities,
-                registryAreas?.length ? registryAreas : areas,
-                musicAssistantEntryIds
-            ),
-        [registryDevices, registryEntities, entities, areas, registryAreas, musicAssistantEntryIds]
-    );
+    useEffect(() => {
+        if (userName) return;
+        SecureStore.getItemAsync('logged_in_user').then(json => {
+            if (!json) return;
+            try {
+                const user = JSON.parse(json);
+                if (user?.name) setStoredUserName(user.name);
+            } catch {
+                // ignore invalid stored user
+            }
+        });
+    }, [userName]);
+
+    const displayName = capitalizeWords(userName || storedUserName) || 'User';
 
     // Modals
     const [monitoredModalVisible, setMonitoredModalVisible] = useState(false);
@@ -447,6 +460,55 @@ function SettingsView({
                     />
                 </View>
 
+                <View style={[styles.listItem, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
+                    <View style={styles.itemInfo}>
+                        <View style={styles.iconContainer}>
+                            <Mic size={20} color={Colors.text} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.itemName}>Butler override (optional)</Text>
+                            <Text style={styles.itemSub}>Leave empty to use App Backend (HTTPS). For local dev only: direct Butlerv1 URL</Text>
+                        </View>
+                    </View>
+                    <TextInput
+                        style={styles.butlerUrlInput}
+                        value={butlerBackendUrl}
+                        onChangeText={setButlerBackendUrlState}
+                        placeholder="Leave empty — or http://192.168.100.67:8787"
+                        placeholderTextColor="rgba(255,255,255,0.25)"
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        keyboardType="url"
+                    />
+                    <View style={{ flexDirection: 'row', gap: 10 }}>
+                        <TouchableOpacity
+                            style={styles.butlerUrlBtn}
+                            onPress={async () => {
+                                await setButlerBackendUrl(butlerBackendUrl);
+                                const native = getNativeAudioStatus();
+                                const h = await checkButlerBackendHealth();
+                                setButlerHealth(h);
+                                if (!native.ready) {
+                                    Alert.alert('Voice build required', native.message ?? 'Rebuild on a physical iPhone.');
+                                    return;
+                                }
+                                const via = h.proxied ? 'via App Backend (HTTPS)' : 'direct Butlerv1';
+                                Alert.alert(
+                                    h.ok ? 'Butler reachable' : 'Butler unreachable',
+                                    h.ok
+                                        ? `${via}\n${h.base}\nHA ready: ${h.data?.ha_ready ? 'yes' : 'no'} · ${h.data?.entities_cached ?? 0} entities`
+                                        : (h.error || 'Check AppBackend BUTLER_URL and Butlerv1 on port 8787'),
+                                );
+                            }}
+                        >
+                            <Text style={styles.butlerUrlBtnText}>Save & test</Text>
+                        </TouchableOpacity>
+                    </View>
+                    {butlerHealth?.ok === false && butlerHealth?.error ? (
+                        <Text style={styles.butlerHealthErr}>{butlerHealth.error}</Text>
+                    ) : null}
+                </View>
+
                 {/* Show Preference Button Toggle */}
                 <View style={styles.listItem}>
                     <View style={styles.itemInfo}>
@@ -464,37 +526,6 @@ function SettingsView({
                         trackColor={{ false: '#767577', true: Colors.primary }}
                         thumbColor={showPreferenceButton ? '#fff' : '#f4f3f4'}
                     />
-                </View>
-            </View>
-
-            <View style={styles.section}>
-                <Text style={styles.sectionHeader}>Music Assistant</Text>
-                <View style={styles.maAreaCard}>
-                    <View style={styles.maAreaCardHeader}>
-                        <Music size={18} color={Colors.primary} />
-                        <Text style={styles.maAreaCardTitle}>Players by Home Assistant area</Text>
-                    </View>
-                    <Text style={styles.maAreaCardHint}>
-                        Players are matched to Music Assistant via HA config entries (domain music_assistant), then grouped by entity/device area.
-                        If nothing appears, reload after HA connects so config_entries can load.
-                    </Text>
-                    {musicAssistantByArea.length === 0 ? (
-                        <Text style={styles.maAreaEmpty}>
-                            No Music Assistant media_player entities detected (registry platform music_assistant or state mass_player_type).
-                        </Text>
-                    ) : (
-                        musicAssistantByArea.map(g => (
-                            <View key={g.areaKey} style={styles.maAreaGroup}>
-                                <Text style={styles.maAreaName}>{g.areaName}</Text>
-                                {g.players.map(p => (
-                                    <Text key={p.entityId} style={styles.maPlayerLine} numberOfLines={2}>
-                                        {p.displayName}
-                                        <Text style={styles.maEntityIdSuffix}>{` · ${p.entityId}`}</Text>
-                                    </Text>
-                                ))}
-                            </View>
-                        ))
-                    )}
                 </View>
             </View>
 
@@ -697,7 +728,7 @@ function SettingsView({
                 <View style={[styles.iconContainer, { width: 80, height: 80, borderRadius: 40, marginBottom: 16 }]}>
                     <User size={40} color={Colors.text} />
                 </View>
-                <Text style={styles.profileName}>Zeyad</Text>
+                <Text style={styles.profileName}>{displayName}</Text>
                 <Text style={styles.profileRole}>Administrator</Text>
             </View>
 
@@ -837,13 +868,13 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         paddingTop: 60,
+        paddingHorizontal: 20,
     },
     header: {
         marginBottom: 20,
     },
     title: {
-        fontSize: 32,
-        fontWeight: 'bold',
+        ...Heading.xl,
         color: '#fff',
     },
     tabs: {
@@ -864,11 +895,13 @@ const styles = StyleSheet.create({
     },
     tabText: {
         color: Colors.textDim,
-        fontWeight: '600',
+        fontFamily: CF.semibold,
+        fontSize: 13,
     },
     activeTabText: {
         color: Colors.text,
-        fontWeight: 'bold',
+        fontFamily: CF.bold,
+        fontSize: 13,
     },
     content: {
         flex: 1,
@@ -901,7 +934,7 @@ const styles = StyleSheet.create({
     itemName: {
         color: Colors.text,
         fontSize: 16,
-        fontWeight: '500',
+        fontFamily: CF.medium,
         flex: 1, // Added flex to handle long texts
     },
     itemSub: {
@@ -918,12 +951,11 @@ const styles = StyleSheet.create({
     backText: {
         color: Colors.primary,
         fontSize: 16,
-        fontWeight: '600',
+        fontFamily: CF.semibold,
     },
     detailTitle: {
+        ...Heading.md,
         color: Colors.text,
-        fontSize: 20,
-        fontWeight: 'bold',
         marginBottom: 16,
     },
     deviceItem: {
@@ -1095,58 +1127,33 @@ const styles = StyleSheet.create({
         fontSize: 16,
         fontWeight: '600',
     },
-    maAreaCard: {
-        marginHorizontal: 16,
-        marginBottom: 8,
-        padding: 16,
-        borderRadius: 14,
-        backgroundColor: 'rgba(255,255,255,0.04)',
+    butlerUrlInput: {
+        backgroundColor: 'rgba(255,255,255,0.06)',
+        borderRadius: 10,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        color: '#fff',
+        fontSize: 14,
+        fontFamily: CF.regular,
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.08)',
     },
-    maAreaCardHeader: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 10,
-        marginBottom: 10,
+    butlerUrlBtn: {
+        alignSelf: 'flex-start',
+        backgroundColor: 'rgba(123,47,190,0.25)',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 10,
     },
-    maAreaCardTitle: {
-        color: Colors.text,
-        fontSize: 15,
-        fontWeight: '600',
-    },
-    maAreaCardHint: {
-        color: Colors.textDim,
-        fontSize: 12,
-        lineHeight: 18,
-        marginBottom: 12,
-    },
-    maAreaEmpty: {
-        color: Colors.textDim,
+    butlerUrlBtnText: {
+        color: '#c9a8f0',
         fontSize: 13,
-        lineHeight: 20,
+        fontFamily: CF.semibold,
     },
-    maAreaGroup: {
-        marginTop: 12,
-        paddingTop: 12,
-        borderTopWidth: StyleSheet.hairlineWidth,
-        borderTopColor: 'rgba(255,255,255,0.08)',
-    },
-    maAreaName: {
-        color: Colors.text,
-        fontSize: 15,
-        fontWeight: '600',
-        marginBottom: 6,
-    },
-    maPlayerLine: {
-        color: Colors.textDim,
-        fontSize: 13,
-        lineHeight: 20,
-        marginBottom: 4,
-    },
-    maEntityIdSuffix: {
-        color: 'rgba(255,255,255,0.35)',
+    butlerHealthErr: {
         fontSize: 12,
+        color: Colors.error,
+        fontFamily: CF.regular,
     },
 });
 

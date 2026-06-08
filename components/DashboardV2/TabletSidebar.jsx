@@ -3,6 +3,7 @@ import { Video, LayoutGrid, Home, MessageSquare, Settings, Tablet } from 'lucide
 import { BlurView } from 'expo-blur';
 
 import { memo } from 'react';
+import { CF } from '../../utils/typography';
 
 function TabletSidebar({ activeTab, onTabPress }) {
     const tabs = [
@@ -78,11 +79,12 @@ const styles = StyleSheet.create({
     label: {
         color: 'rgba(255,255,255,0.4)',
         fontSize: 10,
-        fontWeight: '500',
+        fontFamily: CF.medium,
     },
     activeLabel: {
         color: '#fff',
-        fontWeight: '600',
+        fontFamily: CF.semibold,
+        fontSize: 10,
     },
 });
 

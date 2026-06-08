@@ -1,4 +1,5 @@
 import React from 'react';
+import { Heading } from '../../utils/typography';
 import { View, Text, StyleSheet, TouchableOpacity, ImageBackground } from 'react-native';
 import DraggableFlatList, { ScaleDecorator } from 'react-native-draggable-flatlist';
 import { Sofa, Bed, Bath, Utensils, Monitor, Lamp, Satellite, Thermometer, Droplets, Lightbulb, Fan, DoorOpen, GripVertical } from 'lucide-react-native';
@@ -70,7 +71,6 @@ export default function DraggableRoomList({ rooms, onOrderChange, registryEntiti
 const styles = StyleSheet.create({
     listContent: {
         paddingBottom: 20,
-        paddingHorizontal: 20,
     },
     rowItem: {
         flexDirection: 'row',
@@ -99,8 +99,7 @@ const styles = StyleSheet.create({
     roomName: {
         flex: 1,
         color: 'white',
-        fontSize: 16,
-        fontWeight: '600',
+        ...Heading.sm,
     },
     dragHandle: {
         padding: 8

@@ -4,6 +4,7 @@ import { BlurView } from 'expo-blur';
 import { X, Wifi, Users, Router, Cpu, Activity, Clock, Link, CheckCircle, XCircle } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
 import * as Haptics from 'expo-haptics';
+import ModalBackdrop from '../ModalBackdrop';
 
 export default function NetworkModal({ visible, onClose, config, entities, onToggle }) {
     const [networks, setNetworks] = useState([]);
@@ -205,6 +206,7 @@ export default function NetworkModal({ visible, onClose, config, entities, onTog
             <View style={styles.container}>
                 <BlurView intensity={20} style={StyleSheet.absoluteFill} tint="dark" />
                 <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.7)' }]} />
+                <ModalBackdrop onPress={onClose} />
 
                 <View style={styles.content}>
                     <View style={styles.header}>

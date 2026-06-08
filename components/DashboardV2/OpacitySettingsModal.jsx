@@ -4,6 +4,7 @@ import { BlurView } from 'expo-blur';
 import { X, Check } from 'lucide-react-native';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import { runOnJS } from 'react-native-reanimated';
+import ModalBackdrop from '../ModalBackdrop';
 
 const COLORS = [
     { id: 'black', value: '#000000', label: 'Black' },
@@ -72,7 +73,9 @@ export default function OpacitySettingsModal({
             visible={visible}
             onRequestClose={onClose}
         >
-            <BlurView intensity={20} tint="dark" style={styles.blurContainer}>
+            <View style={styles.blurContainer}>
+                <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+                <ModalBackdrop onPress={onClose} />
                 <View style={styles.modalContainer}>
                     <ScrollView contentContainerStyle={{ alignItems: 'center', paddingBottom: 20 }} showsVerticalScrollIndicator={false}>
                         <View style={styles.header}>
@@ -152,7 +155,7 @@ export default function OpacitySettingsModal({
                     </ScrollView>
 
                 </View>
-            </BlurView>
+            </View>
         </Modal>
     );
 }

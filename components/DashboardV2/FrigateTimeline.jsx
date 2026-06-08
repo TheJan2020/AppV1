@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image, FlatList, ActivityIndicator } from 'react-native';
 import { Play } from 'lucide-react-native';
+import { dedupeEventsById } from '../../utils/frigateEvents';
 
 export default function FrigateTimeline({ events, onEventPress, onLoadMore, hasMore, loadingMore, selectedEventId, listRef, adminUrl, authHeaders, listHeader }) {
 
@@ -8,12 +9,7 @@ export default function FrigateTimeline({ events, onEventPress, onLoadMore, hasM
     // - a 'header' row (spans full width)
     // - 'pair' rows with up to 2 event cards
     const rows = useMemo(() => {
-        const seen = new Set();
-        const deduped = events.filter(e => {
-            if (!e?.id || seen.has(e.id)) return false;
-            seen.add(e.id);
-            return true;
-        });
+        const deduped = dedupeEventsById(events);
 
         const groups = {};
         deduped.forEach(event => {

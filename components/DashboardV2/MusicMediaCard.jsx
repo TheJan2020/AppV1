@@ -22,10 +22,23 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../../constants/Colors';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import ServiceMessageToast from './ServiceMessageToast';
+import {
+    formatHaServiceError,
+    getLastPlayedMedia,
+    isEmptyQueueError,
+} from '../../utils/haErrorMessages';
 import { SvgUri } from 'react-native-svg';
 import { CF } from '../../utils/typography';
 import { isMusicAssistantMediaPlayer } from '../../utils/roomHelpers';
+import {
+    getMediaPlayerDuration,
+    getMediaPlayerPosition,
+    isMediaPlayerPaused,
+    isMediaPlayerPlaying,
+    pickMediaControlTarget,
+} from '../../utils/mediaPlayerHelpers';
 
 const TV_CARD_BG = '#09091A';
 const PROGRESS_FILL = '#00C2FF';
@@ -68,15 +81,17 @@ export default function MusicMediaCard({
 }) {
     if (!player?.stateObj) return null;
 
-    const activeChild =
-        childPlayers.find(c => ['playing', 'buffering', 'on', 'paused'].includes(c.stateObj?.state)) ||
-        null;
-    const targetEntity = activeChild || player;
+    const targetEntity = pickMediaControlTarget(player, childPlayers, musicAssistantEntryIds);
     const targetState = targetEntity.stateObj.state;
     const targetAttributes = targetEntity.stateObj.attributes || {};
 
-    const isPlaying = ['playing', 'buffering'].includes(targetState);
-    const duration = targetAttributes.media_duration || 0;
+    const targetStateRef = useRef(targetState);
+    const targetAttributesRef = useRef(targetAttributes);
+    targetStateRef.current = targetState;
+    targetAttributesRef.current = targetAttributes;
+
+    const isPlaying = isMediaPlayerPlaying(targetState, targetAttributes);
+    const duration = getMediaPlayerDuration(targetAttributes);
     const mediaTitle =
         targetAttributes.media_title ||
         targetAttributes.media_content_id ||
@@ -90,43 +105,67 @@ export default function MusicMediaCard({
     const [speakersOpen, setSpeakersOpen] = useState(false);
     const [artFailed, setArtFailed] = useState(false);
 
+    const [serviceMessage, setServiceMessage] = useState(null);
     const [tracksModalOpen, setTracksModalOpen] = useState(false);
     const [tracksLoading, setTracksLoading] = useState(false);
     const [tracksError, setTracksError] = useState(null);
     const [trackRows, setTrackRows] = useState([]);
     const [queueLabel, setQueueLabel] = useState(null);
 
-    const [position, setPosition] = useState(targetAttributes.media_position || 0);
-    const [isScrubbing, setIsScrubbing] = useState(false);
+  const [scrubPosition, setScrubPosition] = useState(null);
+  const [isScrubbing, setIsScrubbing] = useState(false);
+  /** Forces re-render while playing so timeline updates every frame (HA often leaves media_position at 0). */
+  const [playClock, setPlayClock] = useState(0);
 
-    const registryRowForMa = activeChild || player;
+  const registryRowForMa = targetEntity;
     const isMassPlayer = isMusicAssistantMediaPlayer(
         registryRowForMa,
         registryRowForMa.stateObj,
         musicAssistantEntryIds
     );
 
-    useEffect(() => {
-        if (!isScrubbing) setPosition(targetAttributes.media_position || 0);
-    }, [targetAttributes.media_position, isScrubbing]);
+  useEffect(() => {
+    if (!isPlaying || isScrubbing || duration <= 0) {
+      setPlayClock(0);
+      return undefined;
+    }
+    let frameId;
+    const onFrame = () => {
+      setPlayClock(Date.now());
+      frameId = requestAnimationFrame(onFrame);
+    };
+    frameId = requestAnimationFrame(onFrame);
+    return () => cancelAnimationFrame(frameId);
+  }, [isPlaying, isScrubbing, duration]);
 
-    useEffect(() => {
-        let interval;
-        if (targetState === 'playing' && !isScrubbing && duration > 0) {
-            interval = setInterval(() => {
-                setPosition(prev => Math.min(prev + 1, duration));
-            }, 1000);
-        }
-        return () => clearInterval(interval);
-    }, [targetState, isScrubbing, duration]);
+  const livePosition = isScrubbing
+    ? scrubPosition ?? 0
+    : getMediaPlayerPosition(targetStateRef.current, targetAttributesRef.current);
+  void playClock;
 
     useEffect(() => {
         setArtFailed(false);
     }, [targetAttributes.entity_picture]);
 
-    const activeMapping = activeChild
-        ? mediaMappings.find(m => m.entity_id === activeChild.entity_id)
-        : mapping;
+  useEffect(() => {
+    if (!__DEV__) return;
+    console.log('[Music HA] socket attrs', {
+      entity: targetEntity.entity_id,
+      state: targetState,
+      media_position: targetAttributes.media_position,
+      media_position_updated_at: targetAttributes.media_position_updated_at,
+      media_duration: targetAttributes.media_duration,
+    });
+  }, [
+    targetEntity.entity_id,
+    targetState,
+    targetAttributes.media_position,
+    targetAttributes.media_position_updated_at,
+    targetAttributes.media_duration,
+  ]);
+
+    const activeMapping =
+        mediaMappings.find(m => m.entity_id === targetEntity.entity_id) || mapping;
     const activeIconUrl =
         activeMapping?.mediaType?.icon_path && adminUrl
             ? `${adminUrl}${activeMapping.mediaType.icon_path}`
@@ -143,37 +182,134 @@ export default function MusicMediaCard({
         return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
     };
 
-    const fmtPos = formatTimeShort(position);
-    const fmtDur = formatTimeShort(duration);
+  const fmtPos = formatTimeShort(livePosition);
+  const fmtDur = formatTimeShort(duration);
 
     const source_list = targetAttributes.source_list ?? player.stateObj.attributes?.source_list;
     const source = targetAttributes.source ?? player.stateObj.attributes?.source;
     const songListEnabled =
         (isMassPlayer && !!browseMedia) || (Array.isArray(source_list) && source_list.length > 0);
 
-    const handleAction = (entity, service, data = {}) => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        onUpdate(entity.entity_id, 'media_player', service, data);
+    const dismissServiceMessage = useCallback(() => setServiceMessage(null), []);
+
+    const showServiceError = useCallback(
+        (err, action) => {
+            const formatted = formatHaServiceError(err?.message ?? err, {
+                displayName: player.displayName || targetEntity.displayName,
+                action,
+            });
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+            setServiceMessage(formatted);
+        },
+        [player.displayName, targetEntity.displayName]
+    );
+
+    const handleAction = async (entity, service, data = {}, options = {}) => {
+        const { haptics = true, showError = true } = options;
+        if (haptics) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        if (!onUpdate) return;
+        try {
+            const result = onUpdate(entity.entity_id, 'media_player', service, data);
+            if (result != null && typeof result.then === 'function') await result;
+        } catch (err) {
+            if (showError) showServiceError(err, service);
+            throw err;
+        }
     };
 
-    const handlePlayPause = () => {
-        if (['playing', 'buffering'].includes(targetState)) {
-            handleAction(targetEntity, 'media_pause');
-            return;
-        }
-        if (targetState === 'paused' || ['idle', 'off', 'on', 'standby'].includes(targetState)) {
-            handleAction(targetEntity, 'media_play');
-            return;
-        }
-        handleAction(targetEntity, 'media_play_pause');
+    const playLastTrack = async (last, options = {}) => {
+        if (!last?.media_content_id) return false;
+        await handleAction(
+            targetEntity,
+            'play_media',
+            {
+                media_content_id: last.media_content_id,
+                media_content_type: last.media_content_type || 'music',
+            },
+            options
+        );
+        return true;
     };
 
-    const handleSeekDelta = delta => {
-        if (!duration) return;
-        const next = Math.max(0, Math.min(duration, position + delta));
-        setPosition(next);
-        handleAction(targetEntity, 'media_seek', { seek_position: next });
+    const queryQueueEmpty = async () => {
+        if (!callServiceWithResponse || !isMassPlayer) return null;
+        for (const domain of ['music_assistant', 'mass']) {
+            try {
+                const raw = await callServiceWithResponse(domain, 'get_queue', {
+                    entity_id: targetEntity.entity_id,
+                });
+                const q = unwrapHaResponse(raw);
+                if (q && typeof q.items === 'number') return q.items === 0;
+            } catch (_) {
+                /* try next domain */
+            }
+        }
+        return null;
     };
+
+    const resolveLastPlayed = () => {
+        const fromTarget = getLastPlayedMedia(targetAttributes);
+        if (fromTarget) return fromTarget;
+        const fromParent = getLastPlayedMedia(player.stateObj?.attributes);
+        if (fromParent) return fromParent;
+        for (const child of childPlayers) {
+            const fromChild = getLastPlayedMedia(child.stateObj?.attributes);
+            if (fromChild) return fromChild;
+        }
+        return null;
+    };
+
+    /** Play / resume: empty queue → replay last track from HA entity attrs. */
+    const tryStartPlayback = async () => {
+        const last = resolveLastPlayed();
+        const idleLike = ['idle', 'off', 'standby', 'on'].includes(targetState);
+
+        if (idleLike && last) {
+            const queueEmpty = await queryQueueEmpty();
+            if (queueEmpty === true) {
+                await playLastTrack(last, { showError: true });
+                return;
+            }
+        }
+
+        try {
+            await handleAction(targetEntity, 'media_play', {}, { showError: false });
+        } catch (err) {
+            const msg = err?.message ?? String(err);
+            if (last && isEmptyQueueError(msg)) {
+                await playLastTrack(last, { showError: true });
+                return;
+            }
+            showServiceError(err, 'media_play');
+        }
+    };
+
+    const handlePlayPause = async () => {
+        try {
+            if (isPlaying) {
+                await handleAction(targetEntity, 'media_pause', {}, { showError: true });
+                return;
+            }
+            if (isMediaPlayerPaused(targetState)) {
+                await handleAction(targetEntity, 'media_play', {}, { showError: true });
+                return;
+            }
+            if (['idle', 'off', 'standby', 'on'].includes(targetState)) {
+                await tryStartPlayback();
+                return;
+            }
+            await handleAction(targetEntity, 'media_play_pause', {}, { showError: true });
+        } catch (_) {
+            /* toast already shown */
+        }
+    };
+
+  const handleSeekDelta = delta => {
+    if (!duration) return;
+    const next = Math.max(0, Math.min(duration, livePosition + delta));
+    setScrubPosition(next);
+    handleAction(targetEntity, 'media_seek', { seek_position: next });
+  };
 
     const handleSourceSelect = src => handleAction(player, 'select_source', { source: src });
 
@@ -368,6 +504,7 @@ export default function MusicMediaCard({
 
     return (
         <>
+            <ServiceMessageToast message={serviceMessage} onDismiss={dismissServiceMessage} />
             <View style={[styles.wrap, needsChange && { borderColor: accentColor, borderWidth: 2 }]}>
                 <Text style={styles.cardCaption} numberOfLines={1}>
                     {player.displayName || 'Music'}
@@ -409,14 +546,15 @@ export default function MusicMediaCard({
                             </View>
                             <TimelineScrubber
                                 duration={duration}
-                                position={position}
+                                position={livePosition}
                                 onScrub={val => {
                                     setIsScrubbing(true);
-                                    setPosition(val * duration);
+                                    setScrubPosition(val * duration);
                                 }}
                                 onCommit={val => {
                                     handleAction(targetEntity, 'media_seek', { seek_position: val * duration });
                                     setIsScrubbing(false);
+                                    setScrubPosition(null);
                                 }}
                             />
                         </View>
@@ -465,14 +603,15 @@ export default function MusicMediaCard({
                                     </View>
                                     <TimelineScrubber
                                         duration={duration}
-                                        position={position}
+                                        position={livePosition}
                                         onScrub={val => {
                                             setIsScrubbing(true);
-                                            setPosition(val * duration);
+                                            setScrubPosition(val * duration);
                                         }}
                                         onCommit={val => {
                                             handleAction(targetEntity, 'media_seek', { seek_position: val * duration });
                                             setIsScrubbing(false);
+                                            setScrubPosition(null);
                                         }}
                                     />
                                 </View>
@@ -629,18 +768,22 @@ export default function MusicMediaCard({
 }
 
 function TimelineScrubber({ duration, position, onScrub, onCommit }) {
-    const [width, setWidth] = useState(0);
+    const [trackWidth, setTrackWidth] = useState(0);
+    const progress = duration > 0 ? Math.max(0, Math.min(1, position / duration)) : 0;
+    const fillWidth = trackWidth > 0 ? Math.round(trackWidth * progress) : 0;
+
     const handle = (e, isEnd = false) => {
-        if (width === 0 || !duration) return;
+        if (trackWidth === 0 || !duration) return;
         const x = e.nativeEvent.locationX;
-        const progress = Math.max(0, Math.min(x, width)) / width;
-        if (isEnd) onCommit(progress);
-        else onScrub(progress);
+        const ratio = Math.max(0, Math.min(x, trackWidth)) / trackWidth;
+        if (isEnd) onCommit(ratio);
+        else onScrub(ratio);
     };
+
     return (
         <View
             style={styles.timelineTrackFull}
-            onLayout={e => setWidth(e.nativeEvent.layout.width)}
+            onLayout={e => setTrackWidth(e.nativeEvent.layout.width)}
             onTouchMove={e => handle(e, false)}
             onTouchEnd={e => handle(e, true)}
         >
@@ -648,7 +791,7 @@ function TimelineScrubber({ duration, position, onScrub, onCommit }) {
                 style={[
                     styles.timelineFill,
                     {
-                        width: `${Math.min(100, duration ? (position / duration) * 100 : 0)}%`,
+                        width: fillWidth,
                         backgroundColor: PROGRESS_FILL,
                     },
                 ]}

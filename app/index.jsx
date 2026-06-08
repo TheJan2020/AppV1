@@ -25,12 +25,16 @@ export default function Splash() {
         );
         opacity.value = withDelay(500, withSpring(1));
 
-        const timeout = setTimeout(async () => {
+        let cancelled = false;
+        (async () => {
             try {
-                const isLoggedIn = await SecureStore.getItemAsync('is_logged_in');
-                const activeProfileId = await SecureStore.getItemAsync('ha_active_profile_id');
-                const profilesJson = await SecureStore.getItemAsync('ha_profiles');
-                const userJson = await SecureStore.getItemAsync('logged_in_user');
+                const [isLoggedIn, activeProfileId, profilesJson, userJson] = await Promise.all([
+                    SecureStore.getItemAsync('is_logged_in'),
+                    SecureStore.getItemAsync('ha_active_profile_id'),
+                    SecureStore.getItemAsync('ha_profiles'),
+                    SecureStore.getItemAsync('logged_in_user'),
+                ]);
+                if (cancelled) return;
 
                 // Restore session only if we have a valid profile AND a saved user
                 if (isLoggedIn === 'true' && activeProfileId && profilesJson && userJson) {
@@ -51,11 +55,12 @@ export default function Splash() {
             } catch (e) {
                 console.log('[Splash] Error checking session:', e);
             }
-            // No valid session — go to login
-            router.replace('/login');
-        }, 2500);
+            if (!cancelled) router.replace('/login');
+        })();
 
-        return () => clearTimeout(timeout);
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
     const animatedStyle = useAnimatedStyle(() => ({

@@ -7,6 +7,7 @@ import { PieChart, LineChart } from 'react-native-chart-kit';
 import AnalogClockPresence from '../components/AnalogClockPresence';
 import { getAdminUrl } from '../utils/storage';
 import { authFetch } from '../utils/authFetch';
+import ModalBackdrop from '../components/ModalBackdrop';
 
 const screenWidth = Dimensions.get('window').width;
 
@@ -580,8 +581,9 @@ export default function StatisticsPage() {
         const weekdays = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 
         return (
-            <Modal visible={showCalendar} transparent animationType="fade">
-                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' }}>
+            <Modal visible={showCalendar} transparent animationType="fade" onRequestClose={() => setShowCalendar(false)}>
+                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center' }} pointerEvents="box-none">
+                    <ModalBackdrop onPress={() => setShowCalendar(false)} />
                     <View style={{ width: '85%', backgroundColor: '#1a1b2e', borderRadius: 16, padding: 20 }}>
                         <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20 }}>
                             <Text style={{ color: 'white', fontSize: 18, fontWeight: 'bold' }}>{monthLabel}</Text>
@@ -688,8 +690,9 @@ export default function StatisticsPage() {
         const filteredIntervals = mergeIntervals(rawFiltered);
 
         return (
-            <Modal visible={true} transparent animationType="slide">
-                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center' }}>
+            <Modal visible={true} transparent animationType="slide" onRequestClose={() => setSelectedRoom(null)}>
+                <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'center', alignItems: 'center' }} pointerEvents="box-none">
+                    <ModalBackdrop onPress={() => setSelectedRoom(null)} />
                     <View style={{ width: '90%', height: '80%', backgroundColor: '#1a1b2e', borderRadius: 20, padding: 20 }}>
 
                         {/* Header */}

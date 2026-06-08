@@ -25,6 +25,7 @@ import CamerasWidget from '../components/DashboardV3/CamerasWidget';
 
 // V2 components for modals
 import RoomSheet from '../components/DashboardV2/RoomSheet';
+import HaSystemBanner from '../components/DashboardV2/HaSystemBanner';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import ActiveDevicesModal from '../components/DashboardV2/ActiveDevicesModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
@@ -51,6 +52,7 @@ export default function DashboardV3() {
         frigateCameras,
         callService,
         sendMessage,
+        systemHealth,
     } = useHAConnection();
 
     // Modal state
@@ -262,6 +264,7 @@ export default function DashboardV3() {
                     contentContainerStyle={styles.scrollContent}
                     showsVerticalScrollIndicator={false}
                 >
+                    <HaSystemBanner banner={systemHealth.banner} />
                     <WidgetGrid>
                         {/* Row 1: Clock + Weather + Status */}
                         <ClockWidget span={1} totalColumns={totalCols} />
@@ -388,6 +391,8 @@ export default function DashboardV3() {
                     adminUrl={connectionConfig.adminUrl}
                     haUrl={connectionConfig.url}
                     haToken={connectionConfig.token}
+                    systemHealthBanner={systemHealth.banner}
+                    canControlHa={systemHealth.canControlHa}
                 />
             )}
 

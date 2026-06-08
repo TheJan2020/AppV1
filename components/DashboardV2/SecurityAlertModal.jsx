@@ -20,6 +20,7 @@ import { BlurView } from 'expo-blur';
 import { LinearGradient } from 'expo-linear-gradient';
 import { TriangleAlert, Lock, DoorOpen, X } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
+import ModalBackdrop from '../ModalBackdrop';
 
 const SW = Dimensions.get('window').width;
 
@@ -130,8 +131,9 @@ function SecurityAlertModal({ visible, items = [], armedState, onDismiss }) {
             onRequestClose={handleDismiss}
         >
             <BlurView intensity={45} tint="dark" style={StyleSheet.absoluteFill} />
+            <ModalBackdrop onPress={handleDismiss} />
 
-            <View style={s.overlay}>
+            <View style={s.overlay} pointerEvents="box-none">
                 <Animated.View style={[s.card, { transform: [{ scale: scaleAnim }], opacity: opacityAnim }]}>
 
                     {/* Subtle gradient wash */}

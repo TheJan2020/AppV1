@@ -1,5 +1,6 @@
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { Colors } from '../../constants/Colors';
+import { CF } from '../../utils/typography';
 
 export default function FloorTabs({ floors, selectedFloor, onSelect }) {
     // if (!floors || floors.length === 0) return null; // Removed to always show Home tab
@@ -61,10 +62,12 @@ const styles = StyleSheet.create({
     },
     tabText: {
         color: '#888',
-        fontWeight: '600',
+        fontFamily: CF.semibold,
         fontSize: 14,
     },
     activeTabText: {
         color: '#fff',
-    }
+        fontFamily: CF.semibold,
+        fontSize: 14,
+    },
 });

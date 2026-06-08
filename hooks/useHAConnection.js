@@ -2,6 +2,9 @@ import { useRef, useState, useEffect } from 'react';
 import { HAService } from '../services/ha';
 import { FrigateService } from '../services/frigate';
 import { authFetch } from '../utils/authFetch';
+import { applyHaStateChangedEvent, applyClimateServiceToEntity } from '../utils/haEntityMerge';
+import { HA_STATUS, ADMIN_STATUS } from '../utils/haEntityHealth';
+import { useHaSystemHealth } from './useHaSystemHealth';
 import * as SecureStore from 'expo-secure-store';
 
 /**
@@ -42,6 +45,9 @@ export default function useHAConnection() {
     // Frigate
     const [frigateCameras, setFrigateCameras] = useState([]);
 
+    const [haStatus, setHaStatus] = useState(HA_STATUS.LOADING);
+    const [adminStatus, setAdminStatus] = useState(ADMIN_STATUS.UNKNOWN);
+
     // Abort controller for fetch requests
     const mappingsAbortRef = useRef(null);
 
@@ -71,9 +77,11 @@ export default function useHAConnection() {
             }
 
             setConnectionConfig(prev => ({ ...prev, loaded: true }));
+            setHaStatus(HA_STATUS.NOT_CONFIGURED);
         } catch (e) {
             console.log('[useHAConnection] Error loading config:', e);
             setConnectionConfig(prev => ({ ...prev, loaded: true }));
+            setHaStatus(HA_STATUS.NOT_CONFIGURED);
         }
     };
 
@@ -125,6 +133,7 @@ export default function useHAConnection() {
                 .then(data => {
                     console.log('[useHAConnection] Raw config from backend:', JSON.stringify(data, null, 2));
                     setBadgeConfig(data);
+                    setAdminStatus(ADMIN_STATUS.OK);
 
                     // Use frigate_url from config to initialize FrigateService
                     const frigateUrl = data?.frigate_url;
@@ -144,7 +153,12 @@ export default function useHAConnection() {
                         });
                     }
                 })
-                .catch(err => { if (err.name !== 'AbortError') console.log('[useHAConnection] Config error:', err); });
+                .catch(err => {
+                    if (err.name !== 'AbortError') {
+                        console.log('[useHAConnection] Config error:', err);
+                        setAdminStatus(ADMIN_STATUS.ERROR);
+                    }
+                });
 
             // Alert rules
             authFetch(`${baseUrl}api/alerts?t=${Date.now()}`, { signal: configAbort.signal }, haToken)
@@ -155,12 +169,17 @@ export default function useHAConnection() {
 
         // Connect to Home Assistant WebSocket
         if (haUrl && haToken) {
+            setHaStatus(HA_STATUS.LOADING);
             service.current = new HAService(haUrl, haToken);
             service.current.connect();
             service.current.subscribe(data => {
                 if (data.type === 'connected') {
+                    setHaStatus(HA_STATUS.CONNECTED);
                     service.current.getStates().then(states => {
                         setEntities(states || []);
+                        setLoading(false);
+                    }).catch(() => {
+                        setHaStatus(HA_STATUS.DISCONNECTED);
                         setLoading(false);
                     });
                     service.current.getConfig().then(config => {
@@ -172,15 +191,21 @@ export default function useHAConnection() {
                     service.current.getEntityRegistry().then(r => setRegistryEntities(r || []));
                     service.current.getAreaRegistry().then(a => setRegistryAreas(a || []));
                     service.current.getFloorRegistry().then(f => setRegistryFloors(f || []));
+                } else if (data.type === 'auth_failed') {
+                    setHaStatus(HA_STATUS.AUTH_FAILED);
+                    setLoading(false);
+                } else if (data.type === 'disconnected') {
+                    setHaStatus(HA_STATUS.DISCONNECTED);
                 } else if (data.type === 'state_changed' && data.event?.data) {
-                    const newState = data.event.data.new_state;
+                    const eventData = data.event.data;
+                    const newState = eventData.new_state;
                     if (!newState) return;
 
-                    setEntities(prev => {
-                        const index = prev.findIndex(e => e.entity_id === newState.entity_id);
+                    setEntities((prev) => {
+                        const index = prev.findIndex((e) => e.entity_id === newState.entity_id);
                         if (index !== -1) {
                             const next = [...prev];
-                            next[index] = newState;
+                            next[index] = applyHaStateChangedEvent(prev[index], eventData);
                             return next;
                         }
                         return [...prev, newState];
@@ -188,6 +213,7 @@ export default function useHAConnection() {
                 }
             });
         } else {
+            setHaStatus(HA_STATUS.NOT_CONFIGURED);
             setLoading(false);
         }
 
@@ -205,7 +231,12 @@ export default function useHAConnection() {
     }, [connectionConfig.loaded]);
 
     // ─── Convenience wrappers ────────────────────────────────────
+    const systemHealth = useHaSystemHealth({ entities, haStatus, adminStatus });
+
     const callService = (domain, serviceName, serviceData) => {
+        if (!systemHealth.canControlHa) {
+            return Promise.reject(new Error('Home Assistant is not connected'));
+        }
         if (service.current) {
             return service.current.callService(domain, serviceName, serviceData);
         }
@@ -226,6 +257,9 @@ export default function useHAConnection() {
 
         // Connection
         connectionConfig,
+        haStatus,
+        adminStatus,
+        systemHealth,
         loading,
         cityName,
 

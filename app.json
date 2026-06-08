@@ -14,14 +14,17 @@
     },
     "ios": {
       "bundleIdentifier": "ai.primewave.app",
-      "buildNumber": "46",
+      "buildNumber": "47",
       "supportsTablet": true,
       "entitlements": {
         "aps-environment": "production"
       },
       "infoPlist": {
+        "NSMicrophoneUsageDescription": "Primewave needs the microphone to talk with Butler, your voice assistant.",
+        "NSLocalNetworkUsageDescription": "Primewave needs to reach your Butler voice server and Home Assistant on your local network.",
         "NSAppTransportSecurity": {
-          "NSAllowsArbitraryLoads": true
+          "NSAllowsArbitraryLoads": true,
+          "NSAllowsLocalNetworking": true
         },
         "ITSAppUsesNonExemptEncryption": false,
         "UIBackgroundModes": ["remote-notification"]
@@ -36,8 +39,8 @@
       "permissions": [
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT",
-        "android.permission.USE_BIOMETRIC",
-        "android.permission.USE_FINGERPRINT"
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ],
       "package": "ai.primewave.app"
     },
@@ -47,6 +50,21 @@
     "scheme": "ha-app",
     "plugins": [
       "expo-router",
+      "expo-dev-client",
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "buildReactNativeFromSource": true
+          }
+        }
+      ],
+      [
+        "expo-av",
+        {
+          "microphonePermission": "Primewave needs the microphone to talk with Butler, your voice assistant."
+        }
+      ],
       [
         "expo-notifications",
         {

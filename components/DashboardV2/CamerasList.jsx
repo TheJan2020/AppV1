@@ -1,5 +1,7 @@
 import { memo, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';import { WebView } from 'react-native-webview';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { WebView } from 'react-native-webview';
+import { CF } from '../../utils/typography';
 import CameraSensorOverlay, { resolveSensorIds } from './CameraSensorOverlay';
 
 // Injected JS: detects video/stream errors inside the WebView page and posts messages back
@@ -163,7 +165,7 @@ const styles = StyleSheet.create({
     title: {
         color: 'white',
         fontSize: 16,
-        fontWeight: '300',
+        fontFamily: CF.light,
         marginBottom: 10,
         marginLeft: 4,
         letterSpacing: 0.5,

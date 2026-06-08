@@ -5,6 +5,7 @@ import { Colors } from '../../constants/Colors';
 import { useState, useEffect } from 'react';
 import { AIService } from '../../services/ai';
 import { authFetch } from '../../utils/authFetch';
+import ModalBackdrop from '../ModalBackdrop';
 
 export default function MyPreferencesModal({ visible, onClose, adminUrl }) {
     const [loading, setLoading] = useState(false);
@@ -166,6 +167,7 @@ export default function MyPreferencesModal({ visible, onClose, adminUrl }) {
         >
             <View style={styles.overlay}>
                 <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+                <ModalBackdrop onPress={onClose} />
                 <View style={styles.contentContainer}>
                     <View style={styles.header}>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -291,6 +293,7 @@ export default function MyPreferencesModal({ visible, onClose, adminUrl }) {
             >
                 <View style={styles.detailOverlay}>
                     <BlurView intensity={40} tint="dark" style={StyleSheet.absoluteFill} />
+                    <ModalBackdrop onPress={() => setDetailModalVisible(false)} />
                     <View style={styles.detailBox}>
                         <TouchableOpacity style={styles.closeDetail} onPress={() => setDetailModalVisible(false)}>
                             <X size={24} color="#fff" />

@@ -8,13 +8,13 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Edit2, Check, X, Search } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
 import { authFetch } from '../../utils/authFetch';
+import ModalBackdrop from '../ModalBackdrop';
 import CameraSensorOverlay, { buildEntityMap, resolveSensorIds } from './CameraSensorOverlay';
 
-// 2 columns, parent has paddingHorizontal:20 on each side → usable width = screen - 40
-const SCREEN_W = Dimensions.get('window').width;
 const COL_GAP = 10;
 const H_PAD = 40;
-const CARD_W = (SCREEN_W - H_PAD - COL_GAP) / 2;
+const SCREEN_W = Dimensions.get('window').width;
+const DEFAULT_CARD_W = (SCREEN_W - H_PAD - COL_GAP) / 2;
 
 // Injected BEFORE content loads — guarantees CSS is in place before the img/video renders
 const STRIP_PRE_JS = `
@@ -57,7 +57,7 @@ const STRIP_PAGE_JS = `
 `;
 
 // Camera card — live WebView stream
-const CameraCard = ({ cam, frigateService, onPress, isOnline = true, sensorIds = [], entityMap = {} }) => {
+const CameraCard = ({ cam, frigateService, onPress, isOnline = true, sensorIds = [], entityMap = {}, cardWidth }) => {
     const [streamError, setStreamError] = useState(false);
     const isHACamera = !!(cam.entity_id);
     const streamUrl = isHACamera
@@ -68,7 +68,7 @@ const CameraCard = ({ cam, frigateService, onPress, isOnline = true, sensorIds =
 
     return (
         <TouchableOpacity
-            style={styles.card}
+            style={[styles.card, cardWidth != null && { width: cardWidth }]}
             onPress={() => onPress && onPress(cam)}
             activeOpacity={0.85}
         >
@@ -232,6 +232,7 @@ function EditCamerasModal({ visible, onClose, adminUrl, onSave }) {
     return (
         <Modal visible={visible} animationType="none" transparent onRequestClose={onClose}>
             <View style={modal.overlay}>
+                <ModalBackdrop onPress={onClose} />
                 <Animated.View style={[modal.sheet, { transform: [{ translateY: sheetAnim }] }]}>
                     {/* Drag handle */}
                     <View style={modal.handleTouchArea} {...panResponder.panHandlers}>
@@ -319,9 +320,25 @@ function EditCamerasModal({ visible, onClose, adminUrl, onSave }) {
     );
 }
 
-function HomeCameraStrip({ frigateCameras = [], selectedCameraNames = [], frigateService, onCameraPress, onAllCamerasPress, adminUrl, onCamerasUpdated, cameraSensors = {}, haEntities = [] }) {
+function HomeCameraStrip({
+    frigateCameras = [],
+    selectedCameraNames = [],
+    frigateService,
+    onCameraPress,
+    onAllCamerasPress,
+    adminUrl,
+    onCamerasUpdated,
+    cameraSensors = {},
+    haEntities = [],
+    columns = 2,
+}) {
     const [editVisible, setEditVisible] = useState(false);
     const [cameraOnlineStatus, setCameraOnlineStatus] = useState({});
+    const [gridWidth, setGridWidth] = useState(0);
+    const cardWidth =
+        gridWidth > 0
+            ? Math.floor((gridWidth - COL_GAP * (columns - 1)) / columns)
+            : DEFAULT_CARD_W;
 
     // Fast entity lookup map built from live HA entities (sensors only)
     const entityMap = useMemo(() => {
@@ -382,19 +399,27 @@ function HomeCameraStrip({ frigateCameras = [], selectedCameraNames = [], frigat
                 </View>
             </View>
             {cameras.length > 0 && (
-                <View style={styles.grid}>
+                <View
+                    style={styles.grid}
+                    onLayout={(e) => {
+                        const w = e.nativeEvent.layout.width;
+                        if (w > 0 && w !== gridWidth) setGridWidth(w);
+                    }}
+                >
                     {cameras.map(cam => {
                         const sensorIds = resolveSensorIds(cam, cameraSensors);
                         return (
-                            <CameraCard
-                                key={cam.id || cam.name}
-                                cam={cam}
-                                frigateService={frigateService}
-                                onPress={onCameraPress}
-                                isOnline={cameraOnlineStatus[cam.name] !== false}
-                                sensorIds={sensorIds}
-                                entityMap={entityMap}
-                            />
+                            <View key={cam.id || cam.name} style={[styles.gridCell, { width: cardWidth }]}>
+                                <CameraCard
+                                    cam={cam}
+                                    frigateService={frigateService}
+                                    onPress={onCameraPress}
+                                    isOnline={cameraOnlineStatus[cam.name] !== false}
+                                    sensorIds={sensorIds}
+                                    entityMap={entityMap}
+                                    cardWidth={cardWidth}
+                                />
+                            </View>
                         );
                     })}
                 </View>
@@ -459,21 +484,19 @@ const styles = StyleSheet.create({
     grid: {
         flexDirection: 'row',
         flexWrap: 'wrap',
-        justifyContent: 'space-between',
-        rowGap: COL_GAP,
+        gap: COL_GAP,
+    },
+    gridCell: {
+        flexGrow: 0,
+        flexShrink: 0,
     },
     card: {
-        width: CARD_W,
+        width: DEFAULT_CARD_W,
         aspectRatio: 4 / 3,
         borderRadius: 16,
         overflow: 'hidden',
         backgroundColor: '#1e1f35',
         position: 'relative',
-        shadowColor: '#8947ca',
-        shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.4,
-        shadowRadius: 8,
-        elevation: 5,
     },
     placeholder: {
         ...StyleSheet.absoluteFillObject,

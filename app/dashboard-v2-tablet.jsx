@@ -1,6 +1,9 @@
-import { useRef, useState, useEffect, useMemo } from 'react';
+import { useRef, useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
+import { prepareButlerCall } from '../services/butler/openButlerCall';
+
+const ButlerVoiceModal = lazy(() => import('../components/DashboardV2/ButlerVoiceModal'));
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator, InteractionManager } from 'react-native';
@@ -12,10 +15,13 @@ import PersonBadges from '../components/DashboardV2/PersonBadges';
 import ActiveDevicesModal from '../components/DashboardV2/ActiveDevicesModal';
 import SettingsView from '../components/DashboardV2/SettingsView';
 import { HAService } from '../services/ha';
+import { applyHaStateChangedEvent, applyClimateServiceToEntity } from '../utils/haEntityMerge';
 import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import NetworkModal from '../components/DashboardV2/NetworkModal';
 import QuickScenes from '../components/DashboardV2/QuickScenes';
+import RoomsList from '../components/DashboardV2/RoomsList';
+import HomeCameraStrip from '../components/DashboardV2/HomeCameraStrip';
 import AppleTVRemoteModal from '../components/DashboardV2/AppleTVRemoteModal';
 import DraggableRoomList from '../components/DashboardV2/DraggableRoomList';
 import CamerasList from '../components/DashboardV2/CamerasList';
@@ -34,11 +40,14 @@ import { FrigateService } from '../services/frigate';
 import * as SecureStore from 'expo-secure-store';
 import { startHeartbeat, stopHeartbeat, updateAppState } from '../services/heartbeat';
 import { getRoomEntities } from '../utils/roomHelpers';
+import { setRoomPageBootstrap } from '../utils/roomPageBootstrap';
 
 export default function DashboardV2Tablet() {
     const router = useRouter();
     const { userName, userId } = useLocalSearchParams();
     const { isTablet, isLandscape, columns } = useDeviceType();
+    const homeColumns = 4;
+    const homeRoomColumns = 6;
 
     // Config State
     const [connectionConfig, setConnectionConfig] = useState({
@@ -77,6 +86,7 @@ export default function DashboardV2Tablet() {
     const [autoRoomVisit, setAutoRoomVisit] = useState(true);
     const [autoRoomResume, setAutoRoomResume] = useState(true);
     const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
+    const [showButlerCall, setShowButlerCall] = useState(false);
     const [showPreferenceButton, setShowPreferenceButton] = useState(true);
 
 
@@ -169,6 +179,7 @@ export default function DashboardV2Tablet() {
     const [allowedQuickScenes, setAllowedQuickScenes] = useState([]);
     const [sensorMappings, setSensorMappings] = useState([]);
     const [coverMappings, setCoverMappings] = useState([]);
+    const [coverWindows, setCoverWindows] = useState([]);
     const [musicAssistantEntryIds, setMusicAssistantEntryIds] = useState([]);
 
     const mappingsAbortRef = useRef(null);
@@ -343,6 +354,7 @@ export default function DashboardV2Tablet() {
                     if (data.success) {
                         console.log(`[Covers] Loaded ${data.covers.length} mappings`);
                         setCoverMappings(data.covers);
+                        setCoverWindows(data.windows || []);
                     }
                 })
                 .catch(e => { if (e.name !== 'AbortError') console.log("Cover Mappings Error", e); });
@@ -396,18 +408,19 @@ export default function DashboardV2Tablet() {
                         setMusicAssistantEntryIds(maIds);
                     });
 
-                } else if (data.type === 'state_changed' && data.event && data.event.data) {
-                    const newEvent = data.event.data.new_state;
-                    if (!newEvent) return; // Ignore deletions or null states
+                } else if (data.type === 'state_changed' && data.event?.data) {
+                    const eventData = data.event.data;
+                    const newState = eventData.new_state;
+                    if (!newState) return;
 
-                    setEntities(prev => {
-                        const index = prev.findIndex(e => e.entity_id === newEvent.entity_id);
+                    setEntities((prev) => {
+                        const index = prev.findIndex((e) => e.entity_id === newState.entity_id);
                         if (index !== -1) {
-                            const newEntities = [...prev];
-                            newEntities[index] = newEvent;
-                            return newEntities;
+                            const next = [...prev];
+                            next[index] = applyHaStateChangedEvent(prev[index], eventData);
+                            return next;
                         }
-                        return [...prev, newEvent];
+                        return [...prev, newState];
                     });
                 }
             });
@@ -717,9 +730,22 @@ export default function DashboardV2Tablet() {
 
     const callService = (domain, serviceName, serviceData) => {
         if (service.current) {
-            return service.current.callService(domain, serviceName, serviceData);
+            const entityId = serviceData?.entity_id;
+            if (domain === 'climate' && entityId) {
+                setEntities((prev) =>
+                    prev.map((e) =>
+                        e.entity_id === entityId
+                            ? applyClimateServiceToEntity(e, serviceName, serviceData)
+                            : e,
+                    ),
+                );
+            }
+            return service.current.callService(domain, serviceName, serviceData).catch(err => {
+                console.warn('[callService] Failed:', domain, serviceName, err?.message ?? err);
+                return Promise.reject(err);
+            });
         }
-        return Promise.reject(new Error("Home Assistant service not connected"));
+        return Promise.reject(new Error('Home Assistant service not connected'));
     };
 
     const handleScenePress = (sceneId) => {
@@ -740,7 +766,21 @@ export default function DashboardV2Tablet() {
 
     const handleRoomPress = (room) => {
         if (activeTab === 'rooms') {
-            // Rooms tab: Navigate to room page
+            setRoomPageBootstrap(room.area_id, room.name, {
+                picture: room.picture,
+                entities,
+                registryDevices,
+                registryEntities,
+                musicAssistantEntryIds,
+                lightMappings,
+                sensorMappings,
+                coverMappings,
+                coverWindows,
+                mediaMappings,
+                haUrl: connectionConfig.url,
+                haToken: connectionConfig.token,
+                adminUrl: connectionConfig.adminUrl,
+            });
             router.push({
                 pathname: '/room',
                 params: {
@@ -750,7 +790,6 @@ export default function DashboardV2Tablet() {
                 }
             });
         } else {
-            // Home tab: Show Modal Popup
             setSelectedRoom(room);
             setRoomSheetVisible(true);
         }
@@ -899,6 +938,27 @@ export default function DashboardV2Tablet() {
         savedRoomOrder
     ]);
 
+    const butlerVoiceContext = useMemo(() => ({
+        userName,
+        time: new Date().toLocaleTimeString(),
+        rooms: roomsWithCounts.map(room => ({
+            name: room.name,
+            area_id: room.area_id,
+        })),
+    }), [userName, roomsWithCounts]);
+
+    const handleVoiceAssistantPress = useCallback(async () => {
+        const ok = await prepareButlerCall({
+            haUrl: connectionConfig.url,
+            haToken: connectionConfig.token,
+        });
+        if (ok) setShowButlerCall(true);
+    }, [connectionConfig.url, connectionConfig.token]);
+
+    const handleButlerCallClose = useCallback(() => {
+        setShowButlerCall(false);
+    }, []);
+
     const handleRoomReorder = (data) => {
         // IDs of the rooms in their new order
         const reorderedIds = data.map(r => r.area_id);
@@ -952,6 +1012,8 @@ export default function DashboardV2Tablet() {
                         entities={entities}
                         config={badgeConfig}
                         onRoomPress={handleHeaderRoomPress}
+                        onVoiceAssistantPress={handleVoiceAssistantPress}
+                        voiceAssistantActive={showButlerCall}
                     />
                     <StatusBadges
                         securityState={securityState}
@@ -969,6 +1031,7 @@ export default function DashboardV2Tablet() {
                     <QuickScenes
                         scenes={quickScenesData}
                         onScenePress={handleScenePress}
+                        columns={homeColumns}
                     />
 
                     {/* Voice Conversation */}
@@ -1171,24 +1234,26 @@ export default function DashboardV2Tablet() {
                         overlayOpacity={cardOpacity}
                         overlayColor={cardColor}
                         onSettingsPress={() => setSettingsModalVisible(true)}
-                        layout={isTablet ? 'grid' : 'horizontal'}
-                        columns={columns}
+                        layout="tablet-home"
+                        columns={homeRoomColumns}
+                        tabletPreviewCount={6}
                         haUrl={connectionConfig.url}
                         haToken={connectionConfig.token}
                         sensorMappings={sensorMappings}
                     />
 
-
-                    {/* TEMPORARILY DISABLED — testing if cameras cause crash */}
-                    {/* <HACamerasList
-                        cameras={entities.filter(e => e.entity_id.startsWith('camera.'))}
-                        allEntities={entities}
-                        haUrl={connectionConfig.url}
-                        haToken={connectionConfig.token}
-                        onCameraPress={(cam) => {
-                            console.log('HA Camera Pressed:', cam.entity_id);
-                        }}
-                    /> */}
+                    <HomeCameraStrip
+                        frigateCameras={frigateCameras}
+                        selectedCameraNames={badgeConfig?.selected_cameras || []}
+                        frigateService={frigateService.current}
+                        onCameraPress={handleFrigateCameraPress}
+                        onAllCamerasPress={() => setActiveTab('cctv')}
+                        adminUrl={connectionConfig.adminUrl}
+                        onCamerasUpdated={(ids) => setBadgeConfig(prev => ({ ...prev, selected_cameras: ids }))}
+                        cameraSensors={badgeConfig?.camera_sensors || {}}
+                        haEntities={entities}
+                        columns={2}
+                    />
                 </ScrollView>
             );
         }
@@ -1326,6 +1391,7 @@ export default function DashboardV2Tablet() {
                         showVoiceAssistant={showVoiceAssistant}
                         showPreferenceButton={showPreferenceButton}
                         adminUrl={connectionConfig.adminUrl}
+                        userName={userName}
                         onSettingChange={(key, val) => {
                             if (key === 'showFamily') setShowFamily(val);
                             if (key === 'autoRoomVisit') setAutoRoomVisit(val);
@@ -1334,7 +1400,6 @@ export default function DashboardV2Tablet() {
                             if (key === 'showPreferenceButton') setShowPreferenceButton(val);
                         }}
                         onNetwork={() => setShowNetworkModal(true)}
-                        musicAssistantEntryIds={musicAssistantEntryIds}
                     />
                 </View>
             );
@@ -1417,6 +1482,16 @@ export default function DashboardV2Tablet() {
                 />
             )}
 
+            {showButlerCall ? (
+                <Suspense fallback={null}>
+                    <ButlerVoiceModal
+                        visible={showButlerCall}
+                        onClose={handleButlerCallClose}
+                        context={butlerVoiceContext}
+                    />
+                </Suspense>
+            ) : null}
+
             {renderContent()}
 
             {isLandscape ? (
@@ -1447,6 +1522,7 @@ export default function DashboardV2Tablet() {
                     showPreferenceButton={showPreferenceButton}
                     sensorMappings={sensorMappings}
                     coverMappings={coverMappings}
+                    coverWindows={coverWindows}
                     musicAssistantEntryIds={musicAssistantEntryIds}
                     browseMedia={(entityId, mediaContentType, mediaContentId) =>
                         service.current?.browseMedia?.(entityId, mediaContentType, mediaContentId)

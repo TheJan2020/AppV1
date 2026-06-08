@@ -8,6 +8,7 @@ import {
 } from 'react-native';
 import { X, LockOpen, Lock, ShieldCheck, ShieldOff, Radio, RadioTower } from 'lucide-react-native';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
+import ModalBackdrop from '../ModalBackdrop';
 import Animated, {
     useSharedValue, useAnimatedStyle, withTiming, withSpring, runOnJS,
 } from 'react-native-reanimated';
@@ -167,6 +168,7 @@ export default function LocksModal({
             onRequestClose={onClose}
         >
             <View style={styles.overlay}>
+                <ModalBackdrop onPress={onClose} />
                 <Animated.View style={[styles.sheet, sheetAnimStyle]}>
 
                     {/* ── Drag handle ── */}

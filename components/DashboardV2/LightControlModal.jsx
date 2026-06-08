@@ -7,14 +7,14 @@
  * RGB lights  → Brightness slider + Hue spectrum slider + color swatch grid
  * No tabs — only the relevant controls are rendered.
  */
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View, Text, StyleSheet, TouchableOpacity,
-    PanResponder, Animated,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { X, Power } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import SmoothSlider from './SmoothSlider';
 
 // ── CCT helpers ───────────────────────────────────────────────────────────
 const CCT_MIN = 2700;
@@ -54,65 +54,30 @@ function rgbToHue([r, g, b]) {
     return ((h * 60) + 360) % 360;
 }
 
-// ── Gradient slider ───────────────────────────────────────────────────────
-const THUMB_SZ = 30;
-const TRACK_H  = 34;
+const MODAL_THUMB = 30;
+const MODAL_TRACK_H = 34;
 
-function GradientSlider({ value, max = 100, gradientColors, thumbColor, onChange, onRelease }) {
-    const trackW    = useRef(0);
-    const latestPct = useRef(value);
-    const thumbAnim = useRef(new Animated.Value(0)).current;
-
-    function pctToX(pct, w) {
-        return (Math.max(0, Math.min(max, pct)) / max) * Math.max(0, w - THUMB_SZ);
-    }
-
-    useEffect(() => {
-        latestPct.current = value;
-        if (trackW.current > 0) thumbAnim.setValue(pctToX(value, trackW.current));
-    }, [value]);
-
-    const pan = useRef(PanResponder.create({
-        onStartShouldSetPanResponder: () => true,
-        onMoveShouldSetPanResponder:  () => true,
-        onPanResponderGrant: (e) => {
-            if (!trackW.current) return;
-            const raw = Math.max(0, Math.min(max, (e.nativeEvent.locationX / trackW.current) * max));
-            latestPct.current = raw;
-            thumbAnim.setValue(pctToX(raw, trackW.current));
-            onChange?.(raw);
-        },
-        onPanResponderMove: (e) => {
-            if (!trackW.current) return;
-            const raw = Math.max(0, Math.min(max, (e.nativeEvent.locationX / trackW.current) * max));
-            latestPct.current = raw;
-            thumbAnim.setValue(pctToX(raw, trackW.current));
-            onChange?.(raw);
-        },
-        onPanResponderRelease:   () => onRelease?.(Math.round(latestPct.current)),
-        onPanResponderTerminate: () => onRelease?.(Math.round(latestPct.current)),
-    })).current;
-
+function ModalGradientSlider({ value, max = 100, gradientColors, thumbColor, onChange, onRelease }) {
     return (
-        <View
-            style={styles.sliderWrap}
-            onLayout={(e) => {
-                trackW.current = e.nativeEvent.layout.width;
-                thumbAnim.setValue(pctToX(latestPct.current, trackW.current));
-            }}
-            {...pan.panHandlers}
-        >
-            <LinearGradient
-                colors={gradientColors}
-                start={{ x: 0, y: 0.5 }}
-                end={{ x: 1, y: 0.5 }}
-                style={styles.sliderTrack}
-            />
-            <Animated.View
-                pointerEvents="none"
-                style={[styles.sliderThumb, { backgroundColor: thumbColor, transform: [{ translateX: thumbAnim }] }]}
-            />
-        </View>
+        <SmoothSlider
+            value={value}
+            max={max}
+            minVal={0}
+            onChange={onChange}
+            onRelease={onRelease}
+            thumbSize={MODAL_THUMB}
+            sliderHeight={MODAL_TRACK_H}
+            thumbColor={thumbColor}
+            showBubble
+            trackBg={
+                <LinearGradient
+                    colors={gradientColors}
+                    start={{ x: 0, y: 0.5 }}
+                    end={{ x: 1, y: 0.5 }}
+                    style={{ height: MODAL_TRACK_H, borderRadius: MODAL_TRACK_H / 2 }}
+                />
+            }
+        />
     );
 }
 
@@ -208,7 +173,7 @@ export default function LightControlModal({ visible, onClose, light, colorCapabi
                         <Text style={styles.sectionLabel}>☀  Brightness</Text>
                         <Text style={styles.valueHint}>{Math.round(brightPct)}%</Text>
                     </View>
-                    <GradientSlider
+                    <ModalGradientSlider
                         value={brightPct}
                         max={100}
                         gradientColors={['#1c1c3a', '#4a4a8a', '#ffffff']}
@@ -229,7 +194,7 @@ export default function LightControlModal({ visible, onClose, light, colorCapabi
                                 <Text style={styles.sectionLabel}>🌡  Color Temperature</Text>
                                 <Text style={styles.valueHint}>{kelvin}K</Text>
                             </View>
-                            <GradientSlider
+                            <ModalGradientSlider
                                 value={cctPct}
                                 max={100}
                                 gradientColors={['#FF9F43', '#FFE082', '#FFF8E1', '#D6F5FF', '#A8CFFF']}
@@ -267,7 +232,7 @@ export default function LightControlModal({ visible, onClose, light, colorCapabi
                                 <Text style={styles.sectionLabel}>🎨  Color</Text>
                                 <View style={[styles.colorPreview, { backgroundColor: hueColorStr }]} />
                             </View>
-                            <GradientSlider
+                            <ModalGradientSlider
                                 value={huePct}
                                 max={100}
                                 gradientColors={[
@@ -389,29 +354,6 @@ const styles = StyleSheet.create({
         borderRadius: 11,
         borderWidth: 2,
         borderColor: 'rgba(255,255,255,0.2)',
-    },
-    // Slider
-    sliderWrap: {
-        height: TRACK_H,
-        justifyContent: 'center',
-    },
-    sliderTrack: {
-        height: TRACK_H,
-        borderRadius: TRACK_H / 2,
-    },
-    sliderThumb: {
-        position: 'absolute',
-        width: THUMB_SZ,
-        height: THUMB_SZ,
-        borderRadius: THUMB_SZ / 2,
-        top: (TRACK_H - THUMB_SZ) / 2,
-        borderWidth: 3,
-        borderColor: '#fff',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 3 },
-        shadowOpacity: 0.5,
-        shadowRadius: 5,
-        elevation: 5,
     },
     // CCT presets
     presetRow: {

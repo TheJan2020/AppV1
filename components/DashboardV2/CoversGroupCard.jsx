@@ -21,18 +21,28 @@
  * Position:     attrs.current_position  0–100  (0 = closed, 100 = open)
  */
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
     View, Text, StyleSheet, TouchableOpacity,
-    PanResponder, LayoutAnimation, Platform, UIManager, Animated,
+    LayoutAnimation, Platform, UIManager, useWindowDimensions,
 } from 'react-native';
-import { LayoutGrid, ChevronDown, ChevronUp } from 'lucide-react-native';
+import { LayoutGrid, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import CoverCard from './CoverCard';
+import CoverCard, { AllLayersCoverCard } from './CoverCard';
+import CoverLayerFilter from './CoverLayerFilter';
+import { Heading, CF } from '../../utils/typography';
+import { groupCoversByWindow, layersForWindow, defaultLayerTab, ALL_LAYERS_ID } from '../../utils/coverWindows';
+import { toggleCoverWindow, toggleCoverEntities } from '../../utils/coverWindowControl';
+import SmoothSlider, { SMOOTH_SLIDER_THUMB as THUMB, SMOOTH_SLIDER_TRACK as TRACK } from './SmoothSlider';
+import RoomGroupIconButton from './RoomGroupIconButton';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
 }
+
+/** Matches LightsGroupCard — room content 20+20, group card 18+18 */
+const COVERS_GROUP_HORIZONTAL_PAD = 18;
+const COVERS_GRID_GAP = 10;
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function getPosition(cover) {
@@ -85,156 +95,216 @@ function DotsRow({ covers }) {
     );
 }
 
-// ── Master position slider (0–100) — Animated, native-thread smooth ───────
-function PositionSlider({ value, onRelease }) {
-    const thumbAnim = useRef(new Animated.Value(0)).current;
-    const fillAnim  = useRef(new Animated.Value(0)).current;
-
-    const trackWRef  = useRef(0);
-    const [trackW, setTrackW]       = useState(0);
-    const [dragging, setDragging]   = useState(false);
-    const [bubblePct, setBubblePct] = useState(Math.round(value));
-
-    const latestRaw  = useRef(value);
-    const startPageX = useRef(0);
-    const startRaw   = useRef(value);
-    const isDragging = useRef(false);
-
-    const onReleaseRef = useRef(onRelease);
-    onReleaseRef.current = onRelease;
-
-    const applyRaw = useCallback((raw, w) => {
-        if (w <= 0) return;
-        thumbAnim.setValue(Math.max(0, Math.min(w - THUMB, (raw / 100) * w - THUMB / 2)));
-        fillAnim.setValue(Math.max(0, (raw / 100) * w));
-    }, []);
-
-    useEffect(() => {
-        if (!isDragging.current) {
-            latestRaw.current = value;
-            applyRaw(value, trackWRef.current);
-            setBubblePct(Math.round(value));
-        }
-    }, [value]);
-
-    useEffect(() => {
-        if (trackW > 0) applyRaw(latestRaw.current, trackW);
-    }, [trackW]);
-
-    const pan = useRef(PanResponder.create({
-        onStartShouldSetPanResponder:        () => true,
-        onStartShouldSetPanResponderCapture: () => true,
-        onMoveShouldSetPanResponder:         () => true,
-        onMoveShouldSetPanResponderCapture:  () => true,
-        onPanResponderTerminateRequest:      () => false,
-
-        onPanResponderGrant: (e) => {
-            isDragging.current = true;
-            setDragging(true);
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            startPageX.current = e.nativeEvent.pageX;
-            startRaw.current   = latestRaw.current;
-        },
-
-        onPanResponderMove: (e) => {
-            const w = trackWRef.current;
-            if (!w) return;
-            const raw = Math.max(0, Math.min(100,
-                startRaw.current + ((e.nativeEvent.pageX - startPageX.current) / w) * 100));
-            latestRaw.current = raw;
-            thumbAnim.setValue(Math.max(0, Math.min(w - THUMB, (raw / 100) * w - THUMB / 2)));
-            fillAnim.setValue(Math.max(0, (raw / 100) * w));
-            setBubblePct(Math.round(raw));
-        },
-
-        // Single HA call on release — master controller handles all curtains
-        onPanResponderRelease: () => {
-            isDragging.current = false;
-            setDragging(false);
-            onReleaseRef.current(Math.round(latestRaw.current));
-        },
-
-        onPanResponderTerminate: () => {
-            isDragging.current = false;
-            setDragging(false);
-            onReleaseRef.current(Math.round(latestRaw.current));
-        },
-    })).current;
-
-    const thumbSz    = dragging ? THUMB + 4 : THUMB;
-    const thumbTop   = (THUMB + 18 - thumbSz) / 2;
-    const bubbleLeft = trackW > 0
-        ? Math.max(0, Math.min(trackW - 36, (bubblePct / 100) * trackW - 18))
-        : 0;
-
+function PositionSlider({ value, onRelease, onDragStart, onDragEnd }) {
     return (
-        <View
-            style={styles.sliderWrap}
-            onLayout={e => {
-                const w = e.nativeEvent.layout.width;
-                trackWRef.current = w;
-                setTrackW(w);
-            }}
-            {...pan.panHandlers}
-        >
-            <View style={styles.sliderRail} />
-            <Animated.View style={[styles.sliderFill, { width: fillAnim }]} />
-
-            {dragging && (
-                <View style={[styles.sliderBubble, { left: bubbleLeft }]}>
-                    <Text style={styles.sliderBubbleText}>{bubblePct}%</Text>
-                </View>
-            )}
-
-            <Animated.View style={[
-                styles.sliderThumb,
-                {
-                    width:        thumbSz,
-                    height:       thumbSz,
-                    borderRadius: thumbSz / 2,
-                    top:          thumbTop,
-                    left:         thumbAnim,
-                },
-                dragging && { shadowOpacity: 1, shadowRadius: 16 },
-            ]} />
-
-            {/* Drag-direction hints */}
+        <View pointerEvents="box-none">
+            <SmoothSlider
+                value={value}
+                max={100}
+                minVal={0}
+                onRelease={onRelease}
+                onDragStart={onDragStart}
+                onDragEnd={onDragEnd}
+                showFill
+                showBubble
+                fillColor="rgba(58,123,213,0.55)"
+                trackBg={<View style={styles.sliderRail} />}
+            />
             <View style={styles.sliderHints} pointerEvents="none">
-                <Text style={styles.sliderHintClose}>← Close</Text>
-                <Text style={styles.sliderHintOpen}>Open →</Text>
+                <View style={styles.sliderHintItem}>
+                    <ChevronLeft size={14} color="rgba(255,255,255,0.35)" strokeWidth={2.5} />
+                    <Text style={styles.sliderHintClose}>Close</Text>
+                </View>
+                <View style={styles.sliderHintItem}>
+                    <Text style={styles.sliderHintOpen}>Open</Text>
+                    <ChevronRight size={14} color="rgba(68,200,202,0.65)" strokeWidth={2.5} />
+                </View>
             </View>
         </View>
     );
 }
 
 // ── Individual expanded cover card — uses the full CoverCard design ───────
-function ExpandedCoverCard({ cover, allEntities, onUpdate }) {
+function ExpandedCoverCard({ cover, allEntities, weather, onUpdate, onSliderDragStart, onSliderDragEnd }) {
     const sensorId = cover.linkedSensorId || cover.entity_id.replace('cover.', 'sensor.');
     const sensor   = allEntities?.find(e => e.entity_id === sensorId);
-    return <CoverCard cover={cover} sensor={sensor} onUpdate={onUpdate} />;
+    return (
+        <CoverCard
+            cover={cover}
+            sensor={sensor}
+            weather={weather}
+            onUpdate={onUpdate}
+            onSliderDragStart={onSliderDragStart}
+            onSliderDragEnd={onSliderDragEnd}
+        />
+    );
+}
+
+/** Keeps cover cards mounted — only toggles visibility for instant tab switches. */
+function WindowTabPanel({ active, children }) {
+    return (
+        <View
+            style={[styles.windowTabPanel, !active && styles.windowTabPanelHidden]}
+            pointerEvents={active ? 'auto' : 'none'}
+            collapsable={false}
+        >
+            {children}
+        </View>
+    );
+}
+
+// ── Window group — filter by layer, show matching cover cards ─────────────
+function WindowCoverSection({
+    window, covers, allEntities, weather, onUpdate, onSliderDragStart, onSliderDragEnd, gridColumns, coverCellWidth,
+}) {
+    const layers = useMemo(() => layersForWindow(covers), [covers]);
+    const [activeLayer, setActiveLayer] = useState(() => defaultLayerTab(layersForWindow(covers)));
+    const [toggling, setToggling] = useState(false);
+
+    useEffect(() => {
+        if (layers.length && !layers.some(l => l.id === activeLayer)) {
+            setActiveLayer(defaultLayerTab(layers));
+        }
+    }, [layers, activeLayer]);
+
+    const showAllTab = layers.some(l => l.id === ALL_LAYERS_ID);
+    const windowIsOpen = covers.some(isActive);
+
+    const handleWindowToggle = async () => {
+        if (toggling) return;
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+        setToggling(true);
+        try {
+            await toggleCoverWindow(window.id);
+        } catch (err) {
+            console.warn('[WindowCoverSection] toggle failed:', err?.message ?? err);
+            const service = windowIsOpen ? 'close_cover' : 'open_cover';
+            covers.forEach(c => onUpdate?.(c.entity_id, 'cover', service, {}));
+        } finally {
+            setToggling(false);
+        }
+    };
+
+    return (
+        <View style={styles.windowSection}>
+            <View style={styles.windowHeader}>
+                <RoomGroupIconButton
+                    active={windowIsOpen}
+                    onPress={handleWindowToggle}
+                    disabled={toggling}
+                    size={40}
+                    accessibilityLabel={`Toggle ${window.name}`}
+                >
+                    <LayoutGrid size={20} color="#fff" />
+                </RoomGroupIconButton>
+                <Text style={styles.windowTitle}>{window.name}</Text>
+            </View>
+            <CoverLayerFilter
+                options={layers}
+                value={activeLayer}
+                onChange={setActiveLayer}
+            />
+            <View style={[styles.grid, styles.windowGrid, styles.windowTabStack]}>
+                {showAllTab && (
+                    <WindowTabPanel active={activeLayer === ALL_LAYERS_ID}>
+                        <View style={[styles.cell, styles.cellWindow, styles.cellFullWidth]}>
+                            <AllLayersCoverCard
+                                covers={covers}
+                                windowName={window.name}
+                                weather={weather}
+                                onUpdate={onUpdate}
+                                onSliderDragStart={onSliderDragStart}
+                                onSliderDragEnd={onSliderDragEnd}
+                            />
+                        </View>
+                    </WindowTabPanel>
+                )}
+                {covers.map(c => (
+                    <WindowTabPanel key={c.entity_id} active={activeLayer === c.coverLayer}>
+                        <View style={[styles.cell, styles.cellWindow, styles.cellFullWidth]}>
+                            <ExpandedCoverCard
+                                cover={c}
+                                allEntities={allEntities}
+                                weather={weather}
+                                onUpdate={onUpdate}
+                                onSliderDragStart={onSliderDragStart}
+                                onSliderDragEnd={onSliderDragEnd}
+                            />
+                        </View>
+                    </WindowTabPanel>
+                ))}
+            </View>
+        </View>
+    );
 }
 
 // ── Main component ────────────────────────────────────────────────────────
-export default function CoversGroupCard({ covers = [], allEntities = [], onUpdate }) {
-    const [expanded, setExpanded] = useState(false);
+export default function CoversGroupCard({
+    covers = [], allEntities = [], onUpdate, onSliderDragStart, onSliderDragEnd,
+    gridColumns = 2, variant = 'default', coverWindows = [], room = null, contentWidth,
+}) {
+    const isTabletSplit = variant === 'tabletSplit';
+    const [expanded, setExpanded] = useState(isTabletSplit);
+    const { width: windowWidth } = useWindowDimensions();
+
+    const coverCellWidth = useMemo(() => {
+        const cols = Math.max(1, gridColumns);
+        const ww = windowWidth > 0 ? windowWidth : 375;
+        const inner =
+            contentWidth != null && contentWidth > 0
+                ? contentWidth - COVERS_GROUP_HORIZONTAL_PAD * 2
+                : ww - 40 - COVERS_GROUP_HORIZONTAL_PAD * 2;
+        return Math.max(0, Math.floor((inner - COVERS_GRID_GAP * (cols - 1)) / cols));
+    }, [windowWidth, contentWidth, gridColumns]);
+
+    const weatherEntity = useMemo(
+        () => allEntities?.find((e) => e.entity_id?.startsWith('weather.')),
+        [allEntities],
+    );
 
     // ── Master curtain detection ──────────────────────────────────────────
     const masterCover      = covers.find(isMasterCover);
-    const masterIsOpen     = masterCover ? isActive(masterCover) : false;
-    const masterPos        = masterCover ? getPosition(masterCover) : 50;
     const individualCovers = covers.filter(c => !isMasterCover(c));
+    const groupIsOpen      = masterCover
+        ? isActive(masterCover)
+        : individualCovers.some(isActive);
+    const masterPos        = masterCover ? getPosition(masterCover) : 50;
 
     const openCount = individualCovers.filter(c => isActive(c)).length;
+    const [groupToggling, setGroupToggling] = useState(false);
 
-    // ── Header icon → open / close master curtain ─────────────────────────
-    const handleMasterToggle = () => {
-        if (!masterCover) return;
+    const { windowGroups, ungrouped } = useMemo(
+        () => groupCoversByWindow(individualCovers, coverWindows, room),
+        [individualCovers, coverWindows, room],
+    );
+    const hasWindowGroups = windowGroups.length > 0;
+
+    // ── Header icon → master curtain, or toggle all room covers via API ───
+    const handleMasterToggle = async () => {
+        if (groupToggling) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        onUpdate?.(
-            masterCover.entity_id, 'cover',
-            masterIsOpen ? 'close_cover' : 'open_cover',
-            {},
-        );
+
+        if (masterCover) {
+            onUpdate?.(
+                masterCover.entity_id, 'cover',
+                groupIsOpen ? 'close_cover' : 'open_cover',
+                {},
+            );
+            return;
+        }
+
+        if (!individualCovers.length) return;
+
+        setGroupToggling(true);
+        try {
+            await toggleCoverEntities(individualCovers.map(c => c.entity_id));
+        } catch (err) {
+            console.warn('[CoversGroupCard] room toggle failed:', err?.message ?? err);
+            const service = groupIsOpen ? 'close_cover' : 'open_cover';
+            individualCovers.forEach(c => onUpdate?.(c.entity_id, 'cover', service, {}));
+        } finally {
+            setGroupToggling(false);
+        }
     };
 
     // ── Slider release → one call to master, HA propagates to all curtains ─
@@ -250,19 +320,23 @@ export default function CoversGroupCard({ covers = [], allEntities = [], onUpdat
     };
 
     return (
-        <View style={styles.container}>
+        <View style={[styles.container, isTabletSplit && styles.containerTabletSplit]}>
+            <View style={isTabletSplit ? styles.tabletSplitInner : undefined}>
             {/* Header */}
-            <View style={styles.header}>
-                <TouchableOpacity
-                    style={[styles.iconCircle, masterIsOpen && styles.iconCircleOpen]}
+            <View style={[styles.header, isTabletSplit && styles.headerTabletSplit]}>
+                <RoomGroupIconButton
+                    active={groupIsOpen}
                     onPress={handleMasterToggle}
-                    activeOpacity={masterCover ? 0.75 : 1}
+                    disabled={groupToggling || !(masterCover || individualCovers.length)}
+                    accessibilityLabel="Toggle all covers"
                 >
                     <LayoutGrid size={26} color="#fff" />
-                </TouchableOpacity>
-                <Text style={styles.headerTitle}>Covers</Text>
-                <View style={styles.onBadge}>
-                    <Text style={styles.onBadgeText}>{openCount} Open</Text>
+                </RoomGroupIconButton>
+                <View style={styles.headerTextBlock}>
+                    <Text style={styles.headerTitle}>Covers</Text>
+                    <Text style={[styles.headerStatus, openCount > 0 && styles.headerStatusOn]}>
+                        {openCount > 0 ? `${openCount} OPEN` : 'CLOSED'}
+                    </Text>
                 </View>
             </View>
 
@@ -272,15 +346,61 @@ export default function CoversGroupCard({ covers = [], allEntities = [], onUpdat
             {/* Master position slider — only when a master curtain exists */}
             {masterCover && (
                 <View style={styles.sliderSection}>
-                    <Text style={styles.sliderIcon}>≡</Text>
-                    <View style={styles.sliderWrapOuter}>
-                        <PositionSlider
-                            value={masterPos}
-                            onRelease={handlePositionRelease}
-                        />
-                    </View>
+                    <PositionSlider
+                        value={masterPos}
+                        onRelease={handlePositionRelease}
+                        onDragStart={onSliderDragStart}
+                        onDragEnd={onSliderDragEnd}
+                    />
                 </View>
             )}
+
+            {/* Expanded grid — master curtain excluded */}
+            {expanded && (
+                <>
+                    {hasWindowGroups && windowGroups.map(({ window, covers: winCovers }) => (
+                        <WindowCoverSection
+                            key={window.id}
+                            window={window}
+                            covers={winCovers}
+                            allEntities={allEntities}
+                            weather={weatherEntity}
+                            onUpdate={onUpdate}
+                            onSliderDragStart={onSliderDragStart}
+                            onSliderDragEnd={onSliderDragEnd}
+                            gridColumns={gridColumns}
+                            coverCellWidth={coverCellWidth}
+                        />
+                    ))}
+
+                    {(ungrouped.length > 0 || !hasWindowGroups) && (
+                        <View style={[styles.grid, isTabletSplit && styles.gridTabletSplit]}>
+                            {(hasWindowGroups ? ungrouped : individualCovers).map(c => (
+                                <View
+                                    key={c.entity_id}
+                                    style={[
+                                        styles.cell,
+                                        gridColumns === 1
+                                            ? styles.cellFullWidth
+                                            : (coverCellWidth > 0 && { width: coverCellWidth }),
+                                    ]}
+                                >
+                                    <ExpandedCoverCard
+                                        cover={c}
+                                        allEntities={allEntities}
+                                        weather={weatherEntity}
+                                        onUpdate={onUpdate}
+                                        onSliderDragStart={onSliderDragStart}
+                                        onSliderDragEnd={onSliderDragEnd}
+                                    />
+                                </View>
+                            ))}
+                        </View>
+                    )}
+                </>
+            )}
+
+            {isTabletSplit && !expanded && <View style={styles.tabletSplitSpacer} />}
 
             {/* Chevron */}
             <TouchableOpacity style={styles.chevron} onPress={toggle} activeOpacity={0.7}>
@@ -288,59 +408,59 @@ export default function CoversGroupCard({ covers = [], allEntities = [], onUpdat
                     ? <ChevronUp   size={22} color="rgba(255,255,255,0.45)" />
                     : <ChevronDown size={22} color="rgba(255,255,255,0.45)" />}
             </TouchableOpacity>
-
-            {/* Expanded grid — master curtain excluded */}
-            {expanded && (
-                <View style={styles.grid}>
-                    {individualCovers.map(c => (
-                        <View key={c.entity_id} style={styles.cell}>
-                            <ExpandedCoverCard
-                                cover={c}
-                                allEntities={allEntities}
-                                onUpdate={onUpdate}
-                            />
-                        </View>
-                    ))}
-                </View>
-            )}
+            </View>
         </View>
     );
 }
 
 // ── Styles ────────────────────────────────────────────────────────────────
-const THUMB = 28;
-const TRACK = 7;
-
 const styles = StyleSheet.create({
     container: {
         backgroundColor: '#13132A',
         borderRadius: 20,
-        paddingHorizontal: 18,
+        paddingHorizontal: COVERS_GROUP_HORIZONTAL_PAD,
         paddingTop: 18,
         paddingBottom: 8,
         marginBottom: 12,
     },
+    containerTabletSplit: {
+        backgroundColor: 'transparent',
+        borderRadius: 0,
+        paddingHorizontal: 0,
+        paddingTop: 0,
+        paddingBottom: 0,
+        marginBottom: 0,
+        flex: 1,
+    },
+    tabletSplitInner: {
+        flex: 1,
+        justifyContent: 'space-between',
+    },
+    tabletSplitSpacer: {
+        flex: 1,
+        minHeight: 8,
+    },
 
     // Header
     header:     { flexDirection: 'row', alignItems: 'center', marginBottom: 18 },
-    iconCircle: {
-        width: 52, height: 52, borderRadius: 26,
-        backgroundColor: '#3A1A6E',
-        alignItems: 'center', justifyContent: 'center',
-        marginRight: 14,
-        shadowColor: '#8947ca', shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.5, shadowRadius: 8, elevation: 4,
+    headerTabletSplit: {
+        marginBottom: 12,
     },
-    iconCircleOpen: {
-        backgroundColor: '#7B2ECA',
-        shadowOpacity: 0.9, shadowRadius: 14, elevation: 8,
+    headerTitle: { ...Heading.md, color: '#fff' },
+    headerTextBlock: {
+        flex: 1,
+        justifyContent: 'center',
     },
-    headerTitle: { flex: 1, color: '#fff', fontSize: 20, fontWeight: '600' },
-    onBadge: {
-        backgroundColor: 'rgba(255,255,255,0.12)',
-        paddingHorizontal: 14, paddingVertical: 6, borderRadius: 20,
+    headerStatus: {
+        marginTop: 2,
+        fontSize: 13,
+        fontStyle: 'italic',
+        fontFamily: CF.regular,
+        color: 'rgba(255,255,255,0.45)',
     },
-    onBadgeText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+    headerStatusOn: {
+        color: '#44C8CA',
+    },
 
     // Dots
     dotsRow: {
@@ -349,79 +469,108 @@ const styles = StyleSheet.create({
         marginBottom: 16,
     },
 
-    // Slider section row
     sliderSection: {
-        flexDirection: 'row', alignItems: 'center',
-        marginBottom: 8, gap: 10,
+        marginBottom: 8,
     },
-    sliderIcon: {
-        color: 'rgba(255,255,255,0.5)',
-        fontSize: 18, fontWeight: '600',
-        width: 28, textAlign: 'center',
-    },
-    sliderWrapOuter: { flex: 1 },
 
-    // Slider container
-    sliderWrap: {
-        height: THUMB + 34,
-        justifyContent: 'center',
-        marginBottom: 6,
-        overflow: 'visible',
-    },
     sliderRail: {
         position: 'absolute', left: 0, right: 0,
         height: TRACK, borderRadius: TRACK / 2,
         backgroundColor: 'rgba(255,255,255,0.12)',
         top: (THUMB + 18 - TRACK) / 2,
     },
-    sliderFill: {
-        position: 'absolute', left: 0,
-        height: TRACK, borderRadius: TRACK / 2,
-        backgroundColor: 'rgba(255,255,255,0.40)',
-        top: (THUMB + 18 - TRACK) / 2,
-        // width driven by Animated.Value
-    },
-    sliderThumb: {
-        position: 'absolute',
-        backgroundColor: '#3A7BD5',
-        shadowColor: '#3A7BD5', shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.8, shadowRadius: 10, elevation: 8,
-    },
-    sliderBubble: {
-        position: 'absolute',
-        bottom: THUMB + 18,
-        minWidth: 36,
-        backgroundColor: '#3A7BD5',
-        borderRadius: 8,
-        paddingHorizontal: 7, paddingVertical: 3,
-        alignItems: 'center',
-        zIndex: 30,
-    },
-    sliderBubbleText: { color: '#fff', fontSize: 11, fontWeight: '700' },
 
-    // Drag direction hints shown below the track
     sliderHints: {
         flexDirection: 'row',
         justifyContent: 'space-between',
-        marginTop: THUMB + 4,
+        alignItems: 'center',
+        marginTop: 8,
+        paddingHorizontal: 0,
+    },
+    sliderHintItem: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
     },
     sliderHintClose: {
-        color: 'rgba(255,255,255,0.30)',
-        fontSize: 11,
+        color: 'rgba(255,255,255,0.35)',
+        fontSize: 12,
         fontWeight: '500',
+        fontFamily: CF.medium,
     },
     sliderHintOpen: {
-        color: 'rgba(68,200,202,0.55)',
-        fontSize: 11,
+        color: 'rgba(68,200,202,0.65)',
+        fontSize: 12,
         fontWeight: '500',
+        fontFamily: CF.medium,
     },
 
     chevron: { alignItems: 'center', paddingVertical: 6 },
 
-    // Expanded grid
+    // Expanded grid — same horizontal edge as slider (no negative margin / cell inset)
     grid: {
-        flexDirection: 'row', flexWrap: 'wrap',
-        marginHorizontal: -5, marginTop: 10, marginBottom: 8,
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 10,
+        marginTop: 10,
+        marginBottom: 8,
     },
-    cell: { width: '50%', paddingHorizontal: 5, marginBottom: 10 },
+    gridTabletSplit: {
+        flex: 1,
+        alignContent: 'flex-start',
+    },
+    cell: {
+        marginBottom: 10,
+    },
+    cellFullWidth: {
+        width: '100%',
+    },
+    cellWindow: {},
+    windowSection: {
+        marginTop: 8,
+        marginBottom: 12,
+        paddingBottom: 8,
+        borderBottomWidth: 1,
+        borderBottomColor: 'rgba(255,255,255,0.06)',
+    },
+    windowHeader: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginBottom: 10,
+        gap: 12,
+    },
+    windowTitle: {
+        color: 'rgba(255,255,255,0.85)',
+        fontSize: 15,
+        fontFamily: CF.semibold,
+        flex: 1,
+    },
+    windowGrid: {
+        marginTop: 12,
+        marginHorizontal: 0,
+    },
+    windowTabStack: {
+        position: 'relative',
+        width: '100%',
+        minHeight: 300,
+    },
+    windowTabPanel: {
+        width: '100%',
+    },
+    windowTabPanelHidden: {
+        position: 'absolute',
+        top: 0,
+        left: 0,
+        right: 0,
+        opacity: 0,
+        zIndex: 0,
+    },
+    windowEmpty: {
+        color: 'rgba(255,255,255,0.35)',
+        fontSize: 12,
+        fontFamily: CF.regular,
+        paddingVertical: 16,
+        textAlign: 'center',
+        width: '100%',
+    },
 });

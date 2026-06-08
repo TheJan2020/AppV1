@@ -5,6 +5,10 @@ import { useState, useEffect, useRef } from 'react';
 import { HAService } from '../services/ha';
 import RoomDetailView from '../components/DashboardV2/RoomDetailView';
 import { getRoomEntities } from '../utils/roomHelpers';
+import { peekRoomPageBootstrap } from '../utils/roomPageBootstrap';
+import { applyHaStateChangedEvent, applyClimateServiceToEntity } from '../utils/haEntityMerge';
+import { HA_STATUS, ADMIN_STATUS } from '../utils/haEntityHealth';
+import { useHaSystemHealth } from '../hooks/useHaSystemHealth';
 import { StatusBar } from 'expo-status-bar';
 
 /** Expo Router may pass repeated query keys as string[]. Normalize for area matching. */
@@ -20,28 +24,38 @@ export default function RoomPage() {
     const name = paramString(params.name);
     const picture = paramString(params.picture);
 
-    // We need to re-fetch state here or pass it?
-    // Passing large state via params is bad. Better to re-subscribe or use a global store.
-    // Given the architecture, we'll re-connect HAService briefly or ideally context.
-    // For now, let's spin up a service instance to ensure live data.
+    // Dashboard (rooms tab) stashes live HA data in roomPageBootstrap before navigating here
+    // so we match the modal path: show the room immediately, then keep HAService in sync.
+    const [initialPayload] = useState(() => peekRoomPageBootstrap(area_id, name));
 
-    // NOTE: In a real app, use Context or Redux/Zustand. 
-    // Here we duplicate the HAService logic for isolation as requested by "new page".
-
-    const [entities, setEntities] = useState([]);
-    const [musicAssistantEntryIds, setMusicAssistantEntryIds] = useState([]);
-    const [registryDevices, setRegistryDevices] = useState([]);
-    const [registryEntities, setRegistryEntities] = useState([]);
-    const [lightMappings, setLightMappings] = useState([]);
+    const [entities, setEntities] = useState(() => initialPayload?.entities ?? []);
+    const [musicAssistantEntryIds, setMusicAssistantEntryIds] = useState(
+        () => initialPayload?.musicAssistantEntryIds ?? []
+    );
+    const [registryDevices, setRegistryDevices] = useState(() => initialPayload?.registryDevices ?? []);
+    const [registryEntities, setRegistryEntities] = useState(() => initialPayload?.registryEntities ?? []);
+    const [lightMappings, setLightMappings] = useState(() => initialPayload?.lightMappings ?? []);
+    const [sensorMappings] = useState(() => initialPayload?.sensorMappings ?? []);
+    const [coverMappings] = useState(() => initialPayload?.coverMappings ?? []);
+    const [coverWindows] = useState(() => initialPayload?.coverWindows ?? []);
+    const [mediaMappings] = useState(() => initialPayload?.mediaMappings ?? []);
     const [showPreferenceButton, setShowPreferenceButton] = useState(true);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(() => !initialPayload);
+    const [haStatus, setHaStatus] = useState(
+        () => (initialPayload ? HA_STATUS.CONNECTED : HA_STATUS.LOADING),
+    );
 
     const service = useRef(null);
-    const [connectionConfig, setConnectionConfig] = useState({
-        url: '',
-        token: '',
-        loaded: false
-    });
+    const [connectionConfig, setConnectionConfig] = useState(() =>
+        initialPayload
+            ? {
+                url: initialPayload.haUrl || '',
+                token: initialPayload.haToken || '',
+                adminUrl: initialPayload.adminUrl || '',
+                loaded: true,
+            }
+            : { url: '', token: '', adminUrl: '', loaded: false }
+    );
 
     useEffect(() => {
         loadConnectionConfig();
@@ -70,12 +84,12 @@ export default function RoomPage() {
                 }
             }
 
-            setConnectionConfig({
-                url: '',
-                token: '',
-                adminUrl: '',
-                loaded: true
-            });
+            setConnectionConfig(prev => ({
+                url: prev.url || '',
+                token: prev.token || '',
+                adminUrl: prev.adminUrl || '',
+                loaded: true,
+            }));
         } catch (e) {
             console.log('Error loading connection config:', e);
             setConnectionConfig(prev => ({ ...prev, loaded: true }));
@@ -87,15 +101,18 @@ export default function RoomPage() {
         const { url, token } = connectionConfig;
 
         if (!url || !token) {
+            setHaStatus(HA_STATUS.NOT_CONFIGURED);
             setLoading(false);
             return;
         }
 
+        setHaStatus(HA_STATUS.LOADING);
         service.current = new HAService(url, token);
         service.current.connect();
 
         service.current.subscribe(data => {
             if (data.type === 'connected') {
+                setHaStatus(HA_STATUS.CONNECTED);
                 Promise.all([
                     service.current.getStates(),
                     service.current.getDeviceRegistry(),
@@ -112,21 +129,27 @@ export default function RoomPage() {
                     setLoading(false);
                 }).catch((e) => {
                     console.log('[RoomPage] Failed to load states/registries:', e);
+                    setHaStatus(HA_STATUS.DISCONNECTED);
                     setLoading(false);
                 });
             } else if (data.type === 'auth_failed') {
                 console.log('[RoomPage] HA auth failed:', data.message);
+                setHaStatus(HA_STATUS.AUTH_FAILED);
                 setLoading(false);
-            } else if (data.type === 'state_changed' && data.event) {
-                const newEvent = data.event.data.new_state;
-                setEntities(prev => {
-                    const index = prev.findIndex(e => e.entity_id === newEvent.entity_id);
+            } else if (data.type === 'disconnected') {
+                setHaStatus(HA_STATUS.DISCONNECTED);
+            } else if (data.type === 'state_changed' && data.event?.data) {
+                const eventData = data.event.data;
+                const newState = eventData.new_state;
+                if (!newState) return;
+                setEntities((prev) => {
+                    const index = prev.findIndex((e) => e.entity_id === newState.entity_id);
                     if (index !== -1) {
-                        const newEntities = [...prev];
-                        newEntities[index] = newEvent;
-                        return newEntities;
+                        const next = [...prev];
+                        next[index] = applyHaStateChangedEvent(prev[index], eventData);
+                        return next;
                     }
-                    return [...prev, newEvent];
+                    return [...prev, newState];
                 });
             }
         });
@@ -159,8 +182,26 @@ export default function RoomPage() {
             .catch(e => console.log("[RoomPage] Error loading light mappings:", e));
     }, [connectionConfig.loaded, connectionConfig.adminUrl]);
 
+    const systemHealth = useHaSystemHealth({
+        entities,
+        haStatus,
+        adminStatus: connectionConfig.adminUrl ? ADMIN_STATUS.OK : ADMIN_STATUS.UNKNOWN,
+    });
+
     const handleToggle = (domain, serviceName, data) => {
-        service.current?.callService(domain, serviceName, data);
+        if (!systemHealth.canControlHa) {
+            return Promise.reject(new Error('Home Assistant is not connected'));
+        }
+        if (domain === 'climate' && data?.entity_id) {
+            setEntities((prev) =>
+                prev.map((e) =>
+                    e.entity_id === data.entity_id
+                        ? applyClimateServiceToEntity(e, serviceName, data)
+                        : e,
+                ),
+            );
+        }
+        return service.current?.callService(domain, serviceName, data);
     };
 
     if (loading) {
@@ -172,7 +213,16 @@ export default function RoomPage() {
     }
 
     const room = { area_id, name, picture };
-    const { lights, fans, climates, covers, medias, musicMedias, cameras, sensors, doors, switches, automations, scripts } = getRoomEntities(room, registryDevices, registryEntities, entities, [], [], [], musicAssistantEntryIds);
+    const { lights, fans, climates, covers, medias, musicMedias, cameras, sensors, doors, switches, automations, scripts } = getRoomEntities(
+        room,
+        registryDevices,
+        registryEntities,
+        entities,
+        sensorMappings,
+        coverMappings,
+        mediaMappings,
+        musicAssistantEntryIds
+    );
 
     return (
         <View style={{ flex: 1, backgroundColor: '#000' }}>
@@ -197,10 +247,12 @@ export default function RoomPage() {
                 onClose={() => router.back()}
                 isModal={false}
                 lightMappings={lightMappings}
+                mediaMappings={mediaMappings}
                 adminUrl={connectionConfig.adminUrl}
                 haUrl={connectionConfig.url}
                 haToken={connectionConfig.token}
                 showPreferenceButton={showPreferenceButton}
+                coverWindows={coverWindows}
                 musicAssistantEntryIds={musicAssistantEntryIds}
                 browseMedia={(entityId, mediaContentType, mediaContentId) =>
                     service.current?.browseMedia?.(entityId, mediaContentType, mediaContentId)
@@ -208,6 +260,8 @@ export default function RoomPage() {
                 callServiceWithResponse={(domain, serviceName, serviceData) =>
                     service.current?.callService?.(domain, serviceName, serviceData, { returnResponse: true })
                 }
+                systemHealthBanner={systemHealth.banner}
+                canControlHa={systemHealth.canControlHa}
             />
         </View>
     );

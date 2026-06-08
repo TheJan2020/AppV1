@@ -41,6 +41,7 @@ import * as Haptics from 'expo-haptics';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Svg, { Path } from 'react-native-svg';
 import { CF } from '../../utils/typography';
+import ModalBackdrop from '../ModalBackdrop';
 
 // ── Color tokens ──────────────────────────────────────────────────────────────
 const C_PURPLE = '#8947ca';   // locked / closed
@@ -54,6 +55,10 @@ const KNOB      = 60;
 const PAD       = 4;
 const HEIGHT    = 54;
 const TRAVEL_MS = 15000;           // ~15s garage travel estimate
+const ARROW_BOUNCE_USER     = 8;   // px — drag-initiated garage transit
+const ARROW_BOUNCE_EXTERNAL = 3;   // px — HA / remote-initiated (subtle)
+const ARROW_BOUNCE_MS_USER     = 350;
+const ARROW_BOUNCE_MS_EXTERNAL = 550;
 
 // ── SVG Icons ─────────────────────────────────────────────────────────────────
 function LockClosedIcon({ size = 22, color = '#fff' }) {
@@ -131,30 +136,38 @@ function ShutterIcon({ size = 18 }) {
 // ─────────────────────────────────────────────────────────────────────────────
 //  LockPill — binary drag + locking/unlocking transit state
 // ─────────────────────────────────────────────────────────────────────────────
-export function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, entityState, onToggle, focusKey }) {
+export function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, isUnavailable = false, entityState, onToggle, focusKey }) {
     const inTransit  = !!(isLocking || isUnlocking);
-    const disabled   = isPassage; // passage mode — lock is held open, cannot be locked
+    const disabled   = isPassage || isUnavailable;
     const [pillW, setPillW] = useState(0);
     const translateX        = useSharedValue(0);
     const maxTravelSV       = useSharedValue(0);
     const pulseOpacity      = useSharedValue(1);
+    const userInitiatedRef  = useRef(false);
 
     // Knob is absolutely positioned at left:0.
     // locked   → translateX = 0            (knob at left edge)
     // unlocked → translateX = pillW - KNOB (knob at right edge)
     useEffect(() => {
-        if (pillW === 0) return;
+        if (pillW === 0 || inTransit) return;
         maxTravelSV.value = pillW - KNOB;
-        translateX.value  = withSpring(isUnlocked ? pillW - KNOB : 0, { damping: 18 });
-    }, [isUnlocked, pillW, focusKey]);
+        const target = isUnlocked ? pillW - KNOB : 0;
+        if (userInitiatedRef.current) {
+            translateX.value = withSpring(target, { damping: 18 });
+        } else {
+            translateX.value = withTiming(target, { duration: 280 });
+        }
+        userInitiatedRef.current = false;
+    }, [isUnlocked, inTransit, pillW, focusKey]);
 
     // Pulse label during transit
     useEffect(() => {
         if (inTransit) {
+            const subtle = !userInitiatedRef.current;
             pulseOpacity.value = withRepeat(
                 withSequence(
-                    withTiming(0.35, { duration: 500 }),
-                    withTiming(1,    { duration: 500 }),
+                    withTiming(subtle ? 0.82 : 0.35, { duration: subtle ? 650 : 500 }),
+                    withTiming(1, { duration: subtle ? 650 : 500 }),
                 ),
                 -1,
                 false,
@@ -162,12 +175,14 @@ export function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, 
         } else {
             cancelAnimation(pulseOpacity);
             pulseOpacity.value = withTiming(1, { duration: 200 });
+            userInitiatedRef.current = false;
         }
     }, [inTransit]);
 
     const onLayout = (e) => setPillW(e.nativeEvent.layout.width);
 
     const confirm = () => {
+        userInitiatedRef.current = true;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         onToggle && onToggle(entityState);
     };
@@ -213,12 +228,12 @@ export function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, 
         opacity: pulseOpacity.value,
     }));
 
-    const transitColor = isLocking ? C_PURPLE : '#FF3B3B';
+    const transitColor = C_PURPLE;
     const pillBg       = '#13132A';
     const border       = isPassage
         ? C_BORDER
         : inTransit
-            ? (isLocking ? 'rgba(137,71,202,0.60)' : 'rgba(255,59,59,0.70)')
+            ? 'rgba(137,71,202,0.60)'
             : C_BORDER;
     const Icon         = isUnlocked ? LockOpenIcon : LockClosedIcon;
 
@@ -249,6 +264,30 @@ export function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, 
                         >
                             <View style={[StyleSheet.absoluteFill, { borderRadius: KNOB / 2, borderWidth: 2, borderColor: C_PURPLE, backgroundColor: 'transparent' }]} />
                             <LockOpenIcon size={26} color={C_PURPLE} />
+                        </Animated.View>
+                    </>
+                ) : isUnavailable ? (
+                    <>
+                        <Animated.View style={[styles.pillLabelWrap, { paddingLeft: 14, paddingRight: KNOB + 8 }]} pointerEvents="none">
+                            <Text style={[styles.pillLabelName, { opacity: 0.55 }]} numberOfLines={1}>{name}</Text>
+                            <View style={styles.passageBadge}>
+                                <View style={[styles.passageDot, { backgroundColor: '#EF5350' }]} />
+                                <Text style={[styles.passageLabel, { color: 'rgba(239,83,80,0.9)' }]}>
+                                    {entityState === 'unknown' ? 'Unknown' : 'Unavailable'}
+                                </Text>
+                            </View>
+                        </Animated.View>
+                        <Animated.View
+                            style={[styles.knob, { transform: [{ translateX: 0 }], opacity: 0.45 }]}
+                            pointerEvents="none"
+                        >
+                            <LinearGradient
+                                colors={['#444', '#555']}
+                                start={{ x: 0, y: 0.5 }}
+                                end={{ x: 1, y: 0.5 }}
+                                style={StyleSheet.absoluteFill}
+                            />
+                            <LockClosedIcon size={26} color="rgba(255,255,255,0.5)" />
                         </Animated.View>
                     </>
                 ) : inTransit ? (
@@ -297,6 +336,7 @@ function GaragePill({
 }) {
     const [localTransit, setLocalTransit] = useState(null);
     const timerRef = useRef(null);
+    const userInitiatedRef = useRef(false);
 
     // On mount: restore in-progress transit from parent (survives remount)
     useEffect(() => {
@@ -321,6 +361,7 @@ function GaragePill({
     // Keep in sync with HA state (isOpening/isClosing from WebSocket)
     useEffect(() => {
         if (isOpening && localTransit !== 'opening') {
+            userInitiatedRef.current = false;
             clearTimeout(timerRef.current);
             const now = Date.now();
             setLocalTransit('opening');
@@ -330,6 +371,7 @@ function GaragePill({
                 onTransitEnd && onTransitEnd();
             }, travelMs);
         } else if (isClosing && localTransit !== 'closing') {
+            userInitiatedRef.current = false;
             clearTimeout(timerRef.current);
             const now = Date.now();
             setLocalTransit('closing');
@@ -363,7 +405,13 @@ function GaragePill({
     // Snap knob when idle. locked=left(0), open=right(pillW-KNOB)
     useEffect(() => {
         if (pillW === 0 || inTransit) return;
-        translateX.value = withSpring(isOpen ? pillW - KNOB : 0, { damping: 18 });
+        const target = isOpen ? pillW - KNOB : 0;
+        if (userInitiatedRef.current) {
+            translateX.value = withSpring(target, { damping: 18 });
+        } else {
+            translateX.value = withTiming(target, { duration: 280 });
+        }
+        userInitiatedRef.current = false;
     }, [isOpen, inTransit, pillW, focusKey]);
 
     useEffect(() => {
@@ -371,12 +419,14 @@ function GaragePill({
             progress.value = 0;
             progress.value = withTiming(1, { duration: travelMs });
 
-            const dist = goingUp ? -10 : 10;
+            const fromUser = userInitiatedRef.current;
+            const dist = (goingUp ? -1 : 1) * (fromUser ? ARROW_BOUNCE_USER : ARROW_BOUNCE_EXTERNAL);
+            const bounceMs = fromUser ? ARROW_BOUNCE_MS_USER : ARROW_BOUNCE_MS_EXTERNAL;
             arrowY.value = 0;
             arrowY.value = withRepeat(
                 withSequence(
-                    withTiming(dist, { duration: 350 }),
-                    withTiming(0,    { duration: 350 }),
+                    withTiming(dist, { duration: bounceMs }),
+                    withTiming(0, { duration: bounceMs }),
                 ),
                 -1,
                 false,
@@ -386,12 +436,14 @@ function GaragePill({
             cancelAnimation(arrowY);
             progress.value = withTiming(0, { duration: 400 });
             arrowY.value   = withTiming(0, { duration: 150 });
+            userInitiatedRef.current = false;
         }
     }, [inTransit, goingUp]);
 
     const onLayout = (e) => setPillW(e.nativeEvent.layout.width);
 
     const startTransit = (direction) => {
+        userInitiatedRef.current = true;
         clearTimeout(timerRef.current);
         const now = Date.now();
         setLocalTransit(direction);
@@ -756,6 +808,7 @@ function EditModal({
             onRequestClose={() => { void flushPendingWritesAndClose(); }}
         >
             <View style={mStyles.overlay}>
+                <ModalBackdrop onPress={() => { void flushPendingWritesAndClose(); }} />
                 <Animated.View style={[mStyles.sheet, sheetAnimStyle]}>
                     {/* Handle — drag down to dismiss */}
                     <GestureDetector gesture={dismissGesture}>
@@ -1003,7 +1056,15 @@ export default function HomeAccess({
     haEntities = [],
     lockPassageConfigs = {},
     onConfigSaved,
+    columns = 2,
 }) {
+    const [gridWidth, setGridWidth] = useState(0);
+    const GRID_GAP = 12;
+    const gridCellWidth =
+        columns >= 4 && gridWidth > 0
+            ? Math.floor((gridWidth - GRID_GAP * (columns - 1)) / columns)
+            : null;
+    const gridCellWidthPct = columns < 4 ? `${Math.floor(100 / columns) - 2}%` : null;
     const garages  = covers.filter(c => c.coverType === 'garage');
 
     const halfItems = [
@@ -1069,9 +1130,23 @@ export default function HomeAccess({
 
             <View style={styles.list}>
                 {/* Lock + Garage 2-column grid */}
-                <View style={styles.grid}>
+                <View
+                    style={styles.grid}
+                    onLayout={(e) => {
+                        const w = e.nativeEvent.layout.width;
+                        if (w > 0 && w !== gridWidth) setGridWidth(w);
+                    }}
+                >
                     {halfItems.map(item => (
-                        <View key={item.data.entity_id} style={styles.gridCell}>
+                        <View
+                            key={item.data.entity_id}
+                            style={[
+                                styles.gridCell,
+                                gridCellWidth != null && { width: gridCellWidth },
+                                gridCellWidthPct != null && { width: gridCellWidthPct },
+                                columns >= 4 && styles.tabletCell,
+                            ]}
+                        >
                             {item.kind === 'lock' ? (
                                 <LockPill
                                     key={`lock-${item.data.entity_id}-${visibleKey}`}
@@ -1178,8 +1253,10 @@ const styles = StyleSheet.create({
         rowGap: 20,
         columnGap: 12,
     },
-    gridCell: {
-        width: '47%',
+    gridCell: {},
+    tabletCell: {
+        flexGrow: 0,
+        flexShrink: 0,
     },
 
     // ── Shared pill shell ─────────────────────────────────────────────────────

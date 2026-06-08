@@ -2,6 +2,7 @@ import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView } from 'rea
 import { BlurView } from 'expo-blur';
 import { X } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
+import ModalBackdrop from '../ModalBackdrop';
 
 export default function ReasoningModal({ visible, onClose, entityId, reasoning, confidence, lastUpdated }) {
     if (!reasoning) return null;
@@ -18,7 +19,9 @@ export default function ReasoningModal({ visible, onClose, entityId, reasoning, 
             animationType="fade"
             onRequestClose={onClose}
         >
-            <BlurView intensity={20} style={styles.overlay}>
+            <View style={styles.overlay}>
+                <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+                <ModalBackdrop onPress={onClose} />
                 <View style={styles.modalContainer}>
                     <View style={styles.modal}>
                         {/* Header */}
@@ -127,7 +130,7 @@ export default function ReasoningModal({ visible, onClose, entityId, reasoning, 
                         </ScrollView>
                     </View>
                 </View>
-            </BlurView>
+            </View>
         </Modal>
     );
 }

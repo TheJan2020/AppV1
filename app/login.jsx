@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Image, Modal, FlatList, KeyboardAvoidingView, Platform, ScrollView, Keyboard, TouchableWithoutFeedback } from 'react-native';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Modal, FlatList, KeyboardAvoidingView, Platform, ScrollView, Keyboard, TouchableWithoutFeedback, Linking } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
@@ -9,6 +9,7 @@ import { scanNetwork } from '../utils/discovery';
 import { HAService } from '../services/ha';
 import { validateCredentials } from '../services/auth';
 import { registerForPushNotificationsAsync } from '../services/notifications';
+import ModalBackdrop from '../components/ModalBackdrop';
 
 const SETTINGS_KEY_PROFILES = 'ha_profiles';
 const SETTINGS_KEY_ACTIVE_PROFILE = 'ha_active_profile_id';
@@ -677,15 +678,6 @@ export default function Login() {
         >
             <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
                 <View style={styles.container}>
-                    <View style={styles.welcomeBlock}>
-                        <Text style={styles.welcomeText}>
-                            {isReturningUser ? 'Welcome Back 👋' : 'Welcome 👋'}
-                        </Text>
-                        <Text style={styles.welcomeSubText}>
-                            {isReturningUser ? 'Good to see you again' : "Let's get you connected"}
-                        </Text>
-                    </View>
-
                     <ScrollView
                         ref={scrollViewRef}
                         style={{ flex: 1 }}
@@ -693,14 +685,6 @@ export default function Login() {
                         keyboardShouldPersistTaps="handled"
                         showsVerticalScrollIndicator={false}
                     >
-                        <View style={styles.header}>
-                            <Image
-                                source={require('../assets/Light.png')}
-                                style={styles.logo}
-                                resizeMode="contain"
-                            />
-                        </View>
-
                         <View style={styles.form}>
                             {profiles.length === 0 ? (
                                 <View style={styles.noProfileWarning}>
@@ -719,6 +703,15 @@ export default function Login() {
                                 </View>
                             ) : (
                                 <>
+                                    <View style={styles.welcomeBlock}>
+                                        <Text style={styles.welcomeText}>
+                                            {isReturningUser ? 'Welcome Back' : 'Welcome'}
+                                        </Text>
+                                        <Text style={styles.welcomeSubText}>
+                                            {isReturningUser ? 'Good to see you again' : "Let's get you connected"}
+                                        </Text>
+                                    </View>
+
                                     <View style={styles.inputContainer}>
                                         <View style={{ flex: 1 }}>
                                             <Text style={styles.inputLabel}>Connected to</Text>
@@ -782,7 +775,17 @@ export default function Login() {
                                         />
                                     </View>
 
-
+                                    <TouchableOpacity
+                                        style={[styles.button, { backgroundColor: '#8947ca', opacity: (isLoggingIn || !username) ? 0.7 : 1 }]}
+                                        onPress={() => handleLogin('/dashboard-v2')}
+                                        disabled={isLoggingIn || !username}
+                                    >
+                                        {isLoggingIn ? (
+                                            <ActivityIndicator color="#fff" />
+                                        ) : (
+                                            <Text style={styles.buttonText}>Login</Text>
+                                        )}
+                                    </TouchableOpacity>
 
                                     {faceIdEnabled && isBiometricSupported && (
                                         <TouchableOpacity
@@ -794,6 +797,16 @@ export default function Login() {
                                             <Text style={styles.bioText}>Use FaceID</Text>
                                         </TouchableOpacity>
                                     )}
+
+                                    <Text style={styles.supportText}>
+                                        Having trouble signing in? We're here to help —{' '}
+                                        <Text
+                                            style={styles.supportEmail}
+                                            onPress={() => Linking.openURL('mailto:info@primewave.ai')}
+                                        >
+                                            info@primewave.ai
+                                        </Text>
+                                    </Text>
                                 </>
                             )}
                         </View>
@@ -808,6 +821,7 @@ export default function Login() {
                             onRequestClose={() => setShowUserModal(false)}
                         >
                             <View style={styles.modalOverlay}>
+                                <ModalBackdrop onPress={() => setShowUserModal(false)} />
                                 <View style={styles.modalContent}>
                                     <Text style={styles.modalTitle}>Select User</Text>
                                     <FlatList
@@ -851,6 +865,7 @@ export default function Login() {
                             onRequestClose={() => setShowSettings(false)}
                         >
                             <View style={styles.modalOverlay}>
+                                <ModalBackdrop onPress={() => setShowSettings(false)} />
                                 <View style={[styles.modalContent, { maxHeight: '90%' }]}>
                                     <View style={styles.modalHeader}>
                                         <Text style={styles.modalTitle}>Settings</Text>
@@ -866,21 +881,6 @@ export default function Login() {
                             </View>
                         </Modal>
                     </ScrollView>
-
-                    {/* Sticky Footer for Login Button */}
-                    <View style={{ paddingTop: 10, paddingBottom: 20, backgroundColor: Colors.background }}>
-                        <TouchableOpacity
-                            style={[styles.button, { backgroundColor: '#8947ca', opacity: (isLoggingIn || !username) ? 0.7 : 1, marginTop: 0 }]}
-                            onPress={() => handleLogin('/dashboard-v2')}
-                            disabled={isLoggingIn || !username}
-                        >
-                            {isLoggingIn ? (
-                                <ActivityIndicator color="#fff" />
-                            ) : (
-                                <Text style={styles.buttonText}>Login</Text>
-                            )}
-                        </TouchableOpacity>
-                    </View>
                 </View>
             </TouchableWithoutFeedback >
         </KeyboardAvoidingView >
@@ -894,22 +894,10 @@ const styles = StyleSheet.create({
         padding: 20,
         justifyContent: 'center',
     },
-    header: {
-        marginBottom: 20,
-        alignItems: 'center',
-        position: 'relative'
-    },
     welcomeBlock: {
         width: '100%',
         alignItems: 'flex-start',
-        marginBottom: 16,
-        marginTop: 50,
-    },
-    logo: {
-        width: 280,
-        height: 120,
-        marginBottom: 10,
-        marginTop: 0,
+        marginBottom: 4,
     },
     welcomeText: {
         color: '#fff',
@@ -922,7 +910,7 @@ const styles = StyleSheet.create({
         color: Colors.textDim,
         fontSize: 14,
         textAlign: 'left',
-        marginBottom: 10,
+        marginBottom: 0,
     },
     form: {
         gap: 20,
@@ -957,10 +945,10 @@ const styles = StyleSheet.create({
     button: {
         backgroundColor: Colors.primary,
         height: 60,
-        borderRadius: 12,
+        borderRadius: 30,
         justifyContent: 'center',
         alignItems: 'center',
-        marginTop: 10,
+        marginTop: 0,
         shadowColor: Colors.primary,
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.3,
@@ -1051,6 +1039,16 @@ const styles = StyleSheet.create({
         color: Colors.primary,
         fontSize: 16,
         fontWeight: '600'
+    },
+    supportText: {
+        color: Colors.textDim,
+        fontSize: 13,
+        textAlign: 'center',
+        marginTop: 8,
+    },
+    supportEmail: {
+        color: Colors.primary,
+        textDecorationLine: 'underline',
     },
     // Settings & Profiles
     sectionTitle: {

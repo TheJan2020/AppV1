@@ -6,6 +6,7 @@ import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
 import { getAdminUrl } from '../utils/storage';
 import { authFetch } from '../utils/authFetch';
+import ModalBackdrop from '../components/ModalBackdrop';
 
 export default function HistoryPage() {
     const router = useRouter();
@@ -228,7 +229,8 @@ export default function HistoryPage() {
             animationType="fade"
             onRequestClose={() => setSelectedItem(null)}
         >
-            <View style={styles.modalOverlay}>
+            <View style={styles.modalOverlay} pointerEvents="box-none">
+                <ModalBackdrop onPress={() => setSelectedItem(null)} />
                 <View style={styles.modalContent}>
                     <Text style={styles.modalTitle}>History Record</Text>
                     {selectedItem && (

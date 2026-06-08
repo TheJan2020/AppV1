@@ -3,15 +3,18 @@ import { BlurView } from 'expo-blur';
 import { X, Lightbulb, Fan, ChevronLeft, Droplets, Thermometer, DoorOpen, DoorClosed, Lock, LockOpen, Power, Play, Zap, ChevronDown, ChevronUp, Monitor } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '../../constants/Colors';
-import { CF } from '../../utils/typography';
+import { CF, Heading } from '../../utils/typography';
 import { useState, useEffect, useRef } from 'react';
+import { useParentScrollLock } from '../../hooks/useParentScrollLock';
 import { GestureHandlerRootView, PanGestureHandler, State } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, withSpring, Easing, cancelAnimation } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { SvgUri } from 'react-native-svg';
 
 import LightControlModal from './LightControlModal';
-import ClimateCard from './ClimateCard';
+import ClimateGroupCard from './ClimateGroupCard';
+import HaSystemBanner from './HaSystemBanner';
+import { isBadEntityState } from '../../utils/haEntityHealth';
 import CoverCard from './CoverCard';
 import MediaCard from './MediaCard';
 import MusicMediaCard from './MusicMediaCard';
@@ -22,7 +25,9 @@ import SlideAction from './SlideAction';
 import SceneCard from './SceneCard';
 import LightsGroupCard from './LightsGroupCard';
 import CoversGroupCard from './CoversGroupCard';
+import RoomGroupIconButton from './RoomGroupIconButton';
 import { LockPill } from './HomeAccess';
+import useDeviceType from '../../hooks/useDeviceType';
 
 // Convert area_id-style names (e.g. "living_room") to proper display names ("Living Room")
 const formatRoomName = (name) => {
@@ -351,13 +356,27 @@ export default function RoomDetailView({
     musicAssistantEntryIds = [],
     browseMedia,
     callServiceWithResponse,
+    systemHealthBanner = null,
+    canControlHa = true,
+    coverMappings = [],
+    coverWindows = [],
 }) {
+    const { isTablet } = useDeviceType();
+    const isTabletModal = isModal && isTablet;
     const cardWidth = columns > 2 ? `${Math.floor(100 / columns) - 2}%` : '48%';
     const [selectedLight, setSelectedLight] = useState(null);
+    const [lightsPanelWidth, setLightsPanelWidth] = useState(0);
+    const [coversPanelWidth, setCoversPanelWidth] = useState(0);
     const [preferences, setPreferences] = useState([]);
     const [showAutomations, setShowAutomations] = useState(false);
     const [sourceOverlay, setSourceOverlay] = useState(null);
     const [volumeOverlay, setVolumeOverlay] = useState(null);
+    const { scrollEnabled, onSliderDragStart, onSliderDragEnd } = useParentScrollLock();
+
+    const guardedToggle = (domain, serviceName, data) => {
+        if (!canControlHa) return undefined;
+        return onToggle?.(domain, serviceName, data);
+    };
 
     const checkNeedsChange = (entityId) => {
         const pref = preferences.find(p => p.entity_id === entityId);
@@ -439,6 +458,78 @@ export default function RoomDetailView({
     };
 
     const imageUrl = !isModal && !isInlinePanel && room.picture ? `${haUrl}${room.picture}` : null;
+
+    const hasLightsBlock = actualLightEntities.length > 0 || fans.length > 0;
+    const hasCoversBlock = covers.length > 0;
+    const useTabletLightsCoversSplit = isTabletModal && hasLightsBlock && hasCoversBlock;
+
+    const lightsAndFansSection = (() => {
+        if (!hasLightsBlock) return null;
+        return (
+            <>
+                {actualLightEntities.length > 0 && (
+                    <LightsGroupCard
+                        lights={actualLightEntities}
+                        lightMappings={lightMappings}
+                        adminUrl={adminUrl}
+                        roomName={room.name}
+                        contentWidth={useTabletLightsCoversSplit && lightsPanelWidth > 0 ? lightsPanelWidth : undefined}
+                        gridColumns={useTabletLightsCoversSplit ? 1 : 2}
+                        variant={useTabletLightsCoversSplit ? 'tabletSplit' : 'default'}
+                        onSliderDragStart={onSliderDragStart}
+                        onSliderDragEnd={onSliderDragEnd}
+                        onToggle={(id) => {
+                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                            guardedToggle('light', 'toggle', { entity_id: id });
+                        }}
+                        onTurnOn={(id, params) => {
+                            guardedToggle('light', 'turn_on', { entity_id: id, ...params });
+                        }}
+                        onBrightnessChange={handleBrightness}
+                        onColorTempChange={handleColorTemp}
+                        onRgbChange={handleRgb}
+                        onLongPress={(l) => {
+                            const m = lightMappings.find(m => m.entity_id === l.entity_id);
+                            setSelectedLight({ ...l, colorCapability: m?.colorCapability || null });
+                        }}
+                    />
+                )}
+                {fans.length > 0 && (
+                    <View style={styles.grid}>
+                        {fans.map((fan) => (
+                            <View key={fan.entity_id} style={{ width: useTabletLightsCoversSplit ? '100%' : cardWidth }}>
+                                <FanCard
+                                    fan={fan}
+                                    needsChange={checkNeedsChange(fan.entity_id)}
+                                    onToggle={(id) => {
+                                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                        if (onToggle) onToggle('fan', 'toggle', { entity_id: id });
+                                    }}
+                                />
+                            </View>
+                        ))}
+                    </View>
+                )}
+            </>
+        );
+    })();
+
+    const coversSection = hasCoversBlock ? (
+        <CoversGroupCard
+            covers={covers}
+            allEntities={allEntities}
+            gridColumns={useTabletLightsCoversSplit ? 1 : 2}
+            variant={useTabletLightsCoversSplit ? 'tabletSplit' : 'default'}
+            contentWidth={useTabletLightsCoversSplit && coversPanelWidth > 0 ? coversPanelWidth : undefined}
+            coverWindows={coverWindows}
+            room={room}
+            onSliderDragStart={onSliderDragStart}
+            onSliderDragEnd={onSliderDragEnd}
+            onUpdate={(id, domain, service, data) => {
+                guardedToggle(domain, service, { entity_id: id, ...data });
+            }}
+        />
+    ) : null;
 
     return (
         <View style={[styles.container, isModal && styles.modalContainer, isInlinePanel && styles.inlinePanelContainer]}>
@@ -636,11 +727,15 @@ export default function RoomDetailView({
                     style={{ flex: 1 }}
                     contentContainerStyle={styles.content}
                     scrollEventThrottle={16}
+                    scrollEnabled={scrollEnabled}
+                    keyboardShouldPersistTaps="handled"
+                    keyboardDismissMode="on-drag"
                 >
+                    <HaSystemBanner banner={systemHealthBanner} />
+
                     {/* ── 1. Scenes + Apply Preferences (always last in the grid) ── */}
                     {(scripts.length > 0 || showPreferenceButton) && (
                         <View>
-                            <View style={styles.divider} />
                             <Text style={styles.roomSectionHeading}>SCENES</Text>
                             <View style={styles.grid}>
                                 {scripts.map(s => {
@@ -675,20 +770,24 @@ export default function RoomDetailView({
                             <Text style={styles.roomSectionHeading}>HOME ACCESS</Text>
                             <View style={styles.lockPillsRow}>
                                 {lockEntities.map(lock => {
-                                    const isUnlocked = lock.stateObj.state === 'unlocked' || lock.stateObj.state === 'open';
+                                    const lockState = lock.stateObj.state;
+                                    const lockUnavailable = isBadEntityState(lockState);
+                                    const isUnlocked = lockState === 'unlocked' || lockState === 'open';
                                     return (
                                         <View key={lock.entity_id} style={styles.lockPillCell}>
                                             <LockPill
                                                 name={lock.displayName || lock.entity_id}
                                                 isUnlocked={isUnlocked}
-                                                isLocking={lock.stateObj.state === 'locking'}
-                                                isUnlocking={lock.stateObj.state === 'unlocking'}
+                                                isLocking={lockState === 'locking'}
+                                                isUnlocking={lockState === 'unlocking'}
                                                 isPassage={false}
-                                                entityState={lock.stateObj.state}
+                                                isUnavailable={lockUnavailable}
+                                                entityState={lockState}
                                                 focusKey={lock.entity_id}
                                                 onToggle={() => {
+                                                    if (lockUnavailable || !canControlHa) return;
                                                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                                                    if (onToggle) onToggle('lock', isUnlocked ? 'lock' : 'unlock', { entity_id: lock.entity_id });
+                                                    guardedToggle('lock', isUnlocked ? 'lock' : 'unlock', { entity_id: lock.entity_id });
                                                 }}
                                             />
                                         </View>
@@ -709,59 +808,61 @@ export default function RoomDetailView({
                         />
                     )}
 
-                    {/* ── 3. Lights + Fans ── */}
-                    {(() => {
-                        const actualLights = actualLightEntities;
-                        const hasDevices = actualLights.length > 0 || fans.length > 0;
-                        if (!hasDevices) return (
-                            <View style={styles.emptyState}>
-                                <Lightbulb size={40} color={Colors.textDim} />
-                                <Text style={styles.emptyText}>No devices found in this room.</Text>
+                    {/* ── Lights + Covers: tablet modal = side-by-side halves ── */}
+                    {useTabletLightsCoversSplit ? (
+                        <View>
+                            <View style={styles.divider} />
+                            <View style={styles.tabletSplitRow}>
+                                <View
+                                    style={styles.tabletSplitPanel}
+                                    onLayout={(e) => {
+                                        const w = e.nativeEvent.layout.width;
+                                        if (w > 0 && w !== lightsPanelWidth) setLightsPanelWidth(w);
+                                    }}
+                                >
+                                    <ScrollView
+                                        style={styles.tabletSplitScroll}
+                                        contentContainerStyle={styles.tabletSplitScrollContent}
+                                        showsVerticalScrollIndicator={false}
+                                        nestedScrollEnabled
+                                        scrollEnabled={scrollEnabled}
+                                        keyboardShouldPersistTaps="handled"
+                                    >
+                                        {lightsAndFansSection}
+                                    </ScrollView>
+                                </View>
+                                <View style={styles.tabletSplitDivider} />
+                                <View
+                                    style={styles.tabletSplitPanel}
+                                    onLayout={(e) => {
+                                        const w = e.nativeEvent.layout.width;
+                                        if (w > 0 && w !== coversPanelWidth) setCoversPanelWidth(w);
+                                    }}
+                                >
+                                    <ScrollView
+                                        style={styles.tabletSplitScroll}
+                                        contentContainerStyle={styles.tabletSplitScrollContent}
+                                        showsVerticalScrollIndicator={false}
+                                        nestedScrollEnabled
+                                        scrollEnabled={scrollEnabled}
+                                        keyboardShouldPersistTaps="handled"
+                                    >
+                                        {coversSection}
+                                    </ScrollView>
+                                </View>
                             </View>
-                        );
-                        return (
-                            <>
-                                {actualLights.length > 0 && (
-                                    <LightsGroupCard
-                                        lights={actualLights}
-                                        lightMappings={lightMappings}
-                                        adminUrl={adminUrl}
-                                        roomName={room.name}
-                                        onToggle={(id) => {
-                                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                            if (onToggle) onToggle('light', 'toggle', { entity_id: id });
-                                        }}
-                                        onTurnOn={(id, params) => {
-                                            if (onToggle) onToggle('light', 'turn_on', { entity_id: id, ...params });
-                                        }}
-                                        onBrightnessChange={handleBrightness}
-                                        onColorTempChange={handleColorTemp}
-                                        onRgbChange={handleRgb}
-                                        onLongPress={(l) => {
-                                            const m = lightMappings.find(m => m.entity_id === l.entity_id);
-                                            setSelectedLight({ ...l, colorCapability: m?.colorCapability || null });
-                                        }}
-                                    />
-                                )}
-                                {fans.length > 0 && (
-                                    <View style={styles.grid}>
-                                        {fans.map((fan) => (
-                                            <View key={fan.entity_id} style={{ width: cardWidth }}>
-                                                <FanCard
-                                                    fan={fan}
-                                                    needsChange={checkNeedsChange(fan.entity_id)}
-                                                    onToggle={(id) => {
-                                                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                                        if (onToggle) onToggle('fan', 'toggle', { entity_id: id });
-                                                    }}
-                                                />
-                                            </View>
-                                        ))}
-                                    </View>
-                                )}
-                            </>
-                        );
-                    })()}
+                        </View>
+                    ) : (
+                        <>
+                            {!hasLightsBlock && !hasCoversBlock && (
+                                <View style={styles.emptyState}>
+                                    <Lightbulb size={40} color={Colors.textDim} />
+                                    <Text style={styles.emptyText}>No devices found in this room.</Text>
+                                </View>
+                            )}
+                            {lightsAndFansSection}
+                        </>
+                    )}
 
                     {/* ── 4. Cameras ── */}
                     {cameras.length > 0 && (
@@ -815,34 +916,28 @@ export default function RoomDetailView({
                         </View>
                     )}
 
-                    {/* ── 5. Covers ── */}
-                    {covers.length > 0 && (
+                    {/* ── 5. Covers (stacked layout only — tablet split renders above) ── */}
+                    {!useTabletLightsCoversSplit && hasCoversBlock && (
                         <View>
                             <View style={styles.divider} />
-                            <CoversGroupCard
-                                covers={covers}
-                                allEntities={allEntities}
-                                onUpdate={(id, domain, service, data) => {
-                                    if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
-                                }}
-                            />
+                            {coversSection}
                         </View>
                     )}
 
-                    {/* ── 6. Climates ── */}
+                    {/* ── 6. Climate (group card — same shell as lights / covers) ── */}
                     {climates.length > 0 && (
                         <View>
                             <View style={styles.divider} />
-                            {climates.map(climate => (
-                                <ClimateCard
-                                    key={climate.entity_id}
-                                    climate={climate}
-                                    needsChange={checkNeedsChange(climate.entity_id)}
-                                    onUpdate={(id, domain, service, data) => {
-                                        if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
-                                    }}
-                                />
-                            ))}
+                            <ClimateGroupCard
+                                climates={climates}
+                                variant={useTabletLightsCoversSplit ? 'tabletSplit' : 'default'}
+                                checkNeedsChange={checkNeedsChange}
+                                onUpdate={(id, domain, service, data) => {
+                                    if (onToggle) {
+                                        return onToggle(domain, service, { entity_id: id, ...data });
+                                    }
+                                }}
+                            />
                         </View>
                     )}
 
@@ -883,14 +978,12 @@ export default function RoomDetailView({
                                 <View style={styles.mediaSectionPanel}>
                                     <View style={styles.mediaSectionWrap}>
                                         <View style={styles.mediaSectionHeader}>
-                                            <LinearGradient
-                                                colors={['#8947ca', '#6b2fb8']}
-                                                start={{ x: 0, y: 0 }}
-                                                end={{ x: 1, y: 1 }}
-                                                style={styles.mediaSectionIconCircle}
+                                            <RoomGroupIconButton
+                                                size={40}
+                                                accessibilityLabel="Media section"
                                             >
                                                 <Monitor size={18} color="#fff" strokeWidth={2.2} />
-                                            </LinearGradient>
+                                            </RoomGroupIconButton>
                                             <Text style={styles.mediaSectionTitle}>Media</Text>
                                         </View>
                                         {rootRows.map(row => (
@@ -922,9 +1015,9 @@ export default function RoomDetailView({
                                                 mapping={row.mapping}
                                                 mediaMappings={mediaMappings}
                                                 needsChange={checkNeedsChange(row.media.entity_id)}
-                                                onUpdate={(id, domain, service, data) => {
-                                                    if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
-                                                }}
+                                                onUpdate={(id, domain, service, data) =>
+                                                    onToggle?.(domain, service, { entity_id: id, ...data })
+                                                }
                                                 adminUrl={adminUrl}
                                                 haUrl={haUrl}
                                                 haToken={haToken}
@@ -1113,8 +1206,7 @@ const styles = StyleSheet.create({
         borderBottomColor: 'rgba(255,255,255,0.08)',
     },
     inlineTitle: {
-        fontSize: 24,
-        fontWeight: 'bold',
+        ...Heading.lg24,
         color: '#fff',
         marginBottom: 6,
     },
@@ -1169,13 +1261,12 @@ const styles = StyleSheet.create({
         zIndex: 10,
     },
     title: {
-        fontSize: 32,
-        fontWeight: 'bold',
+        ...Heading.xl,
         color: '#fff',
         marginBottom: 4,
     },
     subtitle: {
-        fontSize: 14,
+        ...Heading.sub,
         color: 'rgba(255,255,255,0.7)',
     },
     headerStatsRow: {
@@ -1211,6 +1302,32 @@ const styles = StyleSheet.create({
         marginVertical: 20,
         width: '100%',
     },
+    tabletSplitRow: {
+        flexDirection: 'row',
+        alignItems: 'stretch',
+        minHeight: 280,
+        gap: 0,
+    },
+    tabletSplitPanel: {
+        flex: 1,
+        minWidth: 0,
+        backgroundColor: '#13132A',
+        borderRadius: 20,
+        overflow: 'hidden',
+    },
+    tabletSplitScroll: {
+        flex: 1,
+    },
+    tabletSplitScrollContent: {
+        flexGrow: 1,
+        padding: 14,
+        paddingBottom: 10,
+    },
+    tabletSplitDivider: {
+        width: 1,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        marginHorizontal: 10,
+    },
     /** Whole Media block — outer surface; inner TV UI stays `#09091A` in `MediaCard` */
     mediaSectionPanel: {
         backgroundColor: '#13132A',
@@ -1225,13 +1342,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 12,
         marginBottom: 4,
-    },
-    mediaSectionIconCircle: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     mediaSectionTitle: {
         color: '#fff',
@@ -1318,13 +1428,13 @@ const styles = StyleSheet.create({
     lightName: {
         color: '#fff',
         fontSize: 15,
-        fontWeight: '600',
+        fontFamily: CF.semibold,
         marginBottom: 2,
     },
     lightState: {
         color: Colors.textDim,
         fontSize: 13,
-        fontWeight: '500',
+        fontFamily: CF.medium,
     },
     emptyState: {
         alignItems: 'center',
@@ -1336,10 +1446,9 @@ const styles = StyleSheet.create({
         fontSize: 16,
     },
     sectionTitle: {
+        ...Heading.section,
         color: Colors.text,
-        fontSize: 18,
-        fontWeight: 'bold',
-        marginBottom: 12
+        marginBottom: 12,
     },
     roomSectionHeading: {
         color: '#9199BA',
@@ -1610,9 +1719,8 @@ const styles = StyleSheet.create({
         maxHeight: '70%',
     },
     overlayTitle: {
+        ...Heading.section,
         color: '#fff',
-        fontSize: 18,
-        fontWeight: 'bold',
         marginBottom: 20,
         textAlign: 'center',
     },

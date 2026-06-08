@@ -1,8 +1,11 @@
-import { useRef, useState, useEffect, useMemo, useCallback, useContext } from 'react';
+import { useRef, useState, useEffect, useMemo, useCallback, useContext, lazy, Suspense } from 'react';
 import * as Notifications from 'expo-notifications';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
 import NotificationModal from '../components/DashboardV2/NotificationModal';
+import { prepareButlerCall } from '../services/butler/openButlerCall';
+
+const ButlerVoiceModal = lazy(() => import('../components/DashboardV2/ButlerVoiceModal'));
 import AlertNotificationModal from '../components/DashboardV2/AlertNotificationModal';
 import SecurityAlertModal from '../components/DashboardV2/SecurityAlertModal';
 
@@ -50,12 +53,20 @@ import { FrigateService } from '../services/frigate';
 import * as SecureStore from 'expo-secure-store';
 import { startHeartbeat, stopHeartbeat, updateAppState } from '../services/heartbeat';
 import { getRoomEntities } from '../utils/roomHelpers';
+import { setRoomPageBootstrap } from '../utils/roomPageBootstrap';
+import { applyHaStateChangedEvent, applyClimateServiceToEntity } from '../utils/haEntityMerge';
+import { HA_STATUS, ADMIN_STATUS, isBadEntityState } from '../utils/haEntityHealth';
+import { useHaSystemHealth } from '../hooks/useHaSystemHealth';
+import HaSystemBanner from '../components/DashboardV2/HaSystemBanner';
 import { NotifContext } from '../services/NotifContext';
+import { logOperationalIssue } from '../utils/devLog';
 
 export default function DashboardV2() {
     const router = useRouter();
     const { userName, userId } = useLocalSearchParams();
     const { isTablet, isLandscape, columns } = useDeviceType();
+    const homeColumns = isTablet ? 4 : 2;
+    const homeRoomColumns = isTablet ? 6 : 2;
 
     // Config State
     const [connectionConfig, setConnectionConfig] = useState({
@@ -64,6 +75,8 @@ export default function DashboardV2() {
         adminUrl: '',
         loaded: false
     });
+    const [haStatus, setHaStatus] = useState(HA_STATUS.LOADING);
+    const [adminStatus, setAdminStatus] = useState(ADMIN_STATUS.UNKNOWN);
 
     const service = useRef(null);
     const frigateService = useRef(null); // Frigate Service Ref
@@ -75,6 +88,8 @@ export default function DashboardV2() {
     const [activeTab, setActiveTab] = useState('home');
     const [cctvView, setCctvView] = useState('cameras'); // 'cameras' | 'events'
     const [frigateCameras, setFrigateCameras] = useState([]); // Frigate State
+    /** First Frigate config fetch finished (success or fail) — camera strip uses skeleton until then to avoid a blank gap. */
+    const [frigateConfigResolved, setFrigateConfigResolved] = useState(false);
     const [selectedFrigateCamera, setSelectedFrigateCamera] = useState(null);
     const [showFrigateModal, setShowFrigateModal] = useState(false);
     const [frigateInitialView, setFrigateInitialView] = useState('live'); // 'live' or 'history'
@@ -87,6 +102,8 @@ export default function DashboardV2() {
     const [autoRoomVisit, setAutoRoomVisit] = useState(true);
     const [autoRoomResume, setAutoRoomResume] = useState(true);
     const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
+    /** Voice UI mounts one frame after home content — avoids building the huge voice context during first paint. */
+    const [voiceMountReady, setVoiceMountReady] = useState(false);
     const [showPreferenceButton, setShowPreferenceButton] = useState(true);
 
     const haHttpUrl = useMemo(() => {
@@ -109,31 +126,39 @@ export default function DashboardV2() {
     }, [activeTab]);
 
     useEffect(() => {
-        SecureStore.getItemAsync('settings_show_family').then(val => {
-            if (val !== null) setShowFamily(val === 'true');
-        });
-        SecureStore.getItemAsync('settings_auto_room_visit').then(val => {
-            if (val !== null) setAutoRoomVisit(val === 'true');
-        });
-        SecureStore.getItemAsync('settings_auto_room_resume').then(val => {
-            if (val !== null) setAutoRoomResume(val === 'true');
-        });
-        SecureStore.getItemAsync('settings_show_voice_assistant').then(val => {
-            if (val !== null) setShowVoiceAssistant(val === 'true');
-        });
-        SecureStore.getItemAsync('settings_show_preference_button').then(val => {
-            if (val !== null) setShowPreferenceButton(val === 'true');
-        });
-        // Load Room Order
-        SecureStore.getItemAsync('room_reorder_config').then(val => {
-            if (val !== null) {
-                try {
-                    setSavedRoomOrder(JSON.parse(val));
-                } catch (e) {
-                    console.log('Error parsing room order:', e);
+        (async () => {
+            try {
+                const [
+                    showFamilyVal,
+                    autoVisitVal,
+                    autoResumeVal,
+                    voiceVal,
+                    prefBtnVal,
+                    roomOrderVal,
+                ] = await Promise.all([
+                    SecureStore.getItemAsync('settings_show_family'),
+                    SecureStore.getItemAsync('settings_auto_room_visit'),
+                    SecureStore.getItemAsync('settings_auto_room_resume'),
+                    SecureStore.getItemAsync('settings_show_voice_assistant'),
+                    SecureStore.getItemAsync('settings_show_preference_button'),
+                    SecureStore.getItemAsync('room_reorder_config'),
+                ]);
+                if (showFamilyVal !== null) setShowFamily(showFamilyVal === 'true');
+                if (autoVisitVal !== null) setAutoRoomVisit(autoVisitVal === 'true');
+                if (autoResumeVal !== null) setAutoRoomResume(autoResumeVal === 'true');
+                if (voiceVal !== null) setShowVoiceAssistant(voiceVal === 'true');
+                if (prefBtnVal !== null) setShowPreferenceButton(prefBtnVal === 'true');
+                if (roomOrderVal !== null) {
+                    try {
+                        setSavedRoomOrder(JSON.parse(roomOrderVal));
+                    } catch (e) {
+                        console.log('Error parsing room order:', e);
+                    }
                 }
+            } catch (e) {
+                console.log('[Dashboard] Settings load error:', e);
             }
-        });
+        })();
 
         loadConnectionConfig();
     }, []);
@@ -141,8 +166,10 @@ export default function DashboardV2() {
     const loadConnectionConfig = async () => {
         try {
             // 1. Try to load from Profiles first
-            const activeProfileId = await SecureStore.getItemAsync('ha_active_profile_id');
-            const profilesJson = await SecureStore.getItemAsync('ha_profiles');
+            const [activeProfileId, profilesJson] = await Promise.all([
+                SecureStore.getItemAsync('ha_active_profile_id'),
+                SecureStore.getItemAsync('ha_profiles'),
+            ]);
 
             if (activeProfileId && profilesJson) {
                 const profiles = JSON.parse(profilesJson);
@@ -193,6 +220,7 @@ export default function DashboardV2() {
     const [allowedQuickScenes, setAllowedQuickScenes] = useState([]);
     const [sensorMappings, setSensorMappings] = useState([]);
     const [coverMappings, setCoverMappings] = useState([]);
+    const [coverWindows, setCoverWindows] = useState([]);
     /** `entry_id`s from HA config_entries where domain is music_assistant — ties entities → MA without relying on state attrs */
     const [musicAssistantEntryIds, setMusicAssistantEntryIds] = useState([]);
     // null = never configured (show all), [] = none selected, [...] = selected ids
@@ -200,60 +228,22 @@ export default function DashboardV2() {
     const [selectedCoverIds, setSelectedCoverIds] = useState(null);
     const [lockPassageConfigs, setLockPassageConfigs] = useState({}); // { [entity_id]: { enabled, passage_entity_id } }
 
-    // ── Progressive reveal ────────────────────────────────────────────────────
-    // All API calls fire in parallel (fastest possible). Once BOTH entities have
-    // arrived from HA AND all API flags are done, sections are revealed one by one
-    // with a 180ms gap so the user sees a clear top-to-bottom cascade.
+    // ── Home tab reveal ─────────────────────────────────────────────────────────
+    // Show the full home (revealStep 5) as soon as HA states + quick-scenes +
+    // home-access APIs are ready. Frigate / HA camera lists load in the
+    // background — waiting on them used to block the entire page on slow networks.
     //
-    //  revealStep:  0 = nothing shown (skeleton everywhere)
-    //               1 = Header visible
-    //               2 = Scenes visible
-    //               3 = HomeAccess visible
-    //               4 = Rooms visible
-    //               5 = Cameras visible
+    // revealStep: 0 = section skeletons, 5 = real content (per-section thresholds
+    // below still use < 1 … < 5 for layout compatibility).
     const [scenesFetched, setScenesFetched] = useState(false);
     const [homeAccessFetched, setHomeAccessFetched] = useState(false);
-    const [frigateFetched, setFrigateFetched] = useState(false);
     const [revealStep, setRevealStep] = useState(0);
-    const revealRef = useRef(null);
 
-    // Cascade starts as soon as entities arrive.
-    // Each step only waits for the data ITS section needs before advancing.
-    useEffect(() => {
-        // If an alert modal is pending, skip straight to fully revealed so the
-        // dashboard loads behind the modal — even if resetReveal() was called
-        // after the alertNotif was set (e.g. connectionConfig load with
-        // fetchMappings({ resetRevealCascade: true })).
-        if (alertNotif) {
-            clearTimeout(revealRef.current);
-            setRevealStep(5);
-            return;
-        }
-
-        if (entities.length === 0) return;   // nothing to show yet
-        if (revealStep >= 5) return;          // fully revealed
-
-        // Pause at step 1 until scenes API is done
-        if (revealStep === 1 && !scenesFetched) return;
-        // Pause at step 2 until home-access API is done
-        if (revealStep === 2 && !homeAccessFetched) return;
-        // Pause at step 4 until frigate API is done
-        if (revealStep === 4 && !frigateFetched) return;
-
-        revealRef.current = setTimeout(() => {
-            setRevealStep(s => Math.min(s + 1, 5));
-        }, 180);
-        return () => clearTimeout(revealRef.current);
-    }, [entities.length, scenesFetched, homeAccessFetched, frigateFetched, revealStep, alertNotif]);
-
-    // Reset on config change so cascade re-runs on profile switch
-    const resetReveal = () => {
-        clearTimeout(revealRef.current);
+    const resetReveal = useCallback(() => {
         setRevealStep(0);
         setScenesFetched(false);
         setHomeAccessFetched(false);
-        setFrigateFetched(false);
-    };
+    }, []);
 
     const mappingsAbortRef = useRef(null);
 
@@ -267,7 +257,6 @@ export default function DashboardV2() {
         if (!connectionConfig.adminUrl) {
             setScenesFetched(true);
             setHomeAccessFetched(true);
-            // frigate is set in the useEffect for initial load
             return;
         }
 
@@ -296,7 +285,7 @@ export default function DashboardV2() {
                 setScenesFetched(true);
             })
             .catch(e => {
-                if (e.name !== 'AbortError') console.error('[Mappings] Quick Scenes error:', e);
+                if (e.name !== 'AbortError') logOperationalIssue('Mappings Quick Scenes', e);
                 setScenesFetched(true);
             });
 
@@ -307,7 +296,7 @@ export default function DashboardV2() {
             .then(data => {
                 if (Array.isArray(data)) setLightMappings(data);
             })
-            .catch(e => { if (e.name !== 'AbortError') console.error('[Mappings] Light error:', e); });
+            .catch(e => { if (e.name !== 'AbortError') logOperationalIssue('Mappings Light', e); });
 
         // 3. Media
         const mediaUrl = `${baseUrl}api/monitored-entities?type=media_player&t=${Date.now()}`;
@@ -316,7 +305,7 @@ export default function DashboardV2() {
             .then(data => {
                 if (Array.isArray(data)) setMediaMappings(data);
             })
-            .catch(e => { if (e.name !== 'AbortError') console.error('[Mappings] Media error:', e); });
+            .catch(e => { if (e.name !== 'AbortError') logOperationalIssue('Mappings Media', e); });
 
         // 4. Sensors
         const sensorUrl = `${baseUrl}api/sensors?t=${Date.now()}`;
@@ -325,7 +314,7 @@ export default function DashboardV2() {
             .then(data => {
                 if (data.success && Array.isArray(data.sensors)) setSensorMappings(data.sensors);
             })
-            .catch(e => { if (e.name !== 'AbortError') console.error('[Mappings] Sensor error:', e); });
+            .catch(e => { if (e.name !== 'AbortError') logOperationalIssue('Mappings Sensor', e); });
 
         // 5. Covers
         const coverUrl = `${baseUrl}api/covers?t=${Date.now()}`;
@@ -334,7 +323,7 @@ export default function DashboardV2() {
             .then(data => {
                 if (data.success && Array.isArray(data.covers)) setCoverMappings(data.covers);
             })
-            .catch(e => { if (e.name !== 'AbortError') console.error('[Mappings] Cover error:', e); });
+            .catch(e => { if (e.name !== 'AbortError') logOperationalIssue('Mappings Cover', e); });
 
         // 6. Home Access — selected locks + covers
         const haUrl2 = `${baseUrl}api/home-access?t=${Date.now()}`;
@@ -348,7 +337,7 @@ export default function DashboardV2() {
                 setHomeAccessFetched(true);
             })
             .catch(e => {
-                if (e.name !== 'AbortError') console.error('[Mappings] HomeAccess error:', e);
+                if (e.name !== 'AbortError') logOperationalIssue('Mappings HomeAccess', e);
                 setHomeAccessFetched(true);
             });
 
@@ -392,8 +381,7 @@ export default function DashboardV2() {
     useEffect(() => {
         if (!connectionConfig.loaded) return;
 
-        // Reset frigate skeleton for this load cycle
-        setFrigateFetched(false);
+        setFrigateConfigResolved(false);
 
         const { url: haUrl, token: haToken } = connectionConfig;
     const adminUrl = connectionConfig.adminUrl;
@@ -413,8 +401,14 @@ export default function DashboardV2() {
                 .then(data => {
                     setBadgeConfig(data);
                     locksArmedRef.current = !!data?.locks_armed;
+                    setAdminStatus(ADMIN_STATUS.OK);
                 })
-                .catch(err => { if (err.name !== 'AbortError') console.error('[Config] Error loading admin config:', err); });
+                .catch(err => {
+                    if (err.name !== 'AbortError') {
+                        logOperationalIssue('Config', err);
+                        setAdminStatus(ADMIN_STATUS.ERROR);
+                    }
+                });
 
             // Fetch Alert Rules
             const alertUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/alerts` : `${adminUrl}/api/alerts`) + `?t=${Date.now()}`;
@@ -477,6 +471,7 @@ export default function DashboardV2() {
                     if (data.success) {
                         console.log(`[Covers] Loaded ${data.covers.length} mappings`);
                         setCoverMappings(data.covers);
+                        setCoverWindows(data.windows || []);
                     }
                 })
                 .catch(e => { if (e.name !== 'AbortError') console.log("Cover Mappings Error", e); });
@@ -485,10 +480,12 @@ export default function DashboardV2() {
 
         // 2. Connect to Home Assistant
         if (haUrl && haToken) {
+            setHaStatus(HA_STATUS.LOADING);
             service.current = new HAService(haUrl, haToken);
             service.current.connect();
             service.current.subscribe(data => {
                 if (data.type === 'connected') {
+                    setHaStatus(HA_STATUS.CONNECTED);
                     // Fire ALL registry + state calls simultaneously — one round-trip each,
                     // then batch all setStates at once so rooms render in a single pass.
                     Promise.all([
@@ -520,8 +517,15 @@ export default function DashboardV2() {
                             .map(e => e.entry_id);
                         setMusicAssistantEntryIds(maIds);
                         console.log(`[Dashboard] Loaded: ${(states||[]).length} states, ${(areas||[]).length} areas, ${(floors||[]).length} floors, Music Assistant config entries: ${maIds.length}`);
-                    }).catch(e => console.log('[Dashboard] Initial load error:', e.message));
+                    }).catch((e) => {
+                        console.log('[Dashboard] Initial load error:', e.message);
+                        setHaStatus(HA_STATUS.DISCONNECTED);
+                    });
 
+                } else if (data.type === 'auth_failed') {
+                    setHaStatus(HA_STATUS.AUTH_FAILED);
+                } else if (data.type === 'disconnected') {
+                    setHaStatus(HA_STATUS.DISCONNECTED);
                 } else if (data.type === 'state_changed' && data.event && data.event.data) {
                     const newState = data.event.data.new_state;
                     const oldState = data.event.data.old_state;
@@ -636,13 +640,16 @@ export default function DashboardV2() {
                         const index = prev.findIndex(e => e.entity_id === newState.entity_id);
                         if (index !== -1) {
                             const next = [...prev];
-                            next[index] = newState;
+                            const prevEntity = prev[index];
+                            next[index] = applyHaStateChangedEvent(prevEntity, data.event.data);
                             return next;
                         }
                         return [...prev, newState];
                     });
                 }
             });
+        } else {
+            setHaStatus(HA_STATUS.NOT_CONFIGURED);
         }
 
         // 3. Connect to Frigate (proxied through admin backend)
@@ -657,9 +664,8 @@ export default function DashboardV2() {
                 }));
                 setFrigateCameras(cams);
             }
-            setFrigateFetched(true);
-        }).catch(() => {
-            setFrigateFetched(true);
+        }).catch(() => {}).finally(() => {
+            setFrigateConfigResolved(true);
         });
 
         // 4. Fetch HA camera entities from admin backend as fallback/supplement
@@ -667,23 +673,33 @@ export default function DashboardV2() {
         if (adminUrl) {
             const camUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/cameras` : `${adminUrl}/api/cameras`) + `?t=${Date.now()}`;
             fetch(camUrl, { headers: adminAuthHeaders })
-                .then(res => res.json())
+                .then(async (res) => {
+                    if (!res.ok) {
+                        logOperationalIssue('Cameras', `admin cameras HTTP ${res.status}`);
+                        return null;
+                    }
+                    const text = await res.text();
+                    try {
+                        return JSON.parse(text);
+                    } catch {
+                        logOperationalIssue('Cameras', 'admin cameras returned non-JSON');
+                        return null;
+                    }
+                })
                 .then(data => {
                     if (data && Array.isArray(data.cameras) && data.cameras.length > 0) {
-                        // Only use HA cameras if Frigate didn't already load cameras
                         setFrigateCameras(prev => {
-                            if (prev.length > 0) return prev; // Frigate already loaded, keep it
-                            // Map HA camera entities → same shape as Frigate cameras
+                            if (prev.length > 0) return prev;
                             return data.cameras.map(c => ({
                                 id: c.entity_id,
                                 name: c.entity_id.replace('camera.', ''),
                                 friendly_name: c.name,
-                                entity_id: c.entity_id,   // marks this as HA camera for snapshot routing
+                                entity_id: c.entity_id,
                             }));
                         });
                     }
                 })
-                .catch(e => console.error('[Cameras] HA cameras fetch error:', e));
+                .catch(e => logOperationalIssue('Cameras', e));
         }
 
         return () => {
@@ -841,8 +857,42 @@ export default function DashboardV2() {
         refresh:       refreshNotifications,
     } = useNotifications(connectionConfig.adminUrl, connectionConfig.token);
     const [showNotifications, setShowNotifications] = useState(false);
+    const [showButlerCall, setShowButlerCall] = useState(false);
     // Alert modal shown when user taps a push notification
     const [alertNotif, setAlertNotif] = useState(null); // { title, body, category, timestamp }
+
+    // One step to full home content once HA entities + mapping flags are ready
+    // (do not wait on Frigate — camera strip fills in when config arrives).
+    useEffect(() => {
+        if (alertNotif) {
+            setRevealStep(5);
+            return;
+        }
+        if (entities.length === 0) {
+            setRevealStep(0);
+            return;
+        }
+        if (scenesFetched && homeAccessFetched) {
+            setRevealStep(5);
+        }
+    }, [alertNotif, entities.length, scenesFetched, homeAccessFetched]);
+
+    useEffect(() => {
+        if (!showVoiceAssistant || revealStep < 5 || entities.length === 0) {
+            setVoiceMountReady(false);
+            return;
+        }
+        let cancelled = false;
+        const id = requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                if (!cancelled) setVoiceMountReady(true);
+            });
+        });
+        return () => {
+            cancelled = true;
+            cancelAnimationFrame(id);
+        };
+    }, [showVoiceAssistant, revealStep, entities.length]);
 
     // Read the pending notification from context (_layout.jsx captures it via
     // both getLastNotificationResponseAsync [cold start] and the tap listener
@@ -861,14 +911,6 @@ export default function DashboardV2() {
         }
     }, [pendingNotif]);
 
-    // When an alert modal is pending, skip the loading cascade so the full
-    // dashboard renders behind the modal immediately — no frozen skeleton.
-    useEffect(() => {
-        if (alertNotif) {
-            clearTimeout(revealRef.current);
-            setRevealStep(5);
-        }
-    }, [!!alertNotif]);
     // All entity_ids present in MonitoredEntity table (regardless of ignored flag)
     const monitoredEntitiesRef = useRef(new Set());
     // Entity_ids where ignored=1 (user has muted them)
@@ -1048,6 +1090,18 @@ export default function DashboardV2() {
         }).catch(() => {});
     }, [addNotification]);
 
+    const handleVoiceAssistantPress = useCallback(async () => {
+        const ok = await prepareButlerCall({
+            haUrl: connectionConfig.url,
+            haToken: connectionConfig.token,
+        });
+        if (ok) setShowButlerCall(true);
+    }, [connectionConfig.url, connectionConfig.token]);
+
+    const handleButlerCallClose = useCallback(() => {
+        setShowButlerCall(false);
+    }, []);
+
     const handleBellPress = useCallback(() => {
         setShowNotifications(true);
         markAllRead();
@@ -1184,32 +1238,49 @@ export default function DashboardV2() {
         return () => stopHeartbeat();
     }, [connectionConfig.loaded, connectionConfig.adminUrl, userId, userName]);
 
+    const systemHealth = useHaSystemHealth({ entities, haStatus, adminStatus });
+
     const callService = useCallback((domain, serviceName, serviceData) => {
+        if (!systemHealth.canControlHa) {
+            return Promise.reject(new Error('Home Assistant is not connected'));
+        }
         if (service.current) {
             // ── Optimistic update ────────────────────────────────────────────
             // For light/switch/fan toggles, instantly flip the UI state so the
             // user sees the change immediately without waiting for the HA event.
             const entityId = serviceData?.entity_id;
             if (entityId && typeof entityId === 'string') {
-                const optimisticState =
-                    serviceName === 'turn_on'  ? 'on'  :
-                    serviceName === 'turn_off' ? 'off' :
-                    serviceName === 'toggle'   ? null  : // handled below
-                    null;
+                if (domain === 'climate') {
+                    setEntities((prev) =>
+                        prev.map((e) =>
+                            e.entity_id === entityId
+                                ? applyClimateServiceToEntity(e, serviceName, serviceData)
+                                : e,
+                        ),
+                    );
+                } else {
+                    const optimisticState =
+                        serviceName === 'turn_on'  ? 'on'  :
+                        serviceName === 'turn_off' ? 'off' :
+                        serviceName === 'toggle'   ? null  :
+                        serviceName === 'media_pause' ? 'paused' :
+                        serviceName === 'media_play' ? 'playing' :
+                        null;
 
-                setEntities(prev => {
-                    const index = prev.findIndex(e => e.entity_id === entityId);
-                    if (index === -1) return prev;
+                    setEntities((prev) => {
+                        const index = prev.findIndex((e) => e.entity_id === entityId);
+                        if (index === -1) return prev;
 
-                    const current = prev[index];
-                    const nextState =
-                        optimisticState !== null ? optimisticState :
-                        (current.state === 'on' ? 'off' : 'on'); // toggle
+                        const current = prev[index];
+                        const nextState =
+                            optimisticState !== null ? optimisticState :
+                            (current.state === 'on' ? 'off' : 'on');
 
-                    const next = [...prev];
-                    next[index] = { ...current, state: nextState };
-                    return next;
-                });
+                        const next = [...prev];
+                        next[index] = { ...current, state: nextState };
+                        return next;
+                    });
+                }
             }
             // ────────────────────────────────────────────────────────────────
 
@@ -1220,11 +1291,12 @@ export default function DashboardV2() {
                     service.current?.getStates?.()?.then(states => {
                         if (states) setEntities(states);
                     });
+                    return Promise.reject(err);
                 });
         }
         console.warn('[callService] HA service not connected');
         return Promise.resolve();
-    }, []);
+    }, [systemHealth.canControlHa]);
 
     const handleScenePress = useCallback((sceneId) => {
         console.log('Scene pressed:', sceneId);
@@ -1244,6 +1316,21 @@ export default function DashboardV2() {
 
     const handleRoomPress = useCallback((room) => {
         if (activeTab === 'rooms') {
+            setRoomPageBootstrap(room.area_id, room.name, {
+                picture: room.picture,
+                entities,
+                registryDevices,
+                registryEntities,
+                musicAssistantEntryIds,
+                lightMappings,
+                sensorMappings,
+                coverMappings,
+                coverWindows,
+                mediaMappings,
+                haUrl: connectionConfig.url,
+                haToken: connectionConfig.token,
+                adminUrl: connectionConfig.adminUrl,
+            });
             router.push({
                 pathname: '/room',
                 params: {
@@ -1256,7 +1343,22 @@ export default function DashboardV2() {
             setSelectedRoom(room);
             setRoomSheetVisible(true);
         }
-    }, [activeTab]);
+    }, [
+        activeTab,
+        entities,
+        registryDevices,
+        registryEntities,
+        musicAssistantEntryIds,
+        lightMappings,
+        sensorMappings,
+        coverMappings,
+        coverWindows,
+        mediaMappings,
+        connectionConfig.url,
+        connectionConfig.token,
+        connectionConfig.adminUrl,
+        router,
+    ]);
 
     const handleHeaderRoomPress = useCallback(() => {
         const personEntity = entities.find(e =>
@@ -1406,6 +1508,15 @@ export default function DashboardV2() {
         musicAssistantEntryIds,
         savedRoomOrder
     ]);
+
+    const butlerVoiceContext = useMemo(() => ({
+        userName,
+        time: new Date().toLocaleTimeString(),
+        rooms: roomsWithCounts.map(room => ({
+            name: room.name,
+            area_id: room.area_id,
+        })),
+    }), [userName, roomsWithCounts]);
 
     const handleRoomReorder = (data) => {
         // IDs of the rooms in their new order
@@ -1566,6 +1677,16 @@ export default function DashboardV2() {
                 onOpen={refreshNotifications}
             />
 
+            {showButlerCall ? (
+                <Suspense fallback={null}>
+                    <ButlerVoiceModal
+                        visible={showButlerCall}
+                        onClose={handleButlerCallClose}
+                        context={butlerVoiceContext}
+                    />
+                </Suspense>
+            ) : null}
+
             {/* Alert modal — shown when user taps a push notification */}
             <AlertNotificationModal
                 visible={!!alertNotif}
@@ -1648,6 +1769,8 @@ export default function DashboardV2() {
                 {!connectionConfig.loaded ? <DashboardSkeleton /> : (
                     <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
 
+                        <HaSystemBanner banner={systemHealth.banner} />
+
                         {/* ── Header + Locks ── step 1 */}
                         {revealStep < 1 ? <HeaderSkeleton /> : (
                             <>
@@ -1660,6 +1783,8 @@ export default function DashboardV2() {
                                     humidity={humidity}
                                     indoorTemp={indoorTemp}
                                     onRoomPress={handleHeaderRoomPress}
+                                    onVoiceAssistantPress={handleVoiceAssistantPress}
+                                    voiceAssistantActive={showButlerCall}
                                     onBellPress={handleBellPress}
                                     unreadCount={notifUnread}
                                 />
@@ -1681,17 +1806,18 @@ export default function DashboardV2() {
                         )}
 
                         {/* ── Scenes ── step 2 */}
-                        {revealStep < 2 ? <ScenesSkeleton /> : (
+                        {revealStep < 2 ? <ScenesSkeleton columns={homeColumns} /> : (
                             <QuickScenes
                                 scenes={quickScenesData}
                                 onScenePress={handleScenePress}
                                 adminUrl={connectionConfig?.adminUrl}
                                 onScenesUpdated={(ids) => setAllowedQuickScenes(ids)}
+                                columns={homeColumns}
                             />
                         )}
 
                         {/* Voice assistant — only shown once entities are ready */}
-                        {showVoiceAssistant && entities.length > 0 && <VoiceConversation
+                        {voiceMountReady && <VoiceConversation
                             onCommand={handleVoiceCommand}
                             context={{
                                 userName: userName,
@@ -1816,11 +1942,12 @@ export default function DashboardV2() {
                         />}
 
                         {/* ── Home Access ── step 3 */}
-                        {revealStep < 3 ? <HomeAccessSkeleton /> : (
+                        {revealStep < 3 ? <HomeAccessSkeleton columns={homeColumns} /> : (
                             <HomeAccess
                                 isHomeActive={activeTab === 'home'}
                                 locks={homeLocks}
                                 covers={homeCovers}
+                                columns={homeColumns}
                                 allLockEntities={entities.filter(e => e.entity_id.startsWith('lock.'))}
                                 haEntities={entities}
                                 lockPassageConfigs={lockPassageConfigs}
@@ -1838,7 +1965,12 @@ export default function DashboardV2() {
                         )}
 
                         {/* ── Rooms ── step 4 */}
-                        {revealStep < 4 ? <RoomsSkeleton /> : (
+                        {revealStep < 4 ? (
+                            <RoomsSkeleton
+                                columns={homeRoomColumns}
+                                layout={isTablet ? 'tablet-home' : 'horizontal'}
+                            />
+                        ) : (
                             <RoomsList
                                 rooms={roomsWithCounts}
                                 registryEntities={registryEntities}
@@ -1848,16 +1980,21 @@ export default function DashboardV2() {
                                 overlayColor={cardColor}
                                 onSettingsPress={handleOpenOpacitySettings}
                                 onAllRoomsPress={() => setActiveTab('rooms')}
-                                layout={isTablet ? 'grid' : 'horizontal'}
-                                columns={columns}
+                                layout={isTablet ? 'tablet-home' : 'horizontal'}
+                                columns={homeRoomColumns}
+                                tabletPreviewCount={6}
                                 haUrl={haHttpUrl}
                                 haToken={connectionConfig.token}
                                 sensorMappings={sensorMappings}
                             />
                         )}
 
-                        {/* ── Cameras ── step 5 */}
-                        {revealStep < 5 ? <CamerasSkeleton /> : (
+                        {/* ── Cameras ── step 5 (skeleton until Frigate config attempt completes — avoids blank strip) */}
+                        {revealStep < 5 ? (
+                            <CamerasSkeleton columns={2} />
+                        ) : !frigateConfigResolved ? (
+                            <CamerasSkeleton columns={2} />
+                        ) : (
                             <HomeCameraStrip
                                 frigateCameras={frigateCameras}
                                 selectedCameraNames={badgeConfig?.selected_cameras || []}
@@ -1868,6 +2005,7 @@ export default function DashboardV2() {
                                 onCamerasUpdated={(ids) => setBadgeConfig(prev => ({ ...prev, selected_cameras: ids }))}
                                 cameraSensors={badgeConfig?.camera_sensors || {}}
                                 haEntities={entities}
+                                columns={isTablet ? 2 : 2}
                             />
                         )}
 
@@ -1880,7 +2018,7 @@ export default function DashboardV2() {
                 {entities.length === 0 ? <DashboardSkeleton /> : (
                     <ScrollView
                         style={{ flex: 1 }}
-                        contentContainerStyle={[styles.content, { paddingHorizontal: 20, marginTop: 60, paddingBottom: 120 }, isLandscape && sidebarPadding]}
+                        contentContainerStyle={[styles.content, { marginTop: 60, paddingBottom: 120 }, isLandscape && sidebarPadding]}
                         showsVerticalScrollIndicator={false}
                         keyboardShouldPersistTaps="handled"
                     >
@@ -1993,13 +2131,7 @@ export default function DashboardV2() {
                                 <FrigateEventsFeed
                                     adminUrl={connectionConfig.adminUrl}
                                     authHeaders={{ Authorization: `Bearer ${connectionConfig.token}` }}
-                                    frigateService={frigateService.current}
                                     frigateCameras={frigateCameras}
-                                    onEventPress={(event) => {
-                                        // Open camera modal on the camera that detected the event
-                                        const cam = frigateCameras.find(c => (c.name || c.id) === event.camera);
-                                        if (cam) handleFrigateCameraPress(cam);
-                                    }}
                                 />
                             )}
                         </View>
@@ -2037,10 +2169,10 @@ export default function DashboardV2() {
                     showVoiceAssistant={showVoiceAssistant}
                     showPreferenceButton={showPreferenceButton}
                     adminUrl={connectionConfig.adminUrl}
+                    userName={userName}
                     onSettingChange={handleSettingChange}
                     onNetwork={handleNetworkPress}
                     onEntitiesChanged={refreshEntityRefs}
-                    musicAssistantEntryIds={musicAssistantEntryIds}
                 /> : null}
             </View>
 
@@ -2072,6 +2204,7 @@ export default function DashboardV2() {
                     showPreferenceButton={showPreferenceButton}
                     sensorMappings={sensorMappings}
                     coverMappings={coverMappings}
+                    coverWindows={coverWindows}
                     musicAssistantEntryIds={musicAssistantEntryIds}
                     browseMedia={(entityId, mediaContentType, mediaContentId) =>
                         service.current?.browseMedia?.(entityId, mediaContentType, mediaContentId)
@@ -2079,6 +2212,8 @@ export default function DashboardV2() {
                     callServiceWithResponse={(domain, serviceName, serviceData) =>
                         service.current?.callService?.(domain, serviceName, serviceData, { returnResponse: true })
                     }
+                    systemHealthBanner={systemHealth.banner}
+                    canControlHa={systemHealth.canControlHa}
                 />
             )}
 
@@ -2122,7 +2257,6 @@ const styles = StyleSheet.create({
     divider: {
         height: 1,
         backgroundColor: 'rgba(255,255,255,0.1)',
-        marginHorizontal: 20,
         marginBottom: 15,
         marginTop: 5
     },

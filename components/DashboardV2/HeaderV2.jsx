@@ -1,9 +1,9 @@
 import React, { memo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { Cloud, CloudRain, Sun, CloudSnow, CloudLightning, Bell } from 'lucide-react-native';
+import { Cloud, CloudRain, Sun, CloudSnow, CloudLightning, Bell, Mic, Volume2 } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
 
-function HeaderV2({ weather, cityName, userName, entities = [], config = {}, humidity, indoorTemp, onRoomPress, onBellPress, unreadCount = 0 }) {
+function HeaderV2({ weather, cityName, userName, entities = [], config = {}, humidity, indoorTemp, onRoomPress, onVoiceAssistantPress, voiceAssistantActive = false, onBellPress, unreadCount = 0 }) {
 
     const capitalizeWords = (str) => {
         if (!str) return str;
@@ -61,15 +61,27 @@ function HeaderV2({ weather, cityName, userName, entities = [], config = {}, hum
                     <Text style={styles.greeting}>{getGreeting()}</Text>
                     <Text style={styles.name}>{displayName}</Text>
                 </View>
-                {/* Bell button */}
-                <TouchableOpacity
-                    style={styles.bellBtn}
-                    onPress={onBellPress}
-                    activeOpacity={0.75}
-                >
-                    <Bell size={19} color="#FFFFFF" />
-                    {unreadCount > 0 && <View style={styles.bellBadge} />}
-                </TouchableOpacity>
+                <View style={styles.headerActions}>
+                    <TouchableOpacity
+                        style={styles.headerIconBtn}
+                        onPress={onVoiceAssistantPress ?? (() => {})}
+                        activeOpacity={0.75}
+                        accessibilityLabel={voiceAssistantActive ? 'Butler call active' : 'Voice assistant'}
+                    >
+                        {voiceAssistantActive
+                            ? <Volume2 size={19} color="#7B2FBE" />
+                            : <Mic size={19} color="#FFFFFF" />}
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={styles.headerIconBtn}
+                        onPress={onBellPress}
+                        activeOpacity={0.75}
+                        accessibilityLabel="Notifications"
+                    >
+                        <Bell size={19} color="#FFFFFF" />
+                        {unreadCount > 0 && <View style={styles.bellBadge} />}
+                    </TouchableOpacity>
+                </View>
             </View>
 
             {/* Weather info row */}
@@ -122,7 +134,11 @@ const styles = StyleSheet.create({
         marginTop: -2,
         lineHeight: 42,
     },
-    bellBtn: {
+    headerActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+    },
+    headerIconBtn: {
         width: 42,
         height: 42,
         alignItems: 'center',

@@ -4,6 +4,7 @@ import { X, Search } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
 import { useState, useEffect } from 'react';
 import { authFetch } from '../../utils/authFetch';
+import ModalBackdrop from '../ModalBackdrop';
 
 export default function MonitoredEntitiesModal({ visible, onClose, adminUrl, onApplied }) {
     const [entities, setEntities] = useState([]);
@@ -100,6 +101,7 @@ export default function MonitoredEntitiesModal({ visible, onClose, adminUrl, onA
         >
             <View style={styles.overlay}>
                 <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+                <ModalBackdrop onPress={onClose} />
                 <View style={styles.contentContainer}>
                     <View style={styles.header}>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn}>

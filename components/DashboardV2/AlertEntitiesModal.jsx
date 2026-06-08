@@ -4,6 +4,7 @@ import { X, Trash2, Plus, Bell } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
 import { useState, useEffect } from 'react';
 import { authFetch } from '../../utils/authFetch';
+import ModalBackdrop from '../ModalBackdrop';
 import AddAlertModal from './AddAlertModal';
 
 export default function AlertEntitiesModal({ visible, onClose, adminUrl }) {
@@ -72,6 +73,7 @@ export default function AlertEntitiesModal({ visible, onClose, adminUrl }) {
         >
             <View style={styles.overlay}>
                 <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
+                <ModalBackdrop onPress={onClose} />
                 <View style={styles.contentContainer}>
                     <View style={styles.header}>
                         <Text style={styles.title}>Alert Entities</Text>

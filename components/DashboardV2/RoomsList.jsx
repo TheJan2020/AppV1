@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { Image } from 'expo-image';
 import { Sofa, Bed, Bath, Utensils, Monitor, Lamp, Settings, Lightbulb, Fan, GalleryVerticalEnd, DoorOpen, Thermometer, Droplets, Satellite } from 'lucide-react-native';
@@ -34,20 +34,35 @@ function RoomsList({
     overlayOpacity = 0.4,
     onSettingsPress,
     onAllRoomsPress,
-    layout = 'horizontal', // 'horizontal' | 'grid',
+    layout = 'horizontal', // 'horizontal' | 'grid' | 'tablet-home'
     columns = 2,
+    tabletPreviewCount = 6,
     registryEntities = [],
     allEntities = [],
     haUrl,
     haToken,
     sensorMappings = []
 }) {
-    const gridCardWidth = `${Math.floor(96 / columns)}%`;
-    // Increased by 10%
+    const [gridWidth, setGridWidth] = useState(0);
+    const [roomsExpanded, setRoomsExpanded] = useState(false);
+    const GRID_GAP = 12;
+    const isTabletHome = layout === 'tablet-home';
+    const isGridLayout = layout === 'grid' || isTabletHome;
+    const gridCardWidthPx =
+        isGridLayout && columns >= 4 && gridWidth > 0
+            ? Math.floor((gridWidth - GRID_GAP * (columns - 1)) / columns)
+            : null;
+    const gridCardWidth = isGridLayout && columns < 4
+        ? `${Math.floor(100 / columns) - 2}%`
+        : null;
     const horizontalCardWidth = columns > 2 ? 211 : 157;
+    const tabletDisplayRooms = isTabletHome && !roomsExpanded
+        ? rooms.slice(0, tabletPreviewCount)
+        : rooms;
+    const tabletHasMore = isTabletHome && rooms.length > tabletPreviewCount;
 
     if (!rooms || rooms.length === 0) {
-        if (layout === 'grid') {
+        if (isGridLayout) {
             return (
                 <View style={[styles.container, styles.emptyContainer]}>
                     <Text style={{ color: 'rgba(255,255,255,0.4)' }}>No rooms found for this floor.</Text>
@@ -93,7 +108,12 @@ function RoomsList({
                 key={room.area_id}
                 style={[
                     styles.card,
-                    layout === 'grid' && styles.gridCard,
+                    isGridLayout && styles.gridCard,
+                    isGridLayout && columns >= 6 && styles.gridCardCompact,
+                    isGridLayout && gridCardWidthPx != null && { width: gridCardWidthPx },
+                    isGridLayout && gridCardWidth != null && { width: gridCardWidth },
+                    isGridLayout && columns >= 4 && styles.tabletCell,
+                    layout === 'horizontal' && { width: horizontalCardWidth },
                 ]}
                 onPress={() => onRoomPress && onRoomPress(room)}
             >
@@ -181,12 +201,42 @@ function RoomsList({
         );
     };
 
-    if (layout === 'grid') {
+    const renderGrid = (roomList) => (
+        <View
+            style={styles.gridContainer}
+            onLayout={(e) => {
+                const w = e.nativeEvent.layout.width;
+                if (w > 0 && w !== gridWidth) setGridWidth(w);
+            }}
+        >
+            {roomList.map((room, index) => renderCard(room, index))}
+        </View>
+    );
+
+    if (isTabletHome) {
         return (
-            <View style={styles.gridContainer}>
-                {rooms.map((room, index) => renderCard(room, index))}
+            <View style={styles.container}>
+                <View style={styles.headerRow}>
+                    <Text style={styles.title}>ROOMS</Text>
+                </View>
+                {renderGrid(tabletDisplayRooms)}
+                {tabletHasMore && (
+                    <TouchableOpacity
+                        style={styles.viewAllBtn}
+                        onPress={() => setRoomsExpanded((v) => !v)}
+                        activeOpacity={0.7}
+                    >
+                        <Text style={styles.viewAllBtnText}>
+                            {roomsExpanded ? 'Show less' : `View all rooms (${rooms.length})`}
+                        </Text>
+                    </TouchableOpacity>
+                )}
             </View>
         );
+    }
+
+    if (layout === 'grid') {
+        return renderGrid(rooms);
     }
 
     return (
@@ -234,6 +284,23 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontFamily: CF.semibold,
         letterSpacing: 0.3,
+    },
+    viewAllBtn: {
+        alignSelf: 'center',
+        marginTop: 4,
+        marginBottom: 8,
+        paddingVertical: 10,
+        paddingHorizontal: 20,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: 'rgba(137,71,202,0.35)',
+        backgroundColor: 'rgba(137,71,202,0.08)',
+    },
+    viewAllBtnText: {
+        color: '#b48ddd',
+        fontSize: 13,
+        fontFamily: CF.semibold,
+        letterSpacing: 0.2,
     },
     settingsButton: {
         padding: 4,
@@ -337,8 +404,14 @@ const styles = StyleSheet.create({
         paddingBottom: 20,
     },
     gridCard: {
-        width: '48.5%',
         height: 180,
+    },
+    gridCardCompact: {
+        height: 140,
+    },
+    tabletCell: {
+        flexGrow: 0,
+        flexShrink: 0,
     },
     emptyContainer: {
         alignItems: 'center',
