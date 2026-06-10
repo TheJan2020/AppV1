@@ -47,12 +47,16 @@ import DashboardSkeleton, {
     RoomsSkeleton,
     CamerasSkeleton,
 } from '../components/DashboardV2/DashboardSkeleton';
-import VoiceConversation from '../components/VoiceConversation';
 
 import { FrigateService } from '../services/frigate';
 import * as SecureStore from 'expo-secure-store';
 import { startHeartbeat, stopHeartbeat, updateAppState } from '../services/heartbeat';
 import { getRoomEntities } from '../utils/roomHelpers';
+import {
+    filterParentRoomsForDashboard,
+    getRoomAreaGroup,
+    getSelectedAreasForDashboard,
+} from '../utils/roomAreas';
 import { setRoomPageBootstrap } from '../utils/roomPageBootstrap';
 import { applyHaStateChangedEvent, applyClimateServiceToEntity } from '../utils/haEntityMerge';
 import { HA_STATUS, ADMIN_STATUS, isBadEntityState } from '../utils/haEntityHealth';
@@ -103,7 +107,6 @@ export default function DashboardV2() {
     const [autoRoomResume, setAutoRoomResume] = useState(true);
     const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
     /** Voice UI mounts one frame after home content — avoids building the huge voice context during first paint. */
-    const [voiceMountReady, setVoiceMountReady] = useState(false);
     const [showPreferenceButton, setShowPreferenceButton] = useState(true);
 
     const haHttpUrl = useMemo(() => {
@@ -365,6 +368,7 @@ export default function DashboardV2() {
         if (!allowedQuickScenes || allowedQuickScenes.length === 0) return [];
 
         return allowedQuickScenes
+            .slice(0, 4)
             .map(id => entities.find(e => e.entity_id === id))
             .filter(e => e) // Filter out undefined if entity not found in HA
             .map(e => ({
@@ -877,23 +881,6 @@ export default function DashboardV2() {
         }
     }, [alertNotif, entities.length, scenesFetched, homeAccessFetched]);
 
-    useEffect(() => {
-        if (!showVoiceAssistant || revealStep < 5 || entities.length === 0) {
-            setVoiceMountReady(false);
-            return;
-        }
-        let cancelled = false;
-        const id = requestAnimationFrame(() => {
-            requestAnimationFrame(() => {
-                if (!cancelled) setVoiceMountReady(true);
-            });
-        });
-        return () => {
-            cancelled = true;
-            cancelAnimationFrame(id);
-        };
-    }, [showVoiceAssistant, revealStep, entities.length]);
-
     // Read the pending notification from context (_layout.jsx captures it via
     // both getLastNotificationResponseAsync [cold start] and the tap listener
     // [background/foreground]). Context is always populated before this screen
@@ -1307,18 +1294,13 @@ export default function DashboardV2() {
 
 
 
-    const handleVoiceCommand = async (command) => {
-        console.log('[Dashboard] Voice command:', command);
-        if (command.action === 'call_service') {
-            await callService(command.domain, command.service, command.service_data);
-        }
-    };
-
     const handleRoomPress = useCallback((room) => {
         if (activeTab === 'rooms') {
             setRoomPageBootstrap(room.area_id, room.name, {
                 picture: room.picture,
+                badgeConfig,
                 entities,
+                registryAreas,
                 registryDevices,
                 registryEntities,
                 musicAssistantEntryIds,
@@ -1346,6 +1328,8 @@ export default function DashboardV2() {
     }, [
         activeTab,
         entities,
+        badgeConfig,
+        registryAreas,
         registryDevices,
         registryEntities,
         musicAssistantEntryIds,
@@ -1405,10 +1389,7 @@ export default function DashboardV2() {
     const handleOpenOpacitySettings = useCallback(() => setSettingsModalVisible(true), []);
 
     const getRoomsWithCounts = () => {
-        // Fallback to registryAreas if badgeConfig is missing or has no selected_areas
-        const sourceAreas = (badgeConfig?.selected_areas && badgeConfig.selected_areas.length > 0)
-            ? badgeConfig.selected_areas.filter(sa => registryAreas.some(ra => ra.area_id === sa.area_id))
-            : registryAreas;
+        const sourceAreas = getSelectedAreasForDashboard(registryAreas, badgeConfig);
 
         if (!sourceAreas || sourceAreas.length === 0) return [];
 
@@ -1429,8 +1410,12 @@ export default function DashboardV2() {
                 .replace(/\b\w/g, c => c.toUpperCase());
         };
 
-        const computedRooms = sourceAreas.map(area => {
-            // Restore areaRegEntries for device count and raw access
+        const computeRoomStats = (area) => {
+            const resolvedArea = {
+                ...area,
+                name: resolveDisplayName(area.area_id, area.name),
+            };
+
             const areaDevices = registryDevices.filter(d => d.area_id === area.area_id);
             const areaDeviceIds = areaDevices.map(d => d.id);
             const areaRegEntries = registryEntities.filter(re => {
@@ -1439,10 +1424,17 @@ export default function DashboardV2() {
                 return directMatch || deviceMatch;
             });
 
-            // Use the sophisticated helper with Sensor Mappings
-            const roomEntities = getRoomEntities(area, registryDevices, registryEntities, entities, sensorMappings, coverMappings, mediaMappings, musicAssistantEntryIds);
+            const roomEntities = getRoomEntities(
+                resolvedArea,
+                registryDevices,
+                registryEntities,
+                entities,
+                sensorMappings,
+                coverMappings,
+                mediaMappings,
+                musicAssistantEntryIds,
+            );
 
-            // Active Counts using processed entities
             const activeLights = roomEntities.lights.filter(l => l.stateObj.state === 'on').length;
 
             const activeAC = roomEntities.climates.filter(c => {
@@ -1456,7 +1448,6 @@ export default function DashboardV2() {
                 return s && (s === 'open' || (pos && pos > 0));
             }).length;
 
-            // Doors now respect sensorType from getRoomEntities
             const activeDoors = roomEntities.doors.filter(d => {
                 const s = d.stateObj?.state?.toLowerCase();
                 if (!s) return false;
@@ -1468,21 +1459,49 @@ export default function DashboardV2() {
             );
 
             return {
-                ...area,
-                name: resolveDisplayName(area.area_id, area.name),
+                ...resolvedArea,
                 deviceCount: areaRegEntries.length,
                 activeLights,
                 activeAC,
                 activeCovers,
                 activeDoors,
                 hasPresenceSensor,
-                _entities: roomEntities // Optional: cache if needed
+                _entities: roomEntities,
             };
+        };
+
+        const computedRooms = sourceAreas.map(computeRoomStats);
+
+        const parentRooms = filterParentRoomsForDashboard(computedRooms, registryAreas, badgeConfig).map((room) => {
+            const group = getRoomAreaGroup(room, registryAreas, badgeConfig, computedRooms);
+            if (group.length <= 1) return room;
+
+            const merged = {
+                deviceCount: 0,
+                activeLights: 0,
+                activeAC: 0,
+                activeCovers: 0,
+                activeDoors: 0,
+                hasPresenceSensor: false,
+            };
+
+            for (const area of group) {
+                const stats = area.area_id === room.area_id
+                    ? room
+                    : computeRoomStats(area);
+                merged.deviceCount += stats.deviceCount || 0;
+                merged.activeLights += stats.activeLights || 0;
+                merged.activeAC += stats.activeAC || 0;
+                merged.activeCovers += stats.activeCovers || 0;
+                merged.activeDoors += stats.activeDoors || 0;
+                if (stats.hasPresenceSensor) merged.hasPresenceSensor = true;
+            }
+
+            return { ...room, ...merged };
         });
 
-        // Apply Sorting if savedRoomOrder exists
         if (savedRoomOrder && savedRoomOrder.length > 0) {
-            return computedRooms.sort((a, b) => {
+            return parentRooms.sort((a, b) => {
                 const indexA = savedRoomOrder.indexOf(a.area_id);
                 const indexB = savedRoomOrder.indexOf(b.area_id);
 
@@ -1493,7 +1512,7 @@ export default function DashboardV2() {
             });
         }
 
-        return computedRooms;
+        return parentRooms;
     };
 
     const roomsWithCounts = useMemo(() => getRoomsWithCounts(), [
@@ -1769,8 +1788,6 @@ export default function DashboardV2() {
                 {!connectionConfig.loaded ? <DashboardSkeleton /> : (
                     <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
 
-                        <HaSystemBanner banner={systemHealth.banner} />
-
                         {/* ── Header + Locks ── step 1 */}
                         {revealStep < 1 ? <HeaderSkeleton /> : (
                             <>
@@ -1802,6 +1819,7 @@ export default function DashboardV2() {
                                 />
                                 <View style={styles.divider} />
                                 {showFamily && <PersonBadges entities={entities} alertRules={alertRules} haUrl={haHttpUrl} />}
+                                <HaSystemBanner banner={systemHealth.banner} />
                             </>
                         )}
 
@@ -1815,131 +1833,6 @@ export default function DashboardV2() {
                                 columns={homeColumns}
                             />
                         )}
-
-                        {/* Voice assistant — only shown once entities are ready */}
-                        {voiceMountReady && <VoiceConversation
-                            onCommand={handleVoiceCommand}
-                            context={{
-                                userName: userName,
-                                time: new Date().toLocaleTimeString(),
-                                rooms: roomsWithCounts.map(room => ({
-                                    name: room.name,
-                                    area_id: room.area_id,
-                                    lights: registryEntities
-                                        .filter(re => {
-                                            const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
-                                            const areaDeviceIds = areaDevices.map(d => d.id);
-                                            return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
-                                                && re.entity_id.startsWith('light.');
-                                        })
-                                        .map(re => {
-                                            const entity = entities.find(e => e.entity_id === re.entity_id);
-                                            return {
-                                                entity_id: re.entity_id,
-                                                friendly_name: entity?.attributes?.friendly_name || re.entity_id,
-                                                state: entity?.state || 'unknown'
-                                            };
-                                        }),
-                                    climate: registryEntities
-                                        .filter(re => {
-                                            const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
-                                            const areaDeviceIds = areaDevices.map(d => d.id);
-                                            return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
-                                                && re.entity_id.startsWith('climate.');
-                                        })
-                                        .map(re => {
-                                            const entity = entities.find(e => e.entity_id === re.entity_id);
-                                            return {
-                                                entity_id: re.entity_id,
-                                                friendly_name: entity?.attributes?.friendly_name || re.entity_id,
-                                                state: entity?.state || 'unknown',
-                                                temperature: entity?.attributes?.current_temperature,
-                                                target_temp: entity?.attributes?.temperature
-                                            };
-                                        }),
-                                    covers: registryEntities
-                                        .filter(re => {
-                                            const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
-                                            const areaDeviceIds = areaDevices.map(d => d.id);
-                                            return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
-                                                && re.entity_id.startsWith('cover.');
-                                        })
-                                        .map(re => {
-                                            const entity = entities.find(e => e.entity_id === re.entity_id);
-                                            return {
-                                                entity_id: re.entity_id,
-                                                friendly_name: entity?.attributes?.friendly_name || re.entity_id,
-                                                state: entity?.state || 'unknown',
-                                                current_position: entity?.attributes?.current_position
-                                            };
-                                        }),
-                                    media: registryEntities
-                                        .filter(re => {
-                                            const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
-                                            const areaDeviceIds = areaDevices.map(d => d.id);
-                                            return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
-                                                && re.entity_id.startsWith('media_player.');
-                                        })
-                                        .map(re => {
-                                            const entity = entities.find(e => e.entity_id === re.entity_id);
-                                            return {
-                                                entity_id: re.entity_id,
-                                                friendly_name: entity?.attributes?.friendly_name || re.entity_id,
-                                                state: entity?.state || 'unknown'
-                                            };
-                                        }),
-                                    switches: registryEntities
-                                        .filter(re => {
-                                            const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
-                                            const areaDeviceIds = areaDevices.map(d => d.id);
-                                            return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
-                                                && re.entity_id.startsWith('switch.');
-                                        })
-                                        .map(re => {
-                                            const entity = entities.find(e => e.entity_id === re.entity_id);
-                                            return {
-                                                entity_id: re.entity_id,
-                                                friendly_name: entity?.attributes?.friendly_name || re.entity_id,
-                                                state: entity?.state || 'unknown'
-                                            };
-                                        }),
-                                    sensors: registryEntities
-                                        .filter(re => {
-                                            const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
-                                            const areaDeviceIds = areaDevices.map(d => d.id);
-                                            return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
-                                                && re.entity_id.startsWith('sensor.')
-                                                && !re.entity_id.includes('signal_strength')
-                                                && !re.entity_id.includes('battery');
-                                        })
-                                        .map(re => {
-                                            const entity = entities.find(e => e.entity_id === re.entity_id);
-                                            return {
-                                                entity_id: re.entity_id,
-                                                friendly_name: entity?.attributes?.friendly_name || re.entity_id,
-                                                state: entity?.state || 'unknown',
-                                                unit: entity?.attributes?.unit_of_measurement
-                                            };
-                                        }),
-                                    binary_sensors: registryEntities
-                                        .filter(re => {
-                                            const areaDevices = registryDevices.filter(d => d.area_id === room.area_id);
-                                            const areaDeviceIds = areaDevices.map(d => d.id);
-                                            return (re.area_id === room.area_id || (re.device_id && areaDeviceIds.includes(re.device_id)))
-                                                && re.entity_id.startsWith('binary_sensor.');
-                                        })
-                                        .map(re => {
-                                            const entity = entities.find(e => e.entity_id === re.entity_id);
-                                            return {
-                                                entity_id: re.entity_id,
-                                                friendly_name: entity?.attributes?.friendly_name || re.entity_id,
-                                                state: entity?.state || 'unknown',
-                                                device_class: entity?.attributes?.device_class
-                                            };
-                                        })
-                                }))
-                            }}
-                        />}
 
                         {/* ── Home Access ── step 3 */}
                         {revealStep < 3 ? <HomeAccessSkeleton columns={homeColumns} /> : (
@@ -2158,7 +2051,7 @@ export default function DashboardV2() {
             {/* ===== SETTINGS TAB — unmount when hidden (rarely visited, no state to preserve) ===== */}
             <View style={[{ flex: 1 }, activeTab !== 'settings' && { display: 'none' }]}>
                 {activeTab === 'settings' ? <SettingsView
-                    areas={(badgeConfig?.selected_areas && badgeConfig.selected_areas.length > 0) ? badgeConfig.selected_areas : registryAreas}
+                    areas={getSelectedAreasForDashboard(registryAreas, badgeConfig)}
                     registryAreas={registryAreas}
                     entities={entities}
                     registryDevices={registryDevices}
@@ -2192,6 +2085,7 @@ export default function DashboardV2() {
                         setSelectedRoom(null);
                     }}
                     room={selectedRoom}
+                    registryAreas={registryAreas}
                     registryDevices={registryDevices}
                     registryEntities={registryEntities}
                     allEntities={entities}
@@ -2214,6 +2108,7 @@ export default function DashboardV2() {
                     }
                     systemHealthBanner={systemHealth.banner}
                     canControlHa={systemHealth.canControlHa}
+                    badgeConfig={badgeConfig}
                 />
             )}
 

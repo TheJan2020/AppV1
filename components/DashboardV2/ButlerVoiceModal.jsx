@@ -9,12 +9,18 @@ import {
     Easing,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Phone, PhoneOff, Volume2 } from 'lucide-react-native';
+import { Headphones, PhoneOff, Volume2 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Heading, CF } from '../../utils/typography';
 import { ROOM_GROUP_ICON_GRADIENT_PROPS } from './RoomGroupIconButton';
 import { getButlerBackendUrl, toButlerWsUrl } from '../../utils/butlerBackend';
 import { ButlerVoiceSession } from '../../services/butler/ButlerVoiceSession';
+import {
+    formatAudioRouteLabel,
+    getButlerAudioRouteInfo,
+    subscribeButlerAudioRoute,
+    suggestButlerRoute,
+} from '../../services/butler/audioRoute';
 
 const RING_COUNT = 2;
 const RING_MS = 900;
@@ -30,6 +36,7 @@ const PHASE_LABEL = {
 function ButlerVoiceModal({ visible, onClose, context }) {
     const [phase, setPhase] = useState('ringing');
     const [audioRoute, setAudioRoute] = useState('SPEAKER');
+    const [routeHint, setRouteHint] = useState('');
     const [errorHint, setErrorHint] = useState('');
 
     const sessionRef = useRef(null);
@@ -59,6 +66,8 @@ function ButlerVoiceModal({ visible, onClose, context }) {
         Haptics.selectionAsync();
         try {
             await sessionRef.current?.setRoute(route);
+            const info = await getButlerAudioRouteInfo();
+            setRouteHint(formatAudioRouteLabel(info, route));
         } catch (e) {
             console.warn('[ButlerVoice] setRoute', e?.message ?? e);
         }
@@ -106,16 +115,19 @@ function ButlerVoiceModal({ visible, onClose, context }) {
             void stopSession();
             setPhase('ringing');
             setAudioRoute('SPEAKER');
+            setRouteHint('');
             setErrorHint('');
             butlerSpokeRef.current = false;
             return undefined;
         }
 
         let cancelled = false;
+        let hadExternalAudio = false;
         butlerSpokeRef.current = false;
         setPhase('ringing');
         setAudioRoute('SPEAKER');
         audioRouteRef.current = 'SPEAKER';
+        setRouteHint('');
         setErrorHint('');
 
         const liveAnim = Animated.loop(
@@ -189,11 +201,51 @@ function ButlerVoiceModal({ visible, onClose, context }) {
             }
         };
 
-        void playRingVisuals();
-        void connectSession();
+        const unsubRoute = subscribeButlerAudioRoute((info) => {
+            if (cancelled) return;
+
+            const externalNow = Boolean(info.hasExternalAudio);
+            setRouteHint(formatAudioRouteLabel(info, audioRouteRef.current));
+
+            if (externalNow && !hadExternalAudio) {
+                hadExternalAudio = true;
+                if (audioRouteRef.current === 'SPEAKER') {
+                    Haptics.selectionAsync();
+                    audioRouteRef.current = 'HEADSET';
+                    setAudioRoute('HEADSET');
+                    void sessionRef.current?.setRoute('HEADSET');
+                } else {
+                    void sessionRef.current?.setRoute('HEADSET');
+                }
+            } else if (!externalNow && hadExternalAudio) {
+                hadExternalAudio = false;
+                if (audioRouteRef.current === 'HEADSET') {
+                    void sessionRef.current?.setRoute('HEADSET');
+                }
+            } else if (externalNow) {
+                hadExternalAudio = true;
+            }
+        });
+
+        const bootstrap = async () => {
+            const info = await getButlerAudioRouteInfo();
+            if (cancelled) return;
+
+            hadExternalAudio = Boolean(info.hasExternalAudio);
+            const initial = suggestButlerRoute(info);
+            audioRouteRef.current = initial;
+            setAudioRoute(initial);
+            setRouteHint(formatAudioRouteLabel(info, initial));
+
+            void playRingVisuals();
+            void connectSession();
+        };
+
+        void bootstrap();
 
         return () => {
             cancelled = true;
+            unsubRoute();
             liveAnim.stop();
             livePulse.setValue(1);
             ringScale.setValue(1);
@@ -243,6 +295,9 @@ function ButlerVoiceModal({ visible, onClose, context }) {
                     </View>
 
                     <Text style={styles.statusLine}>{statusLabel}</Text>
+                    {routeHint ? (
+                        <Text style={styles.routeHint} numberOfLines={1}>{routeHint}</Text>
+                    ) : null}
                     {phase === 'error' && errorHint ? (
                         <Text style={styles.errorHint} numberOfLines={2}>{errorHint}</Text>
                     ) : null}
@@ -253,23 +308,23 @@ function ButlerVoiceModal({ visible, onClose, context }) {
                         <TouchableOpacity
                             style={[
                                 styles.routeBtn,
-                                audioRoute === 'EARPIECE' && styles.routeBtnActive,
+                                audioRoute === 'HEADSET' && styles.routeBtnActive,
                             ]}
-                            onPress={() => applyRoute('EARPIECE')}
+                            onPress={() => applyRoute('HEADSET')}
                             activeOpacity={0.85}
                             disabled={!routeControlsEnabled}
                         >
-                            <Phone
+                            <Headphones
                                 size={22}
-                                color={audioRoute === 'EARPIECE' ? '#c9a8f0' : 'rgba(237,237,245,0.45)'}
+                                color={audioRoute === 'HEADSET' ? '#c9a8f0' : 'rgba(237,237,245,0.45)'}
                             />
                             <Text
                                 style={[
                                     styles.routeLabel,
-                                    audioRoute === 'EARPIECE' && styles.routeLabelActive,
+                                    audioRoute === 'HEADSET' && styles.routeLabelActive,
                                 ]}
                             >
-                                Earpiece
+                                Headset
                             </Text>
                         </TouchableOpacity>
 
@@ -366,6 +421,13 @@ const styles = StyleSheet.create({
         fontFamily: CF.medium,
         color: 'rgba(237,237,245,0.72)',
         letterSpacing: -0.2,
+    },
+    routeHint: {
+        marginTop: 6,
+        fontSize: 13,
+        fontFamily: CF.regular,
+        color: 'rgba(201,168,240,0.85)',
+        letterSpacing: -0.1,
     },
     errorHint: {
         marginTop: 8,

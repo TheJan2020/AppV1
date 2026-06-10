@@ -40,6 +40,11 @@ import { FrigateService } from '../services/frigate';
 import * as SecureStore from 'expo-secure-store';
 import { startHeartbeat, stopHeartbeat, updateAppState } from '../services/heartbeat';
 import { getRoomEntities } from '../utils/roomHelpers';
+import {
+    filterParentRoomsForDashboard,
+    getRoomAreaGroup,
+    getSelectedAreasForDashboard,
+} from '../utils/roomAreas';
 import { setRoomPageBootstrap } from '../utils/roomPageBootstrap';
 
 export default function DashboardV2Tablet() {
@@ -267,6 +272,7 @@ export default function DashboardV2Tablet() {
         if (!allowedQuickScenes || allowedQuickScenes.length === 0) return [];
 
         return allowedQuickScenes
+            .slice(0, 4)
             .map(id => entities.find(e => e.entity_id === id))
             .filter(e => e) // Filter out undefined if entity not found in HA
             .map(e => ({
@@ -768,7 +774,9 @@ export default function DashboardV2Tablet() {
         if (activeTab === 'rooms') {
             setRoomPageBootstrap(room.area_id, room.name, {
                 picture: room.picture,
+                badgeConfig,
                 entities,
+                registryAreas,
                 registryDevices,
                 registryEntities,
                 musicAssistantEntryIds,
@@ -834,10 +842,7 @@ export default function DashboardV2Tablet() {
     };
 
     const getRoomsWithCounts = () => {
-        // Fallback to registryAreas if badgeConfig is missing or has no selected_areas
-        const sourceAreas = (badgeConfig?.selected_areas && badgeConfig.selected_areas.length > 0)
-            ? badgeConfig.selected_areas.filter(sa => registryAreas.some(ra => ra.area_id === sa.area_id))
-            : registryAreas;
+        const sourceAreas = getSelectedAreasForDashboard(registryAreas, badgeConfig);
 
         if (!sourceAreas || sourceAreas.length === 0) return [];
 
@@ -858,8 +863,12 @@ export default function DashboardV2Tablet() {
                 .replace(/\b\w/g, c => c.toUpperCase());
         };
 
-        const computedRooms = sourceAreas.map(area => {
-            // Restore areaRegEntries for device count and raw access
+        const computeRoomStats = (area) => {
+            const resolvedArea = {
+                ...area,
+                name: resolveDisplayName(area.area_id, area.name),
+            };
+
             const areaDevices = registryDevices.filter(d => d.area_id === area.area_id);
             const areaDeviceIds = areaDevices.map(d => d.id);
             const areaRegEntries = registryEntities.filter(re => {
@@ -868,10 +877,17 @@ export default function DashboardV2Tablet() {
                 return directMatch || deviceMatch;
             });
 
-            // Use the sophisticated helper with Sensor Mappings
-            const roomEntities = getRoomEntities(area, registryDevices, registryEntities, entities, sensorMappings, coverMappings, mediaMappings, musicAssistantEntryIds);
+            const roomEntities = getRoomEntities(
+                resolvedArea,
+                registryDevices,
+                registryEntities,
+                entities,
+                sensorMappings,
+                coverMappings,
+                mediaMappings,
+                musicAssistantEntryIds,
+            );
 
-            // Active Counts using processed entities
             const activeLights = roomEntities.lights.filter(l => l.stateObj.state === 'on').length;
 
             const activeAC = roomEntities.climates.filter(c => {
@@ -885,7 +901,6 @@ export default function DashboardV2Tablet() {
                 return s && (s === 'open' || (pos && pos > 0));
             }).length;
 
-            // Doors now respect sensorType from getRoomEntities
             const activeDoors = roomEntities.doors.filter(d => {
                 const s = d.stateObj?.state?.toLowerCase();
                 if (!s) return false;
@@ -897,21 +912,49 @@ export default function DashboardV2Tablet() {
             );
 
             return {
-                ...area,
-                name: resolveDisplayName(area.area_id, area.name),
+                ...resolvedArea,
                 deviceCount: areaRegEntries.length,
                 activeLights,
                 activeAC,
                 activeCovers,
                 activeDoors,
                 hasPresenceSensor,
-                _entities: roomEntities // Optional: cache if needed
+                _entities: roomEntities,
             };
+        };
+
+        const computedRooms = sourceAreas.map(computeRoomStats);
+
+        const parentRooms = filterParentRoomsForDashboard(computedRooms, registryAreas, badgeConfig).map((room) => {
+            const group = getRoomAreaGroup(room, registryAreas, badgeConfig, computedRooms);
+            if (group.length <= 1) return room;
+
+            const merged = {
+                deviceCount: 0,
+                activeLights: 0,
+                activeAC: 0,
+                activeCovers: 0,
+                activeDoors: 0,
+                hasPresenceSensor: false,
+            };
+
+            for (const area of group) {
+                const stats = area.area_id === room.area_id
+                    ? room
+                    : computeRoomStats(area);
+                merged.deviceCount += stats.deviceCount || 0;
+                merged.activeLights += stats.activeLights || 0;
+                merged.activeAC += stats.activeAC || 0;
+                merged.activeCovers += stats.activeCovers || 0;
+                merged.activeDoors += stats.activeDoors || 0;
+                if (stats.hasPresenceSensor) merged.hasPresenceSensor = true;
+            }
+
+            return { ...room, ...merged };
         });
 
-        // Apply Sorting if savedRoomOrder exists
         if (savedRoomOrder && savedRoomOrder.length > 0) {
-            return computedRooms.sort((a, b) => {
+            return parentRooms.sort((a, b) => {
                 const indexA = savedRoomOrder.indexOf(a.area_id);
                 const indexB = savedRoomOrder.indexOf(b.area_id);
 
@@ -922,7 +965,7 @@ export default function DashboardV2Tablet() {
             });
         }
 
-        return computedRooms;
+        return parentRooms;
     };
 
     const roomsWithCounts = useMemo(() => getRoomsWithCounts(), [
@@ -1380,7 +1423,7 @@ export default function DashboardV2Tablet() {
             return (
                 <View style={[{ flex: 1 }, isLandscape && sidebarPadding]}>
                     <SettingsView
-                        areas={(badgeConfig?.selected_areas && badgeConfig.selected_areas.length > 0) ? badgeConfig.selected_areas : registryAreas}
+                        areas={getSelectedAreasForDashboard(registryAreas, badgeConfig)}
                         registryAreas={registryAreas}
                         entities={entities}
                         registryDevices={registryDevices}
@@ -1510,6 +1553,7 @@ export default function DashboardV2Tablet() {
                         setSelectedRoom(null);
                     }}
                     room={selectedRoom}
+                    registryAreas={registryAreas}
                     registryDevices={registryDevices}
                     registryEntities={registryEntities}
                     allEntities={entities}
@@ -1530,6 +1574,7 @@ export default function DashboardV2Tablet() {
                     callServiceWithResponse={(domain, serviceName, serviceData) =>
                         service.current?.callService?.(domain, serviceName, serviceData, { returnResponse: true })
                     }
+                    badgeConfig={badgeConfig}
                 />
             )}
 

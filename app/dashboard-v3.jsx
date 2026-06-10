@@ -29,6 +29,7 @@ import HaSystemBanner from '../components/DashboardV2/HaSystemBanner';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import ActiveDevicesModal from '../components/DashboardV2/ActiveDevicesModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
+import { getSelectedAreasForDashboard } from '../utils/roomAreas';
 
 export default function DashboardV3() {
     const router = useRouter();
@@ -157,9 +158,7 @@ export default function DashboardV3() {
 
     // Rooms with counts
     const getRoomsWithCounts = useCallback(() => {
-        const sourceAreas = (badgeConfig?.selected_areas?.length > 0)
-            ? badgeConfig.selected_areas.filter(sa => registryAreas.some(ra => ra.area_id === sa.area_id))
-            : registryAreas;
+        const sourceAreas = getSelectedAreasForDashboard(registryAreas, badgeConfig);
 
         if (!sourceAreas || sourceAreas.length === 0) return [];
 

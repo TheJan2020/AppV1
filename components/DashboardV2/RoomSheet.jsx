@@ -1,14 +1,13 @@
 import { View, StyleSheet, Modal, TouchableOpacity } from 'react-native';
-import { BlurView } from 'expo-blur';
-import { Colors } from '../../constants/Colors';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import RoomDetailView from './RoomDetailView';
-import { getRoomEntities } from '../../utils/roomHelpers';
+import { useRoomAreaEntities } from '../../hooks/useRoomAreaEntities';
 
 export default function RoomSheet({
     visible,
     onClose,
     room,
+    registryAreas = [],
     registryDevices = [],
     registryEntities = [],
     allEntities = [],
@@ -27,10 +26,38 @@ export default function RoomSheet({
     callServiceWithResponse,
     systemHealthBanner = null,
     canControlHa = true,
+    badgeConfig = null,
 }) {
     if (!room) return null;
 
-    const { lights, fans, climates, covers, medias, musicMedias, cameras, sensors, doors, switches, automations, scripts } = getRoomEntities(room, registryDevices, registryEntities, allEntities, sensorMappings, coverMappings, mediaMappings, musicAssistantEntryIds);
+    const {
+        areaTabs,
+        activeAreaKey,
+        setActiveAreaKey,
+        lights,
+        fans,
+        climates,
+        covers,
+        medias,
+        musicMedias,
+        cameras,
+        sensors,
+        doors,
+        switches,
+        automations,
+        scripts,
+    } = useRoomAreaEntities({
+        room,
+        registryAreas,
+        registryDevices,
+        registryEntities,
+        allEntities,
+        sensorMappings,
+        coverMappings,
+        mediaMappings,
+        musicAssistantEntryIds,
+        badgeConfig,
+    });
 
     return (
         <Modal
@@ -44,6 +71,9 @@ export default function RoomSheet({
                 <GestureHandlerRootView style={styles.sheetContainer}>
                     <RoomDetailView
                         room={room}
+                        areaTabs={areaTabs}
+                        activeAreaKey={activeAreaKey}
+                        onSelectArea={setActiveAreaKey}
                         lights={lights}
                         fans={fans}
                         covers={covers}

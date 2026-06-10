@@ -4,8 +4,8 @@ import { View, Text, ActivityIndicator } from 'react-native';
 import { useState, useEffect, useRef } from 'react';
 import { HAService } from '../services/ha';
 import RoomDetailView from '../components/DashboardV2/RoomDetailView';
-import { getRoomEntities } from '../utils/roomHelpers';
 import { peekRoomPageBootstrap } from '../utils/roomPageBootstrap';
+import { useRoomAreaEntities } from '../hooks/useRoomAreaEntities';
 import { applyHaStateChangedEvent, applyClimateServiceToEntity } from '../utils/haEntityMerge';
 import { HA_STATUS, ADMIN_STATUS } from '../utils/haEntityHealth';
 import { useHaSystemHealth } from '../hooks/useHaSystemHealth';
@@ -32,6 +32,8 @@ export default function RoomPage() {
     const [musicAssistantEntryIds, setMusicAssistantEntryIds] = useState(
         () => initialPayload?.musicAssistantEntryIds ?? []
     );
+    const [badgeConfig, setBadgeConfig] = useState(() => initialPayload?.badgeConfig ?? null);
+    const [registryAreas, setRegistryAreas] = useState(() => initialPayload?.registryAreas ?? []);
     const [registryDevices, setRegistryDevices] = useState(() => initialPayload?.registryDevices ?? []);
     const [registryEntities, setRegistryEntities] = useState(() => initialPayload?.registryEntities ?? []);
     const [lightMappings, setLightMappings] = useState(() => initialPayload?.lightMappings ?? []);
@@ -115,11 +117,13 @@ export default function RoomPage() {
                 setHaStatus(HA_STATUS.CONNECTED);
                 Promise.all([
                     service.current.getStates(),
+                    service.current.getAreaRegistry(),
                     service.current.getDeviceRegistry(),
                     service.current.getEntityRegistry(),
                     service.current.getConfigEntries().catch(() => []),
-                ]).then(([states, devices, regs, configEntries]) => {
+                ]).then(([states, areas, devices, regs, configEntries]) => {
                     setEntities(states || []);
+                    setRegistryAreas(areas || []);
                     setRegistryDevices(devices || []);
                     setRegistryEntities(regs || []);
                     const maIds = (Array.isArray(configEntries) ? configEntries : [])
@@ -165,12 +169,23 @@ export default function RoomPage() {
         };
     }, [connectionConfig.loaded, connectionConfig.url, connectionConfig.token]);
 
-    // Fetch Light Mappings
+    useEffect(() => {
+        if (!connectionConfig.loaded || !connectionConfig.adminUrl || badgeConfig) return;
+
+        const adminUrl = connectionConfig.adminUrl;
+        const configUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/config` : `${adminUrl}/api/config`) + `?t=${Date.now()}`;
+
+        fetch(configUrl, { headers: { 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' } })
+            .then(res => res.json())
+            .then(data => setBadgeConfig(data))
+            .catch(e => console.log('[RoomPage] Error loading admin config:', e));
+    }, [connectionConfig.loaded, connectionConfig.adminUrl, badgeConfig]);
+
     useEffect(() => {
         if (!connectionConfig.loaded || !connectionConfig.adminUrl) return;
 
         const adminUrl = connectionConfig.adminUrl;
-        const lightsUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/monitored-entities?type=light` : `${adminUrl}/api/monitored-entities?type=light`);
+        const lightsUrl = adminUrl.endsWith('/') ? `${adminUrl}api/monitored-entities?type=light` : `${adminUrl}/api/monitored-entities?type=light`;
 
         fetch(lightsUrl)
             .then(res => res.json())
@@ -179,7 +194,7 @@ export default function RoomPage() {
                     setLightMappings(data);
                 }
             })
-            .catch(e => console.log("[RoomPage] Error loading light mappings:", e));
+            .catch(e => console.log('[RoomPage] Error loading light mappings:', e));
     }, [connectionConfig.loaded, connectionConfig.adminUrl]);
 
     const systemHealth = useHaSystemHealth({
@@ -204,6 +219,37 @@ export default function RoomPage() {
         return service.current?.callService(domain, serviceName, data);
     };
 
+    const room = { area_id, name, picture };
+
+    const {
+        areaTabs,
+        activeAreaKey,
+        setActiveAreaKey,
+        lights,
+        fans,
+        climates,
+        covers,
+        medias,
+        musicMedias,
+        cameras,
+        sensors,
+        doors,
+        switches,
+        automations,
+        scripts,
+    } = useRoomAreaEntities({
+        room,
+        registryAreas,
+        registryDevices,
+        registryEntities,
+        allEntities: entities,
+        sensorMappings,
+        coverMappings,
+        mediaMappings,
+        musicAssistantEntryIds,
+        badgeConfig,
+    });
+
     if (loading) {
         return (
             <View style={{ flex: 1, backgroundColor: '#000', alignItems: 'center', justifyContent: 'center' }}>
@@ -212,24 +258,15 @@ export default function RoomPage() {
         );
     }
 
-    const room = { area_id, name, picture };
-    const { lights, fans, climates, covers, medias, musicMedias, cameras, sensors, doors, switches, automations, scripts } = getRoomEntities(
-        room,
-        registryDevices,
-        registryEntities,
-        entities,
-        sensorMappings,
-        coverMappings,
-        mediaMappings,
-        musicAssistantEntryIds
-    );
-
     return (
         <View style={{ flex: 1, backgroundColor: '#000' }}>
             <Stack.Screen options={{ headerShown: false }} />
             <StatusBar style="light" />
             <RoomDetailView
                 room={room}
+                areaTabs={areaTabs}
+                activeAreaKey={activeAreaKey}
+                onSelectArea={setActiveAreaKey}
                 lights={lights}
                 fans={fans}
                 covers={covers}

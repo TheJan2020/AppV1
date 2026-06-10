@@ -449,7 +449,7 @@ function SettingsView({
                         </View>
                         <View>
                             <Text style={styles.itemName}>Voice Assistant</Text>
-                            <Text style={styles.itemSub}>Show voice assistant on dashboard</Text>
+                            <Text style={styles.itemSub}>Legacy center widget (tablet only). Phone uses header mic for Butler.</Text>
                         </View>
                     </View>
                     <Switch

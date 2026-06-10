@@ -67,6 +67,12 @@ function isMasterCover(cover) {
            name.includes('master curtain') || name.includes('master_curtain');
 }
 
+/** Returns true for any curtain cover type (treated as window when ungrouped) */
+function isCurtainType(cover) {
+    const t = cover.coverType || '';
+    return t === 'curtain_middle' || t === 'curtain_left' || t === 'curtain_right' || t === 'curtain_roll';
+}
+
 // ── Adaptive dots row ─────────────────────────────────────────────────────
 function DotsRow({ covers }) {
     const n       = covers.length;
@@ -156,6 +162,7 @@ function WindowTabPanel({ active, children }) {
 // ── Window group — filter by layer, show matching cover cards ─────────────
 function WindowCoverSection({
     window, covers, allEntities, weather, onUpdate, onSliderDragStart, onSliderDragEnd, gridColumns, coverCellWidth,
+    onToggleOverride,
 }) {
     const layers = useMemo(() => layersForWindow(covers), [covers]);
     const [activeLayer, setActiveLayer] = useState(() => defaultLayerTab(layersForWindow(covers)));
@@ -173,6 +180,13 @@ function WindowCoverSection({
     const handleWindowToggle = async () => {
         if (toggling) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+        // Synthetic (ungrouped) curtain — toggle entity directly, no window API call
+        if (onToggleOverride) {
+            onToggleOverride(windowIsOpen);
+            return;
+        }
+
         setToggling(true);
         try {
             await toggleCoverWindow(window.id);
@@ -244,7 +258,7 @@ export default function CoversGroupCard({
     gridColumns = 2, variant = 'default', coverWindows = [], room = null, contentWidth,
 }) {
     const isTabletSplit = variant === 'tabletSplit';
-    const [expanded, setExpanded] = useState(isTabletSplit);
+    const [expanded, setExpanded] = useState(false);
     const { width: windowWidth } = useWindowDimensions();
 
     const coverCellWidth = useMemo(() => {
@@ -319,10 +333,8 @@ export default function CoversGroupCard({
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     };
 
-    return (
-        <View style={[styles.container, isTabletSplit && styles.containerTabletSplit]}>
-            <View style={isTabletSplit ? styles.tabletSplitInner : undefined}>
-            {/* Header */}
+    const collapsedSummary = (
+        <>
             <View style={[styles.header, isTabletSplit && styles.headerTabletSplit]}>
                 <RoomGroupIconButton
                     active={groupIsOpen}
@@ -340,10 +352,8 @@ export default function CoversGroupCard({
                 </View>
             </View>
 
-            {/* Dots — show all covers including master */}
             <DotsRow covers={individualCovers} />
 
-            {/* Master position slider — only when a master curtain exists */}
             {masterCover && (
                 <View style={styles.sliderSection}>
                     <PositionSlider
@@ -354,6 +364,24 @@ export default function CoversGroupCard({
                     />
                 </View>
             )}
+        </>
+    );
+
+    return (
+        <View style={[styles.container, isTabletSplit && styles.containerTabletSplit]}>
+            <View style={isTabletSplit ? styles.tabletSplitInner : undefined}>
+            {isTabletSplit ? (
+                <View style={styles.tabletSplitTop}>{collapsedSummary}</View>
+            ) : (
+                collapsedSummary
+            )}
+
+            {/* Chevron — above expanded content so it pins to panel bottom when collapsed (same as Lights) */}
+            <TouchableOpacity style={styles.chevron} onPress={toggle} activeOpacity={0.7}>
+                {expanded
+                    ? <ChevronUp   size={22} color="rgba(255,255,255,0.45)" />
+                    : <ChevronDown size={22} color="rgba(255,255,255,0.45)" />}
+            </TouchableOpacity>
 
             {/* Expanded grid — master curtain excluded */}
             {expanded && (
@@ -373,41 +401,62 @@ export default function CoversGroupCard({
                         />
                     ))}
 
-                    {(ungrouped.length > 0 || !hasWindowGroups) && (
-                        <View style={[styles.grid, isTabletSplit && styles.gridTabletSplit]}>
-                            {(hasWindowGroups ? ungrouped : individualCovers).map(c => (
-                                <View
-                                    key={c.entity_id}
-                                    style={[
-                                        styles.cell,
-                                        gridColumns === 1
-                                            ? styles.cellFullWidth
-                                            : (coverCellWidth > 0 && { width: coverCellWidth }),
-                                    ]}
-                                >
-                                    <ExpandedCoverCard
-                                        cover={c}
+                    {(() => {
+                        const coversToShow = hasWindowGroups ? ungrouped : individualCovers;
+                        const ungroupedCurtains = coversToShow.filter(isCurtainType);
+                        const ungroupedOther    = coversToShow.filter(c => !isCurtainType(c));
+
+                        return (
+                            <>
+                                {/* Single / ungrouped curtains → window-style section (no window API needed) */}
+                                {ungroupedCurtains.map(c => (
+                                    <WindowCoverSection
+                                        key={c.entity_id}
+                                        window={{ id: null, name: c.displayName }}
+                                        covers={[c]}
                                         allEntities={allEntities}
                                         weather={weatherEntity}
                                         onUpdate={onUpdate}
                                         onSliderDragStart={onSliderDragStart}
                                         onSliderDragEnd={onSliderDragEnd}
+                                        gridColumns={gridColumns}
+                                        coverCellWidth={coverCellWidth}
+                                        onToggleOverride={(isOpen) => {
+                                            onUpdate?.(c.entity_id, 'cover', isOpen ? 'close_cover' : 'open_cover', {});
+                                        }}
                                     />
-                                </View>
-                            ))}
-                        </View>
-                    )}
+                                ))}
+
+                                {/* Shutters, garage, and any non-curtain covers → plain grid */}
+                                {ungroupedOther.length > 0 && (
+                                    <View style={[styles.grid, isTabletSplit && styles.gridTabletSplit]}>
+                                        {ungroupedOther.map(c => (
+                                            <View
+                                                key={c.entity_id}
+                                                style={[
+                                                    styles.cell,
+                                                    gridColumns === 1
+                                                        ? styles.cellFullWidth
+                                                        : (coverCellWidth > 0 && { width: coverCellWidth }),
+                                                ]}
+                                            >
+                                                <ExpandedCoverCard
+                                                    cover={c}
+                                                    allEntities={allEntities}
+                                                    weather={weatherEntity}
+                                                    onUpdate={onUpdate}
+                                                    onSliderDragStart={onSliderDragStart}
+                                                    onSliderDragEnd={onSliderDragEnd}
+                                                />
+                                            </View>
+                                        ))}
+                                    </View>
+                                )}
+                            </>
+                        );
+                    })()}
                 </>
             )}
-
-            {isTabletSplit && !expanded && <View style={styles.tabletSplitSpacer} />}
-
-            {/* Chevron */}
-            <TouchableOpacity style={styles.chevron} onPress={toggle} activeOpacity={0.7}>
-                {expanded
-                    ? <ChevronUp   size={22} color="rgba(255,255,255,0.45)" />
-                    : <ChevronDown size={22} color="rgba(255,255,255,0.45)" />}
-            </TouchableOpacity>
             </View>
         </View>
     );
@@ -436,9 +485,8 @@ const styles = StyleSheet.create({
         flex: 1,
         justifyContent: 'space-between',
     },
-    tabletSplitSpacer: {
-        flex: 1,
-        minHeight: 8,
+    tabletSplitTop: {
+        width: '100%',
     },
 
     // Header

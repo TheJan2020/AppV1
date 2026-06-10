@@ -32,7 +32,7 @@ export class ButlerVoiceSession {
     }
 
     setInitialRoute(route) {
-        this._audioRoute = route === 'SPEAKER' ? 'SPEAKER' : 'EARPIECE';
+        this._audioRoute = route === 'SPEAKER' ? 'SPEAKER' : 'HEADSET';
     }
 
     on(event, fn) {
@@ -115,7 +115,7 @@ export class ButlerVoiceSession {
     }
 
     async setRoute(route) {
-        const next = route === 'SPEAKER' ? 'SPEAKER' : 'EARPIECE';
+        const next = route === 'SPEAKER' ? 'SPEAKER' : 'HEADSET';
         this._audioRoute = next;
         if (!this.player) return;
         try {

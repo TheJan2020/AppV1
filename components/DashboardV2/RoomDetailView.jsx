@@ -1,10 +1,12 @@
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ImageBackground, Image } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 import { BlurView } from 'expo-blur';
-import { X, Lightbulb, Fan, ChevronLeft, Droplets, Thermometer, DoorOpen, DoorClosed, Lock, LockOpen, Power, Play, Zap, ChevronDown, ChevronUp, Monitor } from 'lucide-react-native';
+import { X, Lightbulb, Fan, ChevronLeft, Droplets, Thermometer, DoorOpen, DoorClosed, Lock, LockOpen, Power, Play, Zap, ChevronDown, ChevronUp, Monitor, Edit2 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '../../constants/Colors';
 import { CF, Heading } from '../../utils/typography';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
+import { authFetch } from '../../utils/authFetch';
 import { useParentScrollLock } from '../../hooks/useParentScrollLock';
 import { GestureHandlerRootView, PanGestureHandler, State } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, withSpring, Easing, cancelAnimation } from 'react-native-reanimated';
@@ -14,6 +16,7 @@ import { SvgUri } from 'react-native-svg';
 import LightControlModal from './LightControlModal';
 import ClimateGroupCard from './ClimateGroupCard';
 import HaSystemBanner from './HaSystemBanner';
+import RoomAreasNavBar from './RoomAreasNavBar';
 import { isBadEntityState } from '../../utils/haEntityHealth';
 import CoverCard from './CoverCard';
 import MediaCard from './MediaCard';
@@ -23,13 +26,17 @@ import RoomClimateChart from './RoomClimateChart';
 import ActivatePreferencesButton from './ActivatePreferencesButton';
 import SlideAction from './SlideAction';
 import SceneCard from './SceneCard';
+import { EditScenesModal, MAX_QUICK_SCENES } from './QuickScenes';
 import LightsGroupCard from './LightsGroupCard';
 import CoversGroupCard from './CoversGroupCard';
 import RoomGroupIconButton from './RoomGroupIconButton';
 import { LockPill } from './HomeAccess';
 import useDeviceType from '../../hooks/useDeviceType';
+import { lightSupportsBrightness } from '../../utils/lightCapabilities';
 
 // Convert area_id-style names (e.g. "living_room") to proper display names ("Living Room")
+const roomScenesPrefsKey = (areaId) => `room_scenes_show_prefs_${areaId}`;
+
 const formatRoomName = (name) => {
     if (!name) return '';
     if (name.includes(' ')) return name;
@@ -140,12 +147,7 @@ function FanCard({ fan, onToggle, needsChange: fanCardNeedsChange }) {
 function LightCard({ light, onToggle, onBrightnessChange, onLongPress, needsChange: lightCardNeedsChange, mapping, adminUrl }) {
     const isLock = light.entity_id.startsWith('lock.');
 
-    const colorModes = light.stateObj.attributes.supported_color_modes || [];
-    const hasColorMode = colorModes.some(mode =>
-        ['brightness', 'hs', 'xy', 'rgb', 'rgbw', 'rgbww', 'color_temp', 'white'].includes(mode)
-    );
-    const hasFeature = (light.stateObj.attributes.supported_features !== undefined && (light.stateObj.attributes.supported_features & 1) !== 0);
-    const supportsBrightness = (hasColorMode || hasFeature) && !isLock;
+    const supportsBrightness = !isLock && lightSupportsBrightness(light.stateObj.attributes, mapping);
 
     // Color capability from admin backend
     const colorCapability = mapping?.colorCapability || null; // 'normal' | 'dimmable' | 'cct' | 'rgb' | null
@@ -360,6 +362,9 @@ export default function RoomDetailView({
     canControlHa = true,
     coverMappings = [],
     coverWindows = [],
+    areaTabs = [],
+    activeAreaKey,
+    onSelectArea,
 }) {
     const { isTablet } = useDeviceType();
     const isTabletModal = isModal && isTablet;
@@ -367,6 +372,59 @@ export default function RoomDetailView({
     const [selectedLight, setSelectedLight] = useState(null);
     const [lightsPanelWidth, setLightsPanelWidth] = useState(0);
     const [coversPanelWidth, setCoversPanelWidth] = useState(0);
+    const [roomScenesEditVisible, setRoomScenesEditVisible] = useState(false);
+    const [roomScenesConfigured, setRoomScenesConfigured] = useState(false);
+    const [allowedRoomSceneIds, setAllowedRoomSceneIds] = useState([]);
+    const [roomShowPreferences, setRoomShowPreferences] = useState(null);
+
+    const sceneAreaId = activeAreaKey || room?.area_id;
+
+    useEffect(() => {
+        if (!sceneAreaId) return;
+
+        SecureStore.getItemAsync(roomScenesPrefsKey(sceneAreaId)).then((val) => {
+            setRoomShowPreferences(val !== null ? val === 'true' : null);
+        });
+    }, [sceneAreaId]);
+
+    useEffect(() => {
+        if (!adminUrl || !sceneAreaId) return;
+
+        const base = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
+        authFetch(`${base}api/room-scenes?area_id=${encodeURIComponent(sceneAreaId)}`)
+            .then((res) => res.json())
+            .then((data) => {
+                if (data?.configured) {
+                    setRoomScenesConfigured(true);
+                    setAllowedRoomSceneIds(
+                        Array.isArray(data.entity_ids) ? data.entity_ids : []
+                    );
+                } else {
+                    setRoomScenesConfigured(false);
+                    setAllowedRoomSceneIds([]);
+                }
+            })
+            .catch((e) => console.warn('[RoomDetailView] room-scenes fetch failed:', e));
+    }, [adminUrl, sceneAreaId]);
+
+    const effectiveShowPreferences = roomShowPreferences !== null
+        ? roomShowPreferences
+        : showPreferenceButton;
+
+    const displayScripts = useMemo(() => {
+        const maxSceneSlots = MAX_QUICK_SCENES - (effectiveShowPreferences ? 1 : 0);
+        let list;
+        if (!roomScenesConfigured) {
+            list = scripts;
+        } else {
+            const allowed = new Set(allowedRoomSceneIds);
+            list = scripts.filter((s) => allowed.has(s.entity_id));
+        }
+        return list.slice(0, maxSceneSlots);
+    }, [scripts, roomScenesConfigured, allowedRoomSceneIds, effectiveShowPreferences]);
+
+    const showScenesSection =
+        scripts.length > 0 || effectiveShowPreferences || roomScenesConfigured;
     const [preferences, setPreferences] = useState([]);
     const [showAutomations, setShowAutomations] = useState(false);
     const [sourceOverlay, setSourceOverlay] = useState(null);
@@ -733,33 +791,90 @@ export default function RoomDetailView({
                 >
                     <HaSystemBanner banner={systemHealthBanner} />
 
-                    {/* ── 1. Scenes + Apply Preferences (always last in the grid) ── */}
-                    {(scripts.length > 0 || showPreferenceButton) && (
+                    {areaTabs.length > 0 && activeAreaKey && onSelectArea ? (
+                        <RoomAreasNavBar
+                            tabs={areaTabs}
+                            activeKey={activeAreaKey}
+                            onSelect={onSelectArea}
+                        />
+                    ) : null}
+
+                    {/* ── 1. Scenes + Apply Preferences ── */}
+                    {showScenesSection && (
                         <View>
-                            <Text style={styles.roomSectionHeading}>SCENES</Text>
-                            <View style={styles.grid}>
-                                {scripts.map(s => {
-                                    const scene = { id: s.entity_id, label: s.displayName };
-                                    return (
-                                        <View key={scene.id} style={{ width: cardWidth }}>
-                                            <SceneCard id={scene.id} label={scene.label} onPress={(id) => {
-                                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                                                if (onToggle) onToggle('script', 'turn_on', { entity_id: id });
-                                            }} />
-                                        </View>
-                                    );
-                                })}
-                                {/* Apply Preferences — always last */}
-                                {showPreferenceButton && (
-                                    <View style={{ width: cardWidth }}>
-                                        <ActivatePreferencesButton
-                                            roomName={formatRoomName(room.name)}
-                                            onActivate={handleActivatePreferences}
-                                            onPreferencesLoaded={setPreferences}
-                                        />
-                                    </View>
+                            <View style={styles.roomSectionHeaderRow}>
+                                <Text style={styles.roomSectionHeading}>SCENES</Text>
+                                {adminUrl && sceneAreaId && (scripts.length > 0 || roomScenesConfigured) && (
+                                    <TouchableOpacity
+                                        style={styles.roomSectionEditBtn}
+                                        onPress={() => setRoomScenesEditVisible(true)}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Edit2 size={12} color="#9199BA" />
+                                        <Text style={styles.roomSectionEditText}>Edit</Text>
+                                    </TouchableOpacity>
                                 )}
                             </View>
+                            {displayScripts.length === 0 && !effectiveShowPreferences ? (
+                                <View style={styles.scenesEmptyBox}>
+                                    <Text style={styles.scenesEmptyText}>
+                                        No scenes — tap Edit to add some
+                                    </Text>
+                                </View>
+                            ) : (
+                                <View style={styles.grid}>
+                                    {displayScripts.map(s => {
+                                        const scene = { id: s.entity_id, label: s.displayName };
+                                        return (
+                                            <View key={scene.id} style={{ width: cardWidth }}>
+                                                <SceneCard
+                                                    id={scene.id}
+                                                    label={scene.label}
+                                                    onPress={(id) => {
+                                                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                                        if (onToggle) onToggle('script', 'turn_on', { entity_id: id });
+                                                    }}
+                                                />
+                                            </View>
+                                        );
+                                    })}
+                                    {effectiveShowPreferences && (
+                                        <View style={{ width: cardWidth }}>
+                                            <ActivatePreferencesButton
+                                                roomName={formatRoomName(room.name)}
+                                                onActivate={handleActivatePreferences}
+                                                onPreferencesLoaded={setPreferences}
+                                            />
+                                        </View>
+                                    )}
+                                </View>
+                            )}
+                            {adminUrl && sceneAreaId && (
+                                <EditScenesModal
+                                    visible={roomScenesEditVisible}
+                                    onClose={() => setRoomScenesEditVisible(false)}
+                                    adminUrl={adminUrl}
+                                    scope="room"
+                                    areaId={sceneAreaId}
+                                    roomScripts={scripts}
+                                    initialShowPreferences={
+                                        roomShowPreferences !== null
+                                            ? roomShowPreferences
+                                            : showPreferenceButton
+                                    }
+                                    onSave={async (ids, opts) => {
+                                        setRoomScenesConfigured(true);
+                                        setAllowedRoomSceneIds(ids);
+                                        if (opts?.show_preferences !== undefined) {
+                                            setRoomShowPreferences(opts.show_preferences);
+                                            await SecureStore.setItemAsync(
+                                                roomScenesPrefsKey(sceneAreaId),
+                                                opts.show_preferences ? 'true' : 'false',
+                                            );
+                                        }
+                                    }}
+                                />
+                            )}
                         </View>
                     )}
 
@@ -767,7 +882,9 @@ export default function RoomDetailView({
                     {lockEntities.length > 0 && (
                         <View>
                             <View style={styles.divider} />
-                            <Text style={styles.roomSectionHeading}>HOME ACCESS</Text>
+                            <View style={styles.roomSectionHeaderRow}>
+                                <Text style={styles.roomSectionHeading}>HOME ACCESS</Text>
+                            </View>
                             <View style={styles.lockPillsRow}>
                                 {lockEntities.map(lock => {
                                     const lockState = lock.stateObj.state;
@@ -1450,13 +1567,43 @@ const styles = StyleSheet.create({
         color: Colors.text,
         marginBottom: 12,
     },
+    roomSectionHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginBottom: 12,
+        marginHorizontal: 2,
+    },
     roomSectionHeading: {
         color: '#9199BA',
         fontSize: 12,
         fontFamily: CF.semibold,
         letterSpacing: 1.4,
-        marginBottom: 12,
-        marginHorizontal: 2,
+    },
+    roomSectionEditBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    roomSectionEditText: {
+        color: '#9199BA',
+        fontSize: 12,
+        fontFamily: CF.semibold,
+        letterSpacing: 1.4,
+    },
+    scenesEmptyBox: {
+        padding: 20,
+        alignItems: 'center',
+        backgroundColor: '#12132a',
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: '#212136',
+        marginBottom: 8,
+    },
+    scenesEmptyText: {
+        color: 'rgba(237,237,245,0.35)',
+        fontSize: 13,
+        fontStyle: 'italic',
     },
     // ── Camera cards ──
     cameraCard: {

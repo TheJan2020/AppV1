@@ -5,11 +5,79 @@ import AudioToolbox
 /// Streams 16-bit LE mono PCM to AVAudioPlayerNode (Gemini Live replies @ 24 kHz).
 private final class PcmEngine {
   static let shared = PcmEngine()
+
   private var engine: AVAudioEngine?
   private var player: AVAudioPlayerNode?
   private var format: AVAudioFormat?
   private var sessionReady = false
+  private var routeObserver: NSObjectProtocol?
   private let lock = NSLock()
+
+  var onRouteChange: (([String: Any]) -> Void)?
+
+  func routeInfo() -> [String: Any] {
+    let session = AVAudioSession.sharedInstance()
+    var bluetoothConnected = false
+    var wiredHeadset = false
+    var outputName = ""
+    var outputType = ""
+
+    for output in session.currentRoute.outputs {
+      outputName = output.portName
+      outputType = output.portType.rawValue
+      if Self.isBluetoothPort(output.portType) {
+        bluetoothConnected = true
+      }
+      if Self.isWiredHeadsetPort(output.portType) {
+        wiredHeadset = true
+      }
+    }
+
+    for input in session.availableInputs ?? [] {
+      if Self.isBluetoothPort(input.portType) {
+        bluetoothConnected = true
+      }
+      if Self.isWiredHeadsetPort(input.portType) {
+        wiredHeadset = true
+      }
+    }
+
+    let hasExternal = bluetoothConnected || wiredHeadset
+    return [
+      "bluetoothConnected": bluetoothConnected,
+      "wiredHeadset": wiredHeadset,
+      "hasExternalAudio": hasExternal,
+      "outputName": outputName,
+      "outputType": outputType,
+    ]
+  }
+
+  private static func isBluetoothPort(_ type: AVAudioSession.Port) -> Bool {
+    type == .bluetoothHFP || type == .bluetoothA2DP || type == .bluetoothLE
+  }
+
+  private static func isWiredHeadsetPort(_ type: AVAudioSession.Port) -> Bool {
+    type == .headphones || type == .headsetMic
+  }
+
+  func beginRouteMonitoring() {
+    if routeObserver != nil { return }
+    routeObserver = NotificationCenter.default.addObserver(
+      forName: AVAudioSession.routeChangeNotification,
+      object: AVAudioSession.sharedInstance(),
+      queue: .main
+    ) { [weak self] _ in
+      guard let self else { return }
+      self.onRouteChange?(self.routeInfo())
+    }
+  }
+
+  func endRouteMonitoring() {
+    if let routeObserver {
+      NotificationCenter.default.removeObserver(routeObserver)
+      self.routeObserver = nil
+    }
+  }
 
   func prepare(sampleRate: Double) throws {
     lock.lock()
@@ -20,10 +88,12 @@ private final class PcmEngine {
     try session.setCategory(
       .playAndRecord,
       mode: .voiceChat,
-      options: [.allowBluetooth, .defaultToSpeaker]
+      options: [.allowBluetoothHFP, .allowBluetoothA2DP]
     )
     try session.setActive(true)
+    try session.overrideOutputAudioPort(.speaker)
     sessionReady = true
+    beginRouteMonitoring()
 
     let engine = AVAudioEngine()
     let player = AVAudioPlayerNode()
@@ -70,17 +140,23 @@ private final class PcmEngine {
     player.scheduleBuffer(buffer, completionHandler: nil)
   }
 
-  /// Switch loudspeaker vs earpiece (call only after prepare).
+  /// Switch loudspeaker vs headset/earpiece/BT (call only after prepare).
   func setRoute(_ route: String) throws {
     lock.lock()
     defer { lock.unlock() }
     guard sessionReady else { return }
 
     let session = AVAudioSession.sharedInstance()
-    if route == "SPEAKER" {
+    let useSpeaker = route.uppercased() == "SPEAKER"
+    if useSpeaker {
       try session.overrideOutputAudioPort(.speaker)
     } else {
       try session.overrideOutputAudioPort(.none)
+      if let btInput = session.availableInputs?.first(where: { Self.isBluetoothPort($0.portType) }) {
+        try session.setPreferredInput(btInput)
+      } else if let builtIn = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+        try session.setPreferredInput(builtIn)
+      }
     }
   }
 
@@ -91,6 +167,7 @@ private final class PcmEngine {
   }
 
   private func stopLocked() {
+    endRouteMonitoring()
     player?.stop()
     engine?.stop()
     player = nil
@@ -104,6 +181,24 @@ private final class PcmEngine {
 public class ExpoPcmPlayerModule: Module {
   public func definition() -> ModuleDefinition {
     Name("ExpoPcmPlayer")
+
+    Events("onAudioRouteChange")
+
+    OnStartObserving {
+      PcmEngine.shared.onRouteChange = { [weak self] info in
+        self?.sendEvent("onAudioRouteChange", info)
+      }
+      PcmEngine.shared.beginRouteMonitoring()
+    }
+
+    OnStopObserving {
+      PcmEngine.shared.onRouteChange = nil
+      PcmEngine.shared.endRouteMonitoring()
+    }
+
+    AsyncFunction("getAudioRouteInfo") { () -> [String: Any] in
+      PcmEngine.shared.routeInfo()
+    }
 
     AsyncFunction("prepare") { (sampleRate: Double) in
       try PcmEngine.shared.prepare(sampleRate: sampleRate)

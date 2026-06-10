@@ -15,6 +15,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { X, Power } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import SmoothSlider from './SmoothSlider';
+import { lightSupportsBrightness } from '../../utils/lightCapabilities';
 
 // ── CCT helpers ───────────────────────────────────────────────────────────
 const CCT_MIN = 2700;
@@ -136,6 +137,7 @@ export default function LightControlModal({ visible, onClose, light, colorCapabi
 
     const isCCT       = resolvedCapability === 'cct';
     const isRGB       = resolvedCapability === 'rgb';
+    const showBrightness = lightSupportsBrightness(attrs, { colorCapability: resolvedCapability });
     const kelvin      = pctToKelvin(cctPct);
     const [hr, hg, hb] = hueToRgb((huePct / 100) * 360);
     const hueColorStr = `rgb(${hr},${hg},${hb})`;
@@ -167,24 +169,25 @@ export default function LightControlModal({ visible, onClose, light, colorCapabi
                     </TouchableOpacity>
                 </View>
 
-                {/* Brightness */}
-                <View style={styles.section}>
-                    <View style={styles.rowBetween}>
-                        <Text style={styles.sectionLabel}>☀  Brightness</Text>
-                        <Text style={styles.valueHint}>{Math.round(brightPct)}%</Text>
+                {showBrightness && (
+                    <View style={styles.section}>
+                        <View style={styles.rowBetween}>
+                            <Text style={styles.sectionLabel}>☀  Brightness</Text>
+                            <Text style={styles.valueHint}>{Math.round(brightPct)}%</Text>
+                        </View>
+                        <ModalGradientSlider
+                            value={brightPct}
+                            max={100}
+                            gradientColors={['#1c1c3a', '#4a4a8a', '#ffffff']}
+                            thumbColor="#ffffff"
+                            onChange={setBrightPct}
+                            onRelease={(v) => {
+                                Haptics.selectionAsync();
+                                onUpdate(light.entity_id, { brightness: Math.round((v / 100) * 255) });
+                            }}
+                        />
                     </View>
-                    <ModalGradientSlider
-                        value={brightPct}
-                        max={100}
-                        gradientColors={['#1c1c3a', '#4a4a8a', '#ffffff']}
-                        thumbColor="#ffffff"
-                        onChange={setBrightPct}
-                        onRelease={(v) => {
-                            Haptics.selectionAsync();
-                            onUpdate(light.entity_id, { brightness: Math.round((v / 100) * 255) });
-                        }}
-                    />
-                </View>
+                )}
 
                 {/* ── CCT only ── */}
                 {isCCT && (

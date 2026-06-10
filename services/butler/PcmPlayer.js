@@ -18,7 +18,6 @@ export class PcmPlayer {
         this.preparePromise = null;
         this.native = null;
         this.route = 'SPEAKER';
-        this._preparingRoute = null;
     }
 
     _module() {
@@ -46,37 +45,48 @@ export class PcmPlayer {
         this.native = null;
     }
 
-    async setRoute(route) {
-        this.route = route;
-        if (!this.prepared) return;
+    async _applyRoute() {
         const mod = this._module();
         if (typeof mod.setRoute !== 'function') return;
         try {
-            await mod.setRoute(route);
+            await mod.setRoute(this.route);
+            console.log('[PcmPlayer] route ->', this.route);
         } catch (e) {
             console.warn('[PcmPlayer] setRoute', e?.message ?? e);
         }
     }
 
-    async ensurePrepared(route = 'SPEAKER') {
-        if (this.prepared && this.route === route) return;
-        if (this.preparePromise && this._preparingRoute === route) return this.preparePromise;
-        this._preparingRoute = route;
-        this.prepared = false;
+    async setRoute(route) {
+        this.route = route === 'SPEAKER' ? 'SPEAKER' : 'HEADSET';
+        if (!this.prepared) return;
+        await this._applyRoute();
+    }
+
+    async ensurePrepared(route = this.route) {
+        this.route = route === 'SPEAKER' ? 'SPEAKER' : 'HEADSET';
+
+        if (this.prepared) {
+            await this._applyRoute();
+            return;
+        }
+
+        if (this.preparePromise) {
+            await this.preparePromise;
+            await this._applyRoute();
+            return;
+        }
+
         this.preparePromise = (async () => {
             const mod = this._module();
             await mod.prepare(SAMPLE_RATE);
             this.prepared = true;
-            this.route = route;
-            if (typeof mod.setRoute === 'function' && route !== 'SPEAKER') {
-                try {
-                    await mod.setRoute(route);
-                } catch (e) {
-                    console.warn('[PcmPlayer] setRoute after prepare', e?.message ?? e);
-                }
-            }
-            this._preparingRoute = null;
+            await this._applyRoute();
         })();
-        return this.preparePromise;
+
+        try {
+            await this.preparePromise;
+        } finally {
+            this.preparePromise = null;
+        }
     }
 }

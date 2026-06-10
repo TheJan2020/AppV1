@@ -27,6 +27,11 @@ import { Heading } from '../../utils/typography';
 import LightControlModal from './LightControlModal';
 import SmoothSlider, { SMOOTH_SLIDER_THUMB as THUMB, SMOOTH_SLIDER_TRACK as TRACK } from './SmoothSlider';
 import RoomGroupIconButton from './RoomGroupIconButton';
+import {
+    getLightEffectiveCapability,
+    isMasterControllerLight,
+    lightSupportsBrightness,
+} from '../../utils/lightCapabilities';
 
 const LIGHTS_MASTER_ICON = require('../../assets/ligth_new_icon.png');
 
@@ -296,24 +301,13 @@ function ExpandedLightCard({
     onSliderDragStart, onSliderDragEnd,
 }) {
     const isOn      = light.stateObj.state === 'on';
-    const mappedCap = mapping?.colorCapability || 'normal';
     const attrs     = light.stateObj?.attributes || {};
 
-    const effectiveCapability = (() => {
-        if (mappedCap !== 'normal') return mappedCap;
-        const modes = attrs.supported_color_modes || [];
-        const hasRGBMode = modes.some(m => ['rgb', 'rgbw', 'rgbww', 'hs', 'xy'].includes(m));
-        const hasCCTMode = modes.some(m => m === 'color_temp');
-        if (hasRGBMode && hasCCTMode) return 'rgb';
-        if (hasRGBMode) return 'rgb';
-        if (hasCCTMode) return 'cct';
-        if (attrs.color_mode === 'color_temp' || attrs.color_temp_kelvin) return 'cct';
-        if (attrs.brightness !== undefined) return 'dimmable';
-        return 'normal';
-    })();
+    const effectiveCapability = getLightEffectiveCapability(light, mapping);
 
-    const hasBrightness = attrs.brightness !== undefined || ['dimmable', 'cct', 'rgb'].includes(mappedCap);
-    const haBrightness  = attrs.brightness ?? 0;
+    const supportsBrightness = lightSupportsBrightness(attrs, mapping);
+    const hasBrightness = supportsBrightness && isOn;
+    const haBrightness  = attrs.brightness ?? (isOn && supportsBrightness ? 255 : 0);
     const haPct = isOn && hasBrightness ? Math.max(1, Math.round((haBrightness / 255) * 100)) : 0;
     const masterPct = (masterBrightness != null && isOn && hasBrightness)
         ? Math.max(1, Math.round((masterBrightness / 255) * 100)) : null;
@@ -527,20 +521,19 @@ export default function LightsGroupCard({
 
     // ── effectiveCap must be declared first — used by all callbacks below ─
     const effectiveCap = useCallback((l) => {
-        const m     = lightMappings.find(m => m.entity_id === l.entity_id);
-        const cap   = m?.colorCapability || 'normal';
-        const attrs = l.stateObj?.attributes || {};
-        if (cap !== 'normal') return cap;
-        const modes = attrs.supported_color_modes || [];
-        const hasRGBMode = modes.some(m => ['rgb', 'rgbw', 'rgbww', 'hs', 'xy'].includes(m));
-        const hasCCTMode = modes.some(m => ['color_temp'].includes(m));
-        if (hasRGBMode && hasCCTMode) return 'rgb';
-        if (hasRGBMode) return 'rgb';
-        if (hasCCTMode) return 'cct';
-        if (attrs.color_mode === 'color_temp' || attrs.color_temp_kelvin) return 'cct';
-        if (attrs.brightness !== undefined) return 'dimmable';
-        return 'normal';
+        const m = lightMappings.find(x => x.entity_id === l.entity_id);
+        return getLightEffectiveCapability(l, m);
     }, [lightMappings]);
+
+    const mappingFor = useCallback(
+        (l) => lightMappings.find(m => m.entity_id === l.entity_id),
+        [lightMappings],
+    );
+
+    const supportsBrightnessFor = useCallback(
+        (l) => lightSupportsBrightness(l.stateObj?.attributes || {}, mappingFor(l)),
+        [mappingFor],
+    );
 
     const [expanded, setExpanded] = useState(false);
     const [colorModalLight, setColorModalLight] = useState(null); // { light, colorCapability }
@@ -702,7 +695,11 @@ export default function LightsGroupCard({
     // ── Derived capability flags ──────────────────────────────────────────
     const hasCCT = lights.some(l => effectiveCap(l) === 'cct');
     const hasRGB = lights.some(l => effectiveCap(l) === 'rgb');
-    const hasDimmable = lights.some(l => ['dimmable', 'cct', 'rgb'].includes(effectiveCap(l)));
+    const hasOnDimmableLights = lights.some(l =>
+        l.stateObj.state === 'on' &&
+        supportsBrightnessFor(l) &&
+        !isMasterControllerLight(l),
+    );
 
     /** Restore only when bookmark exists and live room state has drifted from it */
     const showRestoreButton = useMemo(
@@ -743,12 +740,14 @@ export default function LightsGroupCard({
     const avgBrightness = () => {
         const dimmableOn = lights.filter(l =>
             l.stateObj.state === 'on' &&
-            l.stateObj.attributes?.brightness != null &&
-            !l.entity_id.toLowerCase().includes('master_controller') &&
-            !l.displayName?.toLowerCase().includes('master controller')
+            supportsBrightnessFor(l) &&
+            !isMasterControllerLight(l)
         );
         if (!dimmableOn.length) return 0;
-        return dimmableOn.reduce((s, l) => s + l.stateObj.attributes.brightness, 0) / dimmableOn.length;
+        return dimmableOn.reduce(
+            (s, l) => s + (l.stateObj.attributes?.brightness ?? 255),
+            0,
+        ) / dimmableOn.length;
     };
     const [masterBrightness, setMasterBrightness] = useState(avgBrightness);
     // Only non-null while the master slider is being actively dragged
@@ -827,9 +826,8 @@ export default function LightsGroupCard({
         // Only operate on dimmable ON lights (exclude master controllers)
         const dimmableLights = lights.filter(l =>
             l.stateObj.state === 'on' &&
-            ['dimmable', 'cct', 'rgb'].includes(effectiveCap(l)) &&
-            !l.entity_id.toLowerCase().includes('master_controller') &&
-            !l.displayName?.toLowerCase().includes('master controller')
+            supportsBrightnessFor(l) &&
+            !isMasterControllerLight(l)
         );
 
         if (!dimmableLights.length) return;
@@ -1072,8 +1070,8 @@ export default function LightsGroupCard({
                 !l.displayName?.toLowerCase().includes('master controller')
             )} />
 
-            {/* Brightness slider — shown for any room with dimmable/CCT/RGB lights */}
-            {hasDimmable && (
+            {/* Master brightness — only when at least one ON light supports dimming */}
+            {hasOnDimmableLights && (
                 <View style={[styles.spectrumBlock, isTabletSplit && styles.spectrumBlockTabletSplit]}>
                     <BrightnessSlider
                         value={masterBrightness}
@@ -1088,7 +1086,6 @@ export default function LightsGroupCard({
                             setActiveMasterBrightness(null);
                             handleBrightnessRelease(v);
                         }}
-                        disabled={onLightsCount === 0}
                     />
                 </View>
             )}

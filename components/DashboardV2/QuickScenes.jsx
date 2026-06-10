@@ -10,6 +10,8 @@ import { authFetch } from '../../utils/authFetch';
 import { CF } from '../../utils/typography';
 import ModalBackdrop from '../ModalBackdrop';
 
+export const MAX_QUICK_SCENES = 4;
+
 // ── Icon picker ───────────────────────────────────────────────────────────────
 function getSceneIcon(name = '') {
     const n = name.toLowerCase();
@@ -21,9 +23,20 @@ function getSceneIcon(name = '') {
 }
 
 // ── Edit Modal ────────────────────────────────────────────────────────────────
-function EditScenesModal({ visible, onClose, adminUrl, onSave }) {
+export function EditScenesModal({
+    visible,
+    onClose,
+    adminUrl,
+    onSave,
+    scope = 'home',
+    areaId = null,
+    roomScripts = [],
+    defaultShowPreferences = true,
+    initialShowPreferences = true,
+}) {
     const [allScenes, setAllScenes] = useState([]);
     const [selected, setSelected]   = useState(new Set());
+    const [showPreferences, setShowPreferences] = useState(defaultShowPreferences);
     const [loading, setLoading]     = useState(false);
     const [saving, setSaving]       = useState(false);
     const [search, setSearch]       = useState('');
@@ -77,43 +90,109 @@ function EditScenesModal({ visible, onClose, adminUrl, onSave }) {
         setLoading(true);
 
         const base = adminUrl?.endsWith('/') ? adminUrl : `${adminUrl}/`;
+        const isRoom = scope === 'room' && areaId;
 
-        Promise.all([
-            authFetch(`${base}api/states`),
-            authFetch(`${base}api/quick-scenes`),
-        ])
-            .then(async ([statesRes, savedRes]) => {
-                const statesData = await statesRes.json();
-                const savedData  = await savedRes.json();
+        const loadHome = async () => {
+            const [statesRes, savedRes] = await Promise.all([
+                authFetch(`${base}api/states`),
+                authFetch(`${base}api/quick-scenes`),
+            ]);
+            const statesData = await statesRes.json();
+            const savedData = await savedRes.json();
 
-                const scripts = Array.isArray(statesData)
-                    ? statesData.filter(e => e.entity_id.startsWith('script.'))
-                    : [];
+            const scripts = Array.isArray(statesData)
+                ? statesData.filter(e => e.entity_id.startsWith('script.'))
+                : [];
 
-                const normalised = scripts.map(e => ({
-                    entity_id:     e.entity_id,
-                    friendly_name: e.attributes?.friendly_name || e.entity_id,
-                }));
-                normalised.sort((a, b) => a.friendly_name.localeCompare(b.friendly_name));
+            const normalised = scripts.map(e => ({
+                entity_id: e.entity_id,
+                friendly_name: e.attributes?.friendly_name || e.entity_id,
+            }));
+            normalised.sort((a, b) => a.friendly_name.localeCompare(b.friendly_name));
+
+            const ids = Array.isArray(savedData) ? savedData.map(s => s.entity_id) : [];
+            const savedSet = new Set(ids.slice(0, MAX_QUICK_SCENES));
+            return { normalised, savedSet, prefsOn: false };
+        };
+
+        const loadRoom = async () => {
+            const savedRes = await authFetch(
+                `${base}api/room-scenes?area_id=${encodeURIComponent(areaId)}`
+            );
+            const savedData = await savedRes.json();
+
+            const normalised = (Array.isArray(roomScripts) ? roomScripts : []).map((s) => ({
+                entity_id: s.entity_id,
+                friendly_name: s.displayName || s.name || s.entity_id,
+            }));
+            normalised.sort((a, b) => a.friendly_name.localeCompare(b.friendly_name));
+
+            const prefsOn = initialShowPreferences;
+            const maxScenes = MAX_QUICK_SCENES - (prefsOn ? 1 : 0);
+
+            let savedSet;
+            if (savedData?.configured) {
+                const ids = Array.isArray(savedData.entity_ids) ? savedData.entity_ids : [];
+                savedSet = new Set(ids.slice(0, maxScenes));
+            } else {
+                savedSet = new Set(normalised.slice(0, maxScenes).map((s) => s.entity_id));
+            }
+            return { normalised, savedSet, prefsOn };
+        };
+
+        (isRoom ? loadRoom() : loadHome())
+            .then(({ normalised, savedSet, prefsOn }) => {
                 setAllScenes(normalised);
-
-                const savedSet = new Set(
-                    Array.isArray(savedData) ? savedData.map(s => s.entity_id) : []
-                );
                 savedIdsRef.current = savedSet;
-                setSelected(new Set(savedSet));   // pre-check saved ones
+                setSelected(new Set(savedSet));
+                if (isRoom) setShowPreferences(prefsOn);
             })
             .catch(e => {
                 console.warn('[QuickScenes] fetchAll error:', e);
                 Alert.alert('Error', 'Could not load scenes from server.');
             })
             .finally(() => setLoading(false));
-    }, [visible, adminUrl]);   // eslint-disable-line react-hooks/exhaustive-deps
+    }, [visible, adminUrl, scope, areaId, roomScripts, initialShowPreferences]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+    const isRoomScope = scope === 'room' && areaId;
+    const roomItemCount = selected.size + (isRoomScope && showPreferences ? 1 : 0);
+    const maxSceneSlots = isRoomScope
+        ? MAX_QUICK_SCENES - (showPreferences ? 1 : 0)
+        : MAX_QUICK_SCENES;
+
+    const togglePreferences = () => {
+        setShowPreferences((prev) => {
+            if (prev) return false;
+            if (selected.size + 1 > MAX_QUICK_SCENES) {
+                Alert.alert(
+                    'Maximum items',
+                    `You can select up to ${MAX_QUICK_SCENES} items (scenes + preferences). Remove a scene first.`,
+                );
+                return prev;
+            }
+            return true;
+        });
+    };
 
     const toggleItem = (id) => {
         setSelected(prev => {
+            if (prev.has(id)) {
+                const next = new Set(prev);
+                next.delete(id);
+                return next;
+            }
+            const cap = isRoomScope ? maxSceneSlots : MAX_QUICK_SCENES;
+            if (prev.size >= cap) {
+                Alert.alert(
+                    isRoomScope ? 'Maximum items' : 'Maximum scenes',
+                    isRoomScope
+                        ? `You can select up to ${MAX_QUICK_SCENES} items total (${showPreferences ? 'preferences uses 1 slot' : 'including preferences if enabled'}).`
+                        : `You can select up to ${MAX_QUICK_SCENES} scenes.`,
+                );
+                return prev;
+            }
             const next = new Set(prev);
-            next.has(id) ? next.delete(id) : next.add(id);
+            next.add(id);
             return next;
         });
     };
@@ -122,26 +201,44 @@ function EditScenesModal({ visible, onClose, adminUrl, onSave }) {
     const handleSave = async () => {
         setSaving(true);
         try {
-            const base     = adminUrl?.endsWith('/') ? adminUrl : `${adminUrl}/`;
-            const savedIds = savedIdsRef.current;
+            const base = adminUrl?.endsWith('/') ? adminUrl : `${adminUrl}/`;
+            const sceneCap = isRoomScope
+                ? MAX_QUICK_SCENES - (showPreferences ? 1 : 0)
+                : MAX_QUICK_SCENES;
+            const selectedIds = Array.from(selected).slice(0, sceneCap);
 
-            const toAdd    = [...selected].filter(id => !savedIds.has(id));
-            const toRemove = [...savedIds].filter(id => !selected.has(id));
-
-            await Promise.all([
-                ...toAdd.map(id => authFetch(`${base}api/quick-scenes`, {
-                    method:  'POST',
+            if (scope === 'room' && areaId) {
+                await authFetch(`${base}api/room-scenes`, {
+                    method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
-                    body:    JSON.stringify({ entity_id: id, action: 'add' }),
-                })),
-                ...toRemove.map(id => authFetch(`${base}api/quick-scenes`, {
-                    method:  'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body:    JSON.stringify({ entity_id: id, action: 'remove' }),
-                })),
-            ]);
+                    body: JSON.stringify({
+                        area_id: areaId,
+                        entity_ids: selectedIds,
+                    }),
+                });
+                onSave(selectedIds, { show_preferences: showPreferences });
+            } else {
+                const savedIds = savedIdsRef.current;
+                const toAdd = selectedIds.filter(id => !savedIds.has(id));
+                const toRemove = [...savedIds].filter(id => !selected.has(id));
 
-            onSave(Array.from(selected));
+                await Promise.all([
+                    ...toAdd.map(id => authFetch(`${base}api/quick-scenes`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ entity_id: id, action: 'add' }),
+                    })),
+                    ...toRemove.map(id => authFetch(`${base}api/quick-scenes`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ entity_id: id, action: 'remove' }),
+                    })),
+                ]);
+            }
+
+            if (scope !== 'room') {
+                onSave(selectedIds);
+            }
             onClose();
         } catch (e) {
             console.warn('[QuickScenes] save error:', e);
@@ -177,13 +274,17 @@ function EditScenesModal({ visible, onClose, adminUrl, onSave }) {
 
                     {/* Header */}
                     <View style={modal.header}>
-                        <Text style={modal.title}>Edit Scenes</Text>
+                        <Text style={modal.title}>
+                            {scope === 'room' ? 'Edit Room Scenes' : 'Edit Scenes'}
+                        </Text>
                         <TouchableOpacity onPress={onClose} style={modal.closeBtn}>
                             <X size={18} color="#ededf5" />
                         </TouchableOpacity>
                     </View>
                     <Text style={modal.subtitle}>
-                        {allScenes.length} available · {selected.size} selected
+                        {isRoomScope
+                            ? `${allScenes.length} in room · ${roomItemCount}/${MAX_QUICK_SCENES} selected`
+                            : `${allScenes.length} available · ${selected.size}/${MAX_QUICK_SCENES} selected`}
                     </Text>
 
                     {/* Search */}
@@ -214,6 +315,32 @@ function EditScenesModal({ visible, onClose, adminUrl, onSave }) {
                             keyExtractor={item => item.entity_id}
                             contentContainerStyle={{ paddingBottom: 16 }}
                             keyboardShouldPersistTaps="handled"
+                            ListHeaderComponent={
+                                scope === 'room' ? (
+                                    <TouchableOpacity
+                                        style={[
+                                            modal.row,
+                                            showPreferences && modal.rowSelected,
+                                        ]}
+                                        onPress={togglePreferences}
+                                        activeOpacity={0.7}
+                                    >
+                                        <Text style={modal.rowLabel} numberOfLines={1}>
+                                            Apply your preferences
+                                        </Text>
+                                        <View
+                                            style={[
+                                                modal.checkCircle,
+                                                showPreferences && modal.checkCircleOn,
+                                            ]}
+                                        >
+                                            {showPreferences && (
+                                                <Check size={12} color="#fff" strokeWidth={3} />
+                                            )}
+                                        </View>
+                                    </TouchableOpacity>
+                                ) : null
+                            }
                             renderItem={({ item }) => {
                                 const isSelected = selected.has(item.entity_id);
                                 return (
@@ -247,7 +374,9 @@ function EditScenesModal({ visible, onClose, adminUrl, onSave }) {
                     >
                         {saving
                             ? <ActivityIndicator color="#fff" size="small" />
-                            : <Text style={modal.saveBtnText}>Save  ({selected.size} selected)</Text>
+                            : <Text style={modal.saveBtnText}>
+                                Save  ({isRoomScope ? roomItemCount : selected.size} selected)
+                            </Text>
                         }
                     </TouchableOpacity>
                 </Animated.View>
@@ -295,7 +424,7 @@ export default function QuickScenes({ scenes = [], onScenePress, adminUrl, onSce
                         if (w > 0 && w !== gridWidth) setGridWidth(w);
                     }}
                 >
-                    {scenes.map((scene) => (
+                    {scenes.slice(0, MAX_QUICK_SCENES).map((scene) => (
                         <View
                             key={scene.id}
                             style={[
