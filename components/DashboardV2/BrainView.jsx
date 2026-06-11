@@ -2,11 +2,13 @@ import { useState, useRef, useEffect, memo } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Keyboard, Image } from 'react-native';
 import { Colors } from '../../constants/Colors';
 import { Heading, CF } from '../../utils/typography';
-import { Send, Bot, User as UserIcon, Mic, Volume2, VolumeX, ChevronLeft } from 'lucide-react-native';
+import { Send, Bot, User as UserIcon, Mic, ChevronLeft } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { AIService } from '../../services/ai';
 import { Audio } from 'expo-av';
 import * as Speech from 'expo-speech';
+import { ButlerChatClient } from '../../services/butler/ButlerChatClient';
+import { getButlerBackendUrl, toButlerWsUrl } from '../../utils/butlerBackend';
+import { AIService } from '../../services/ai';
 
 const AI_AVATAR = require('../../assets/ai.png');
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
@@ -86,9 +88,126 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
     const [recording, setRecording] = useState(null);
     const [lockedRecording, setLockedRecording] = useState(false);
     const [permissionResponse, requestPermission] = Audio.usePermissions();
-    const [isRecordingState, setIsRecordingState] = useState(false); // Track locally for gesture
+    const [isRecordingState, setIsRecordingState] = useState(false);
     const [isKeyboardVisible, setKeyboardVisible] = useState(false);
+    const [chatStatus, setChatStatus] = useState('connecting'); // 'connecting' | 'ready' | 'error'
     const scrollViewRef = useRef();
+    const chatClientRef = useRef(null);
+    const streamingMsgIdRef = useRef(null); // id of the assistant bubble currently streaming
+    const audioModeRef = useRef(false);     // always-current audioMode for WS callbacks
+
+    // ── Butler chat WS session ──────────────────────────────────────────────
+    useEffect(() => {
+        let client = null;
+        let cancelled = false;
+
+        async function initChat() {
+            try {
+                const httpBase = await getButlerBackendUrl();
+                const wsBase = toButlerWsUrl(httpBase);
+                client = new ButlerChatClient(wsBase);
+
+                client.on('close', () => {
+                    if (!cancelled) setChatStatus('error');
+                });
+                client.on('error', () => {
+                    if (!cancelled) setChatStatus('error');
+                });
+
+                await client.connect(15000);
+                if (cancelled) { client.close(); return; }
+
+                chatClientRef.current = client;
+                setChatStatus('ready');
+
+                // Streaming text — append chunks to the current assistant bubble
+                client.on('text', ({ text }) => {
+                    // Capture the ID immediately (synchronously) when the WS frame
+                    // arrives — NOT inside the setHistory updater. React schedules
+                    // state updaters asynchronously, so by the time the updater runs
+                    // 'turn_end' may have already nulled streamingMsgIdRef.current,
+                    // causing the last chunk(s) to be silently dropped.
+                    const currentId = streamingMsgIdRef.current;
+                    if (!currentId) return;
+                    setHistory(prev =>
+                        prev.map(m =>
+                            m.id === currentId
+                                ? { ...m, content: m.content + text }
+                                : m
+                        )
+                    );
+                });
+
+                client.on('turn_end', () => {
+                    setLoading(false);
+                    streamingMsgIdRef.current = null;
+                    // Read last assistant message aloud if audio mode is on.
+                    // Use audioModeRef to avoid stale closure (this handler is
+                    // created once at mount, so `audioMode` state would be stale).
+                    if (audioModeRef.current) {
+                        setHistory(prev => {
+                            const last = [...prev].reverse().find(m => m.role === 'assistant');
+                            if (last?.content) Speech.speak(last.content, { language: 'en' });
+                            return prev;
+                        });
+                    }
+                });
+
+                client.on('tool_call_started', ({ name }) => {
+                    const currentId = streamingMsgIdRef.current;
+                    if (!currentId) return;
+                    setHistory(prev =>
+                        prev.map(m =>
+                            m.id === currentId
+                                ? { ...m, toolName: name, toolRunning: true }
+                                : m
+                        )
+                    );
+                });
+
+                client.on('tool_call_result', () => {
+                    const currentId = streamingMsgIdRef.current;
+                    if (!currentId) return;
+                    setHistory(prev =>
+                        prev.map(m =>
+                            m.id === currentId
+                                ? { ...m, toolRunning: false }
+                                : m
+                        )
+                    );
+                });
+
+                client.on('error', ({ message: errMsg }) => {
+                    // Capture the ID before nullifying it, otherwise setHistory
+                    // will see null and skip updating the bubble.
+                    const bubbleId = streamingMsgIdRef.current;
+                    setLoading(false);
+                    streamingMsgIdRef.current = null;
+                    if (bubbleId) {
+                        setHistory(prev =>
+                            prev.map(m =>
+                                m.id === bubbleId
+                                    ? { ...m, content: `Error: ${errMsg}`, isError: true }
+                                    : m
+                            )
+                        );
+                    }
+                });
+
+            } catch (e) {
+                if (!cancelled) setChatStatus('error');
+                console.error('[BrainView] Butler chat connect failed:', e.message);
+            }
+        }
+
+        initChat();
+
+        return () => {
+            cancelled = true;
+            chatClientRef.current?.close();
+            chatClientRef.current = null;
+        };
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         const keyboardDidShowListener = Keyboard.addListener(
@@ -232,138 +351,37 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
         transform: [{ translateY: lockTranslateY.value }]
     }));
 
-    const toggleAudioMode = () => {
-        const newMode = !audioMode;
-        setAudioMode(newMode);
-        if (!newMode) {
-            Speech.stop();
-        }
-    };
-
     const handleSend = async (textOverride = null) => {
         const msgContent = typeof textOverride === 'string' ? textOverride : message;
         if (!msgContent.trim() || loading) return;
 
-        const userMsg = { role: 'user', content: msgContent, timestamp: Date.now() };
+        const client = chatClientRef.current;
+        if (!client?.isConnected) {
+            setHistory(prev => [...prev, {
+                id: Date.now(),
+                role: 'assistant',
+                content: 'Butler is not connected. Please wait a moment and try again.',
+                timestamp: Date.now(),
+            }]);
+            return;
+        }
+
+        const userMsg = { id: Date.now(), role: 'user', content: msgContent, timestamp: Date.now() };
         setHistory(prev => [...prev, userMsg]);
         setMessage('');
         setLoading(true);
 
-        // Filter entities to only those assigned to an area
-        // and enrich with area name
-        const filteredContext = entities.reduce((acc, e) => {
-            const regEntity = registryEntities.find(re => re.entity_id === e.entity_id);
-            let areaId = regEntity?.area_id;
+        // Create an empty assistant bubble that will be filled by streaming chunks
+        const assistantId = Date.now() + 1;
+        streamingMsgIdRef.current = assistantId;
+        setHistory(prev => [...prev, {
+            id: assistantId,
+            role: 'assistant',
+            content: '',
+            timestamp: Date.now(),
+        }]);
 
-            // If no direct area, check device
-            if (!areaId && regEntity?.device_id) {
-                const device = registryDevices.find(d => d.id === regEntity.device_id);
-                areaId = device?.area_id;
-            }
-
-            // Always include explicitly requested domains (like camera) even if not in an area
-            const isAlwaysIncluded = e.entity_id.startsWith('camera.');
-
-            // Only include if assigned to an area OR is always included
-            if (areaId || isAlwaysIncluded) {
-                const area = areaId ? registryAreas.find(a => a.area_id === areaId) : null;
-                const areaName = area?.name || (isAlwaysIncluded ? 'General' : 'Unknown Room');
-
-                const { entity_id, state, attributes } = e;
-                // Filter out large/display-only attributes
-                const cleanAttributes = {};
-                if (attributes) {
-                    Object.keys(attributes).forEach(key => {
-                        if (!['entity_picture', 'icon', 'supported_features', 'friendly_name'].includes(key)) {
-                            cleanAttributes[key] = attributes[key];
-                        }
-                    });
-                }
-
-                acc.push({
-                    entity_id,
-                    state,
-                    name: attributes?.friendly_name || entity_id,
-                    area: areaName,
-                    attributes: cleanAttributes
-                });
-            }
-
-            return acc;
-        }, []);
-
-        const context = filteredContext;
-
-        // Check for camera mention and fetch snapshot if needed
-        let imageBase64 = null;
-
-        // Prepare list of cameras for intent detection
-        const availableCameras = entities.filter(e => e.entity_id.startsWith('camera.'));
-
-        console.log('[BrainView] Checking camera intent...');
-        const intent = await AIService.determineCameraIntent(msgContent, availableCameras);
-        console.log('[BrainView] Intent Result:', intent);
-
-        if (intent && intent.needs_camera && intent.entity_id) {
-            console.log('[BrainView] User mentioned camera:', intent.entity_id);
-            setHistory(prev => [...prev, { role: 'assistant', content: `Checking camera...` }]);
-            imageBase64 = await fetchCameraSnapshot(intent.entity_id, haUrl, haToken);
-            console.log('[BrainView] Snapshot fetched, length:', imageBase64 ? imageBase64.length : 'null');
-        } else {
-            console.log('[BrainView] No camera intent detected.');
-        }
-
-        try {
-            console.log('[BrainView] Sending message to AI. hasImage:', !!imageBase64);
-            const responseText = await AIService.sendMessage(userMsg.content, history, context, null, imageBase64);
-
-            // Check for embedded command
-            let aiMsgContent = responseText;
-            const commandRegex = /\[\[COMMAND:\s*(\{.*?\})\s*\]\]/s;
-            const match = responseText.match(commandRegex);
-
-            if (match && match[1]) {
-                try {
-                    const command = JSON.parse(match[1]);
-                    // Remove command from display text
-                    aiMsgContent = responseText.replace(match[0], '').trim();
-
-                    if (command.action === 'call_service' && command.domain && command.service) {
-                        console.log('AI Command Executing:', command);
-                        if (callService) {
-                            try {
-                                await callService(command.domain, command.service, command.service_data || {});
-                                // Optionally append success confirmation if not already in text
-                                // aiMsgContent += "\n(Done)"; 
-                            } catch (err) {
-                                console.error('Execution Error:', err);
-                                aiMsgContent += "\n[Error executing command]";
-                            }
-                        } else {
-                            aiMsgContent += "\n[Permission denied]";
-                        }
-                    }
-                } catch (e) {
-                    console.error('Failed to parse command JSON:', e);
-                }
-            }
-
-            const aiMsg = { role: 'assistant', content: aiMsgContent, timestamp: Date.now() };
-            setHistory(prev => [...prev, aiMsg]);
-
-            if (audioMode) {
-                Speech.speak(aiMsgContent, {
-                    language: 'en',
-                    pitch: 1.0,
-                    rate: 1.0
-                });
-            }
-        } catch (error) {
-            const errorMsg = { role: 'assistant', content: `Error: ${error.message}. Please check your API keys in Settings.` };
-            setHistory(prev => [...prev, errorMsg]);
-        } finally {
-            setLoading(false);
-        }
+        client.sendMessage(msgContent);
     };
 
     return (
@@ -376,10 +394,16 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
                 <TouchableOpacity onPress={onExit} style={styles.backBtn}>
                     <ChevronLeft size={26} color="#fff" />
                 </TouchableOpacity>
-                <Text style={styles.title}>PrimeBot</Text>
-                <TouchableOpacity onPress={toggleAudioMode} style={styles.audioToggle}>
-                    {audioMode ? <Volume2 size={24} color={Colors.primary} /> : <VolumeX size={24} color="rgba(255,255,255,0.3)" />}
-                </TouchableOpacity>
+                <View style={{ alignItems: 'center' }}>
+                    <Text style={styles.title}>PrimeBot</Text>
+                    {chatStatus === 'connecting' && (
+                        <Text style={styles.statusText}>Connecting…</Text>
+                    )}
+                    {chatStatus === 'error' && (
+                        <Text style={[styles.statusText, { color: '#ff6b6b' }]}>Disconnected</Text>
+                    )}
+                </View>
+                <View style={{ width: 36 }} />
             </View>
 
             <ScrollView
@@ -387,15 +411,11 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
                 contentContainerStyle={styles.chatContent}
                 onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
             >
-                {/* ... existing history map ... */}
                 {history.length === 0 && (
                     <View style={styles.emptyState}>
                         <Text style={styles.emptyText}>How can I help you with your home today?</Text>
                     </View>
                 )}
-
-                {/* Date separator */}
-                {/* Removed date from top */}
 
                 {history.map((msg, index) => {
                     const isUser = msg.role === 'user';
@@ -403,7 +423,7 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
                         ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                         : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
                     return (
-                        <View key={index} style={[styles.msgContainer, isUser ? styles.userMsgContainer : styles.aiMsgContainer]}>
+                        <View key={msg.id ?? index} style={[styles.msgContainer, isUser ? styles.userMsgContainer : styles.aiMsgContainer]}>
                             <View style={styles.bubbleWrapper}>
                                 {isUser ? (
                                     <LinearGradient
@@ -417,32 +437,27 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
                                     </LinearGradient>
                                 ) : (
                                     <LinearGradient
-                                        colors={['#602FBE', '#7B2FBE']}
+                                        colors={msg.isError ? ['#5c1a1a', '#7a2020'] : ['#602FBE', '#7B2FBE']}
                                         start={{ x: 0, y: 0 }}
                                         end={{ x: 1, y: 0 }}
                                         style={[styles.msgBubble, styles.aiBubble]}
                                     >
-                                        <Text style={styles.msgText}>{msg.content}</Text>
-                                        <Text style={styles.timeBubble}>{timeStr}</Text>
+                                        {msg.toolRunning && (
+                                            <Text style={styles.toolLabel}>⚙ {msg.toolName}…</Text>
+                                        )}
+                                        {msg.content.length > 0
+                                            ? <Text style={styles.msgText}>{msg.content}</Text>
+                                            : <TypingDots />
+                                        }
+                                        {!msg.toolRunning && msg.content.length > 0 && (
+                                            <Text style={styles.timeBubble}>{timeStr}</Text>
+                                        )}
                                     </LinearGradient>
                                 )}
                             </View>
                         </View>
                     );
                 })}
-
-                {loading && (
-                    <View style={[styles.msgContainer, styles.aiMsgContainer]}>
-                        <LinearGradient
-                            colors={['#602FBE', '#7B2FBE']}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 0 }}
-                            style={[styles.msgBubble, styles.aiBubble, styles.typingBubble]}
-                        >
-                            <TypingDots />
-                        </LinearGradient>
-                    </View>
-                )}
             </ScrollView>
 
             <View style={[styles.inputContainer, { paddingBottom: isKeyboardVisible ? 16 : 40 }]}>
@@ -508,6 +523,17 @@ const styles = StyleSheet.create({
     title: {
         ...Heading.lg,
         color: '#fff',
+    },
+    statusText: {
+        fontSize: 11,
+        color: 'rgba(255,255,255,0.4)',
+        marginTop: 2,
+    },
+    toolLabel: {
+        color: 'rgba(255,255,255,0.55)',
+        fontSize: 12,
+        marginBottom: 6,
+        fontStyle: 'italic',
     },
     chatContent: {
         paddingHorizontal: 20,

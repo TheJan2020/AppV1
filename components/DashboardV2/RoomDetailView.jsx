@@ -22,7 +22,6 @@ import CoverCard from './CoverCard';
 import MediaCard from './MediaCard';
 import MusicMediaCard from './MusicMediaCard';
 import HACamerasList from './HACamerasList';
-import RoomClimateChart from './RoomClimateChart';
 import ActivatePreferencesButton from './ActivatePreferencesButton';
 import SlideAction from './SlideAction';
 import SceneCard from './SceneCard';
@@ -632,42 +631,38 @@ export default function RoomDetailView({
                             <X size={24} color={Colors.textDim} />
                         </TouchableOpacity>
                     </View>
-                    {/* Weather / humidity / indoor temp row (compact) + device count + sensors */}
+                    {/* Weather / humidity / indoor temp row (compact) + sensors */}
                     <View style={styles.headerStatsRow}>
                         {(() => {
                             const weatherEntity = allEntities?.find(e => e.entity_id && e.entity_id.startsWith('weather.'));
-                            const temp = weatherEntity?.attributes?.temperature ?? '--';
-                            const humidityVal = (() => {
-                                const fromWeather = weatherEntity?.attributes?.humidity;
-                                if (fromWeather != null) return Math.round(fromWeather);
-                                return null;
-                            })();
-                            const indoorSensor = allEntities?.find(e => e.entity_id && (e.entity_id.includes('indoor') || e.entity_id.includes('indoor_temp') || e.entity_id.includes('temperature')));
-                            const indoorVal = (typeof indoorSensor?.state === 'string' && !isNaN(Number(indoorSensor.state))) ? Math.round(Number(indoorSensor.state)) : (mainTemp?.stateObj?.state ? Math.round(Number(mainTemp.stateObj.state)) : null);
+                            const outdoorTemp = weatherEntity?.attributes?.temperature ?? null;
+                            const outdoorHumidity = weatherEntity?.attributes?.humidity != null ? Math.round(weatherEntity.attributes.humidity) : null;
+                            const indoorTemp = mainTemp?.stateObj?.state != null && !isNaN(Number(mainTemp.stateObj.state)) ? Math.round(Number(mainTemp.stateObj.state)) : null;
+                            const indoorHumidity = mainHumidity?.stateObj?.state != null && !isNaN(Number(mainHumidity.stateObj.state)) ? Math.round(Number(mainHumidity.stateObj.state)) : null;
 
                             return (
                                 <>
-                                    <Text style={styles.subtitle}>{temp}°C</Text>
-                                    <Text style={styles.subtitle}>{humidityVal !== null ? `Humidity ${humidityVal}%` : 'Humidity --'}</Text>
-                                    {indoorVal !== null && <Text style={styles.subtitle}>{`Indoor ${indoorVal}°C`}</Text>}
-                                    <Text style={styles.subtitle}>{lights.length + fans.length} Devices available</Text>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                        <Text style={styles.subtitleLabel}>Outdoor</Text>
+                                        <Thermometer size={13} color={Colors.textDim} />
+                                        <Text style={styles.subtitle}>{outdoorTemp != null ? `${outdoorTemp}°C` : '--'}</Text>
+                                        <Droplets size={13} color={Colors.textDim} />
+                                        <Text style={styles.subtitle}>{outdoorHumidity != null ? `${outdoorHumidity}%` : '--'}</Text>
+                                    </View>
+                                    {(indoorTemp != null || indoorHumidity != null) && (
+                                        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 8 }}>
+                                            <Text style={styles.subtitleLabel}>Indoor</Text>
+                                            <Thermometer size={13} color={Colors.textDim} />
+                                            <Text style={styles.subtitle}>{indoorTemp != null ? `${indoorTemp}°C` : '--'}</Text>
+                                            <Droplets size={13} color={Colors.textDim} />
+                                            <Text style={styles.subtitle}>{indoorHumidity != null ? `${indoorHumidity}%` : '--'}</Text>
+                                        </View>
+                                    )}
                                 </>
                             );
                         })()}
 
                         <View style={styles.sensorRow}>
-                            {tempSensors.map(s => (
-                                <View key={s.entity_id} style={styles.sensorChip}>
-                                    <Thermometer size={14} color={Colors.textDim} />
-                                    <Text style={styles.sensorText}>{s.stateObj.state}{s.stateObj.attributes.unit_of_measurement}</Text>
-                                </View>
-                            ))}
-                            {humiditySensors.map(s => (
-                                <View key={s.entity_id} style={styles.sensorChip}>
-                                    <Droplets size={14} color={Colors.textDim} />
-                                    <Text style={styles.sensorText}>{s.stateObj.state}{s.stateObj.attributes.unit_of_measurement}</Text>
-                                </View>
-                            ))}
                             {doorSensors.map(d => {
                                 const isOpen = d.stateObj.state.toLowerCase() === 'open' || d.stateObj.state.toLowerCase() === 'on';
                                 return (
@@ -705,34 +700,46 @@ export default function RoomDetailView({
                             <View style={styles.headerContent}>
                                 <View>
                                     <Text style={styles.title}>{formatRoomName(room.name)}</Text>
-                                    <View style={styles.headerStatsRow}>
-                                        <Text style={styles.subtitle}>{lights.length + fans.length} Devices available</Text>
-                                        <View style={styles.sensorRow}>
-                                            {tempSensors.map(s => (
-                                                <View key={s.entity_id} style={styles.sensorChip}>
-                                                    <Thermometer size={14} color="rgba(255,255,255,0.7)" />
-                                                    <Text style={styles.sensorText}>{s.stateObj.state}{s.stateObj.attributes.unit_of_measurement}</Text>
+                                    {(() => {
+                                        const weatherEntity = allEntities?.find(e => e.entity_id && e.entity_id.startsWith('weather.'));
+                                        const outdoorTemp = weatherEntity?.attributes?.temperature ?? null;
+                                        const outdoorHumidity = weatherEntity?.attributes?.humidity != null ? Math.round(weatherEntity.attributes.humidity) : null;
+                                        const indoorTemp = mainTemp?.stateObj?.state != null && !isNaN(Number(mainTemp.stateObj.state)) ? Math.round(Number(mainTemp.stateObj.state)) : null;
+                                        const indoorHumidity = mainHumidity?.stateObj?.state != null && !isNaN(Number(mainHumidity.stateObj.state)) ? Math.round(Number(mainHumidity.stateObj.state)) : null;
+                                        return (
+                                            <View style={styles.headerStatsRow}>
+                                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                                    <Text style={styles.subtitleLabel}>Outdoor</Text>
+                                                    <Thermometer size={13} color="rgba(255,255,255,0.7)" />
+                                                    <Text style={styles.subtitle}>{outdoorTemp != null ? `${outdoorTemp}°C` : '--'}</Text>
+                                                    <Droplets size={13} color="rgba(255,255,255,0.7)" />
+                                                    <Text style={styles.subtitle}>{outdoorHumidity != null ? `${outdoorHumidity}%` : '--'}</Text>
                                                 </View>
-                                            ))}
-                                            {humiditySensors.map(s => (
-                                                <View key={s.entity_id} style={styles.sensorChip}>
-                                                    <Droplets size={14} color="rgba(255,255,255,0.7)" />
-                                                    <Text style={styles.sensorText}>{s.stateObj.state}{s.stateObj.attributes.unit_of_measurement}</Text>
-                                                </View>
-                                            ))}
-                                            {doorSensors.map(d => {
-                                                const isOpen = d.stateObj.state.toLowerCase() === 'open' || d.stateObj.state.toLowerCase() === 'on';
-                                                return (
-                                                    <View key={d.entity_id} style={styles.sensorChip}>
-                                                        {isOpen ? <DoorOpen size={14} color="#EF5350" /> : <DoorClosed size={14} color="#4CAF50" />}
-                                                        <Text style={styles.sensorText}>
-                                                            {isOpen ? 'Open' : 'Closed'}
-                                                        </Text>
+                                                {(indoorTemp != null || indoorHumidity != null) && (
+                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 8 }}>
+                                                        <Text style={styles.subtitleLabel}>Indoor</Text>
+                                                        <Thermometer size={13} color="rgba(255,255,255,0.7)" />
+                                                        <Text style={styles.subtitle}>{indoorTemp != null ? `${indoorTemp}°C` : '--'}</Text>
+                                                        <Droplets size={13} color="rgba(255,255,255,0.7)" />
+                                                        <Text style={styles.subtitle}>{indoorHumidity != null ? `${indoorHumidity}%` : '--'}</Text>
                                                     </View>
-                                                );
-                                            })}
-                                        </View>
-                                    </View>
+                                                )}
+                                                <View style={styles.sensorRow}>
+                                                    {doorSensors.map(d => {
+                                                        const isOpen = d.stateObj.state.toLowerCase() === 'open' || d.stateObj.state.toLowerCase() === 'on';
+                                                        return (
+                                                            <View key={d.entity_id} style={styles.sensorChip}>
+                                                                {isOpen ? <DoorOpen size={14} color="#EF5350" /> : <DoorClosed size={14} color="#4CAF50" />}
+                                                                <Text style={styles.sensorText}>
+                                                                    {isOpen ? 'Open' : 'Closed'}
+                                                                </Text>
+                                                            </View>
+                                                        );
+                                                    })}
+                                                </View>
+                                            </View>
+                                        );
+                                    })()}
                                 </View>
                             </View>
                         </ImageBackground>
@@ -745,34 +752,46 @@ export default function RoomDetailView({
                             <View style={styles.headerContent}>
                                 <View>
                                     <Text style={styles.title}>{formatRoomName(room.name)}</Text>
-                                    <View style={styles.headerStatsRow}>
-                                        <Text style={styles.subtitle}>{lights.length + fans.length} Devices available</Text>
-                                        <View style={styles.sensorRow}>
-                                            {tempSensors.map(s => (
-                                                <View key={s.entity_id} style={styles.sensorChip}>
-                                                    <Thermometer size={14} color="rgba(255,255,255,0.7)" />
-                                                    <Text style={styles.sensorText}>{s.stateObj.state}{s.stateObj.attributes.unit_of_measurement}</Text>
+                                    {(() => {
+                                        const weatherEntity = allEntities?.find(e => e.entity_id && e.entity_id.startsWith('weather.'));
+                                        const outdoorTemp = weatherEntity?.attributes?.temperature ?? null;
+                                        const outdoorHumidity = weatherEntity?.attributes?.humidity != null ? Math.round(weatherEntity.attributes.humidity) : null;
+                                        const indoorTemp = mainTemp?.stateObj?.state != null && !isNaN(Number(mainTemp.stateObj.state)) ? Math.round(Number(mainTemp.stateObj.state)) : null;
+                                        const indoorHumidity = mainHumidity?.stateObj?.state != null && !isNaN(Number(mainHumidity.stateObj.state)) ? Math.round(Number(mainHumidity.stateObj.state)) : null;
+                                        return (
+                                            <View style={styles.headerStatsRow}>
+                                                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                                    <Text style={styles.subtitleLabel}>Outdoor</Text>
+                                                    <Thermometer size={13} color="rgba(255,255,255,0.7)" />
+                                                    <Text style={styles.subtitle}>{outdoorTemp != null ? `${outdoorTemp}°C` : '--'}</Text>
+                                                    <Droplets size={13} color="rgba(255,255,255,0.7)" />
+                                                    <Text style={styles.subtitle}>{outdoorHumidity != null ? `${outdoorHumidity}%` : '--'}</Text>
                                                 </View>
-                                            ))}
-                                            {humiditySensors.map(s => (
-                                                <View key={s.entity_id} style={styles.sensorChip}>
-                                                    <Droplets size={14} color="rgba(255,255,255,0.7)" />
-                                                    <Text style={styles.sensorText}>{s.stateObj.state}{s.stateObj.attributes.unit_of_measurement}</Text>
-                                                </View>
-                                            ))}
-                                            {doorSensors.map(d => {
-                                                const isOpen = d.stateObj.state.toLowerCase() === 'open' || d.stateObj.state.toLowerCase() === 'on';
-                                                return (
-                                                    <View key={d.entity_id} style={styles.sensorChip}>
-                                                        {isOpen ? <DoorOpen size={14} color="#EF5350" /> : <DoorClosed size={14} color="#4CAF50" />}
-                                                        <Text style={styles.sensorText}>
-                                                            {isOpen ? 'Open' : 'Closed'}
-                                                        </Text>
+                                                {(indoorTemp != null || indoorHumidity != null) && (
+                                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 8 }}>
+                                                        <Text style={styles.subtitleLabel}>Indoor</Text>
+                                                        <Thermometer size={13} color="rgba(255,255,255,0.7)" />
+                                                        <Text style={styles.subtitle}>{indoorTemp != null ? `${indoorTemp}°C` : '--'}</Text>
+                                                        <Droplets size={13} color="rgba(255,255,255,0.7)" />
+                                                        <Text style={styles.subtitle}>{indoorHumidity != null ? `${indoorHumidity}%` : '--'}</Text>
                                                     </View>
-                                                );
-                                            })}
-                                        </View>
-                                    </View>
+                                                )}
+                                                <View style={styles.sensorRow}>
+                                                    {doorSensors.map(d => {
+                                                        const isOpen = d.stateObj.state.toLowerCase() === 'open' || d.stateObj.state.toLowerCase() === 'on';
+                                                        return (
+                                                            <View key={d.entity_id} style={styles.sensorChip}>
+                                                                {isOpen ? <DoorOpen size={14} color="#EF5350" /> : <DoorClosed size={14} color="#4CAF50" />}
+                                                                <Text style={styles.sensorText}>
+                                                                    {isOpen ? 'Open' : 'Closed'}
+                                                                </Text>
+                                                            </View>
+                                                        );
+                                                    })}
+                                                </View>
+                                            </View>
+                                        );
+                                    })()}
                                 </View>
                             </View>
                         </View>
@@ -915,15 +934,6 @@ export default function RoomDetailView({
                     )}
 
                     <View style={styles.divider} />
-
-                    {/* ── 4. Climate chart ── */}
-                    {(mainTemp || mainHumidity) && (
-                        <RoomClimateChart
-                            tempEntityId={mainTemp?.entity_id}
-                            humidityEntityId={mainHumidity?.entity_id}
-                            adminUrl={adminUrl}
-                        />
-                    )}
 
                     {/* ── Lights + Covers: tablet modal = side-by-side halves ── */}
                     {useTabletLightsCoversSplit ? (
@@ -1385,6 +1395,12 @@ const styles = StyleSheet.create({
     subtitle: {
         ...Heading.sub,
         color: 'rgba(255,255,255,0.7)',
+    },
+    subtitleLabel: {
+        ...Heading.sub,
+        color: 'rgba(255,255,255,0.5)',
+        fontWeight: '600',
+        marginRight: 2,
     },
     headerStatsRow: {
         flexDirection: 'row',

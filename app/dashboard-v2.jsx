@@ -1,5 +1,4 @@
 import { useRef, useState, useEffect, useMemo, useCallback, useContext, lazy, Suspense } from 'react';
-import * as Notifications from 'expo-notifications';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
 import NotificationModal from '../components/DashboardV2/NotificationModal';
@@ -1064,17 +1063,11 @@ export default function DashboardV2() {
         // Add to in-memory store (survives background, cleared on full kill)
         addNotification(title, body, category);
 
-        // Fire real OS notification — shows on lock screen, notification centre,
-        // and as a banner when the app is backgrounded or the screen is off.
-        Notifications.scheduleNotificationAsync({
-            content: {
-                title,
-                body,
-                sound: true,
-                data: { category, entity_notification: true },
-            },
-            trigger: null,
-        }).catch(() => {});
+        // NOTE: Do NOT call Notifications.scheduleNotificationAsync here.
+        // The backend (ha-notifier.js) already sends a push notification via
+        // Expo Push API for every HA state_changed event. Scheduling a local
+        // OS notification here as well causes every alert to appear TWICE on
+        // the device — once from the server push and once from this local call.
     }, [addNotification]);
 
     const handleVoiceAssistantPress = useCallback(async () => {
@@ -1385,7 +1378,10 @@ export default function DashboardV2() {
     }, []);
 
     const handleNetworkPress = useCallback(() => setShowNetworkModal(true), []);
-    const handleAiExit = useCallback(() => setActiveTab('home'), []);
+    const handleAiExit = useCallback(() => {
+        setActiveTab('home');
+        setAiTabVisited(false); // unmount BrainView → resets chat history + WS session
+    }, []);
     const handleOpenOpacitySettings = useCallback(() => setSettingsModalVisible(true), []);
 
     const getRoomsWithCounts = () => {

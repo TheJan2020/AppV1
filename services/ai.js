@@ -1,4 +1,6 @@
 import * as SecureStore from 'expo-secure-store';
+import { getActiveProfileConfig } from './profile';
+import { authFetch } from '../utils/authFetch';
 
 export class AIService {
     static async saveKey(provider, key) {
@@ -176,8 +178,26 @@ export class AIService {
 
     static async sendMessage(message, history = [], context = {}, model = null, image = null) {
         const activeModel = model || await this.getActiveModel();
-        const apiKey = await this.getKey(activeModel);
 
+        // ── OpenAI: route through backend (no key needed on device) ──────────
+        if (activeModel === 'openai') {
+            const config = await getActiveProfileConfig();
+            const backendUrl = config?.adminUrl;
+            if (!backendUrl) throw new Error('Backend URL not configured. Please check your profile settings.');
+
+            const response = await authFetch(`${backendUrl}/api/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message, history, context })
+            });
+
+            const data = await response.json();
+            if (!response.ok || data.error) throw new Error(data.error || 'Chat request failed');
+            return data.assistant;
+        }
+
+        // ── Anthropic / Gemini: still use device-stored key ──────────────────
+        const apiKey = await this.getKey(activeModel);
         if (!apiKey) {
             throw new Error(`No API key found for ${activeModel}`);
         }
@@ -193,9 +213,7 @@ export class AIService {
         3. Do NOT output the JSON without the special [[COMMAND: ... ]] wrapper.`;
 
         try {
-            if (activeModel === 'openai') {
-                return await this.callOpenAI(apiKey, message, history, systemPrompt, image);
-            } else if (activeModel === 'anthropic') {
+            if (activeModel === 'anthropic') {
                 return await this.callAnthropic(apiKey, message, history, systemPrompt);
             } else if (activeModel === 'gemini') {
                 return await this.callGemini(apiKey, message, history, systemPrompt);
