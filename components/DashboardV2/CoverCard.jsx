@@ -15,8 +15,8 @@ import {
     COVER_BORDER_WIDTH,
     COVER_BORDER_GRADIENT,
 } from '../../utils/coverVisualStyle';
-import { resolveCoverType, getCoverControlIcons, VERTICAL_COVER_TYPES } from '../../utils/coverControls';
-import { coversInStackOrder } from '../../utils/coverWindows';
+import { resolveCoverType, getCoverControlIcons, VERTICAL_COVER_TYPES, coverPositionFromTouchX, coverPositionFromPanelTouchX, coverPositionFromPanDelta } from '../../utils/coverControls';
+import { coversInStackOrder, inferCoverLayer, shouldShowLayerInAllTab } from '../../utils/coverWindows';
 import CoverWindowSky from './CoverWindowSky';
 
 function readCoverPosition(cover) {
@@ -378,8 +378,12 @@ const windowPleatStyles = StyleSheet.create({
 
 /** One fabric layer in the All tab stack — z-order: chiffon → blackout → shutter. */
 function StackedCoverLayer({
-    cover, zIndex, frameWidth, frameHeight, syncPosition, isDragging, groupDraggingRef,
+    cover, zIndex, stackIndex = 0, totalLayers = 1,
+    frameWidth, frameHeight, syncPosition, isDragging, groupDraggingRef,
     fabricPanelWidth, fabricPanelHeight,
+    groupSyncMode = false,
+    isOuterLayer = false,
+    outerGesture = null,
 }) {
     const visual = useMemo(() => getCoverVisualStyle(cover), [
         cover.displayName,
@@ -404,63 +408,98 @@ function StackedCoverLayer({
     }, [currentPosition, groupDraggingRef]);
 
     const panelOpacity = visual.panelOpacity ?? 1;
+    const pleatExtentWidth = isMiddle
+        ? Math.ceil(fabricPanelWidth / 2)
+        : fabricPanelWidth;
 
     const leftPanelStyle = useAnimatedStyle(() => {
         const fw = frameWidth.value;
         if (fw <= 0) return { width: 0 };
-        const pos = isDragging.value ? syncPosition.value : ownPos.value;
+        const rawPos = isOuterLayer && (groupSyncMode || isDragging.value)
+            ? syncPosition.value
+            : ownPos.value;
         const maxW = isMiddle ? fw * 0.5 : fw;
-        const fraction = Math.max(0.08, 1 - pos / 100);
+        const fraction = Math.max(0.08, 1 - rawPos / 100);
         return { width: maxW * fraction };
     });
 
     const rightPanelStyle = useAnimatedStyle(() => {
         const fw = frameWidth.value;
         if (fw <= 0) return { width: 0 };
-        const pos = isDragging.value ? syncPosition.value : ownPos.value;
+        const rawPos = isOuterLayer && (groupSyncMode || isDragging.value)
+            ? syncPosition.value
+            : ownPos.value;
         const maxW = isMiddle ? fw * 0.5 : fw;
-        const fraction = Math.max(0.08, 1 - pos / 100);
+        const fraction = Math.max(0.08, 1 - rawPos / 100);
         return { width: maxW * fraction };
     });
 
     const rollPanelStyle = useAnimatedStyle(() => {
         const fh = frameHeight.value;
         if (fh <= 0) return { height: 0 };
-        const pos = isDragging.value ? syncPosition.value : ownPos.value;
-        const fraction = 1 - pos / 100;
+        const rawPos = isOuterLayer && (groupSyncMode || isDragging.value)
+            ? syncPosition.value
+            : ownPos.value;
+        const fraction = 1 - rawPos / 100;
         return { height: Math.max(18, fh * fraction) };
     });
+
+    const layerPointerEvents = isOuterLayer ? 'auto' : 'none';
+    const showHandle = isOuterLayer;
+
+    const wrapOuterGesture = (panel) => {
+        if (isOuterLayer && outerGesture) {
+            return <GestureDetector gesture={outerGesture}>{panel}</GestureDetector>;
+        }
+        return panel;
+    };
 
     const layerBase = { zIndex, opacity: panelOpacity, overflow: 'hidden' };
 
     if (isVertical || visual.variant === 'shutter') {
-        return (
-            <Animated.View style={[curtainStyles.rollPanel, rollPanelStyle, layerBase]}>
+        const rollPanel = (
+            <Animated.View
+                style={[curtainStyles.rollPanel, rollPanelStyle, layerBase]}
+                pointerEvents={layerPointerEvents}
+            >
                 <CoverFabricFolds visual={visual} layout="rows" extentHeight={fabricPanelHeight} />
-                <View style={curtainStyles.shutterHandleWrap}>
-                    <CoverHandle variant="horizontal" />
-                </View>
+                {showHandle && (
+                    <View style={curtainStyles.shutterHandleWrap}>
+                        <CoverHandle variant="horizontal" />
+                    </View>
+                )}
             </Animated.View>
         );
+        return wrapOuterGesture(rollPanel);
     }
 
     return (
         <>
-            {showLeft && (
-                <Animated.View style={[windowPleatStyles.sidePanelAbs, windowPleatStyles.panelLeftAbs, leftPanelStyle, layerBase]}>
-                    <CoverFabricFolds visual={visual} extentWidth={fabricPanelWidth} />
-                    <View style={windowPleatStyles.handleRight}>
-                        <CoverHandle variant="vertical" />
-                    </View>
-                </Animated.View>
+            {showLeft && wrapOuterGesture(
+                <Animated.View
+                    style={[windowPleatStyles.sidePanelAbs, windowPleatStyles.panelLeftAbs, leftPanelStyle, layerBase]}
+                    pointerEvents={layerPointerEvents}
+                >
+                    <CoverFabricFolds visual={visual} extentWidth={pleatExtentWidth} />
+                    {showHandle && (
+                        <View style={windowPleatStyles.handleRight}>
+                            <CoverHandle variant="vertical" />
+                        </View>
+                    )}
+                </Animated.View>,
             )}
-            {showRight && (
-                <Animated.View style={[windowPleatStyles.sidePanelAbs, windowPleatStyles.panelRightAbs, rightPanelStyle, layerBase]}>
-                    <CoverFabricFolds visual={visual} extentWidth={fabricPanelWidth} alignRight />
-                    <View style={windowPleatStyles.handleLeft}>
-                        <CoverHandle variant="vertical" />
-                    </View>
-                </Animated.View>
+            {showRight && wrapOuterGesture(
+                <Animated.View
+                    style={[windowPleatStyles.sidePanelAbs, windowPleatStyles.panelRightAbs, rightPanelStyle, layerBase]}
+                    pointerEvents={layerPointerEvents}
+                >
+                    <CoverFabricFolds visual={visual} extentWidth={pleatExtentWidth} alignRight />
+                    {showHandle && (
+                        <View style={windowPleatStyles.handleLeft}>
+                            <CoverHandle variant="vertical" />
+                        </View>
+                    )}
+                </Animated.View>,
             )}
         </>
     );
@@ -473,25 +512,35 @@ function StackedCoverLayer({
 export function AllLayersCoverCard({
     covers, windowName, weather, onUpdate, onSliderDragStart, onSliderDragEnd,
 }) {
-    const stackedCovers = useMemo(() => coversInStackOrder(covers), [covers]);
+    const stackedCovers = useMemo(
+        () => coversInStackOrder(
+            covers.map((c) => ({
+                ...c,
+                coverLayer: inferCoverLayer(c.entity_id, c.coverLayer),
+            })),
+        ),
+        [covers],
+    );
     const frameWidth = useSharedValue(0);
     const frameHeight = useSharedValue(0);
     const syncPosition = useSharedValue(0);
     const isDragging = useSharedValue(false);
     const dragStartPos = useSharedValue(0);
 
-    const positions = useMemo(() => covers.map(readCoverPosition), [covers]);
-    const avgPosition = positions.length
-        ? Math.round(positions.reduce((s, p) => s + p, 0) / positions.length)
-        : 0;
+    const groupPosition = useMemo(() => {
+        if (!stackedCovers.length) return 0;
+        return readCoverPosition(stackedCovers[stackedCovers.length - 1]);
+    }, [stackedCovers]);
 
     const [pendingAction, setPendingAction] = useState(null);
+    const [groupDragging, setGroupDragging] = useState(false);
     const groupDraggingRef = useRef(false);
     const [fabricExtents, setFabricExtents] = useState({ w: 0, h: 0 });
     const pendingTimeoutRef = useRef(null);
 
     const setGroupDraggingFlag = useCallback((active) => {
         groupDraggingRef.current = active;
+        setGroupDragging(active);
     }, []);
 
     const anyOpening = covers.some(c => c.stateObj?.state === 'opening') || pendingAction === 'opening';
@@ -499,13 +548,13 @@ export function AllLayersCoverCard({
     const isMovingUp = anyOpening;
     const isMovingDown = anyClosing;
     const isMoving = isMovingUp || isMovingDown;
-    const isOpen = avgPosition >= 5;
+    const isOpen = groupPosition >= 5;
 
     useEffect(() => {
         if (groupDraggingRef.current) return;
         cancelAnimation(syncPosition);
-        syncPosition.value = withTiming(avgPosition, { duration: POSITION_SYNC_MS, easing: Easing.out(Easing.cubic) });
-    }, [avgPosition]);
+        syncPosition.value = withTiming(groupPosition, { duration: POSITION_SYNC_MS, easing: Easing.out(Easing.cubic) });
+    }, [groupPosition]);
 
     useEffect(() => {
         if (!pendingAction) return;
@@ -570,7 +619,14 @@ export function AllLayersCoverCard({
         opacity: arrowOpacity.value,
     }));
 
-    const panGesture = Gesture.Pan()
+    const groupCoverType = useMemo(() => {
+        if (!stackedCovers.length) return 'curtain_middle';
+        const typed = stackedCovers.find((c) => c.coverType);
+        return resolveCoverType(typed || stackedCovers[stackedCovers.length - 1]);
+    }, [stackedCovers]);
+    const isMiddleGroup = groupCoverType === 'curtain_middle';
+
+    const makePanGesture = (usePanelCoords) => Gesture.Pan()
         .minDistance(5)
         .activeOffsetX([-10, 10])
         .failOffsetY([-5, 5])
@@ -584,9 +640,19 @@ export function AllLayersCoverCard({
         .onUpdate((e) => {
             const fw = frameWidth.value;
             if (fw <= 0) return;
-            const maxW = fw * 0.5;
-            const delta = (e.translationX / maxW) * 100;
-            syncPosition.value = Math.max(0, Math.min(100, dragStartPos.value + delta));
+            if (usePanelCoords) {
+                const pos = syncPosition.value;
+                const fraction = Math.max(0.08, 1 - pos / 100);
+                const maxW = isMiddleGroup ? fw * 0.5 : fw;
+                const panelW = maxW * fraction;
+                syncPosition.value = coverPositionFromPanelTouchX(e.x, panelW, fw, groupCoverType);
+            } else if (groupCoverType === 'curtain_middle') {
+                syncPosition.value = coverPositionFromPanDelta(
+                    dragStartPos.value, e.translationX, fw, groupCoverType,
+                );
+            } else {
+                syncPosition.value = coverPositionFromTouchX(e.x, fw, groupCoverType);
+            }
         })
         .onEnd(() => {
             isDragging.value = false;
@@ -595,20 +661,28 @@ export function AllLayersCoverCard({
             runOnJS(handleAction)('set_cover_position', { position: Math.round(syncPosition.value) });
         });
 
-    const tapGesture = Gesture.Tap().onEnd((e) => {
+    const makeTapGesture = (usePanelCoords) => Gesture.Tap().onEnd((e) => {
         const fw = frameWidth.value;
         if (fw <= 0) return;
-        const halfW = fw * 0.5;
-        const distFromEdge = Math.min(e.x, fw - e.x);
-        const newPos = Math.max(0, Math.min(100, Math.round((distFromEdge / halfW) * 100)));
+        let newPos;
+        if (usePanelCoords) {
+            const pos = syncPosition.value;
+            const fraction = Math.max(0.08, 1 - pos / 100);
+            const maxW = isMiddleGroup ? fw * 0.5 : fw;
+            const panelW = maxW * fraction;
+            newPos = Math.round(coverPositionFromPanelTouchX(e.x, panelW, fw, groupCoverType));
+        } else {
+            newPos = Math.round(coverPositionFromTouchX(e.x, fw, groupCoverType));
+        }
         syncPosition.value = withTiming(newPos, { duration: 400 });
         runOnJS(handleAction)('set_cover_position', { position: newPos });
     });
 
-    const gesture = Gesture.Simultaneous(panGesture, tapGesture);
+    const outerPanelGesture = Gesture.Simultaneous(makePanGesture(true), makeTapGesture(true));
+    const frameGesture = Gesture.Simultaneous(makePanGesture(false), makeTapGesture(false));
 
     const statusText = isMovingUp ? 'Opening...' : isMovingDown ? 'Closing...' : (
-        avgPosition < 5 ? 'Closed' : avgPosition >= 95 ? 'Opened 100%' : `Opened ${avgPosition}%`
+        groupPosition < 5 ? 'Closed' : groupPosition >= 95 ? 'Opened 100%' : `Opened ${groupPosition}%`
     );
     const displayName = windowName ? `${windowName} · All` : 'All layers';
 
@@ -616,38 +690,57 @@ export function AllLayersCoverCard({
 
     return (
         <View style={curtainStyles.card}>
-            <GestureDetector gesture={gesture}>
-                <View
-                    style={curtainStyles.windowArea}
-                    onLayout={(e) => {
-                        const w = e.nativeEvent.layout.width - 4;
-                        const h = e.nativeEvent.layout.height - 4;
-                        frameWidth.value = w;
-                        frameHeight.value = h;
-                        setFabricExtents({
-                            w: Math.ceil(w * 0.5),
-                            h: Math.ceil(h),
-                        });
-                    }}
-                >
-                    <CoverGradientBorder style={windowPleatStyles.outer} borderRadius={14}>
-                        <View style={windowPleatStyles.frame}>
-                            <CoverWindowSky weather={weather} />
-                            <WindowCrossLines />
-                            {stackedCovers.map((cover, i) => (
-                                <StackedCoverLayer
-                                    key={cover.entity_id}
-                                    cover={cover}
-                                    zIndex={i + 2}
-                                    frameWidth={frameWidth}
-                                    frameHeight={frameHeight}
-                                    syncPosition={syncPosition}
-                                    isDragging={isDragging}
-                                    groupDraggingRef={groupDraggingRef}
-                                    fabricPanelWidth={fabricExtents.w}
-                                    fabricPanelHeight={fabricExtents.h}
-                                />
-                            ))}
+            <View
+                style={curtainStyles.windowArea}
+                onLayout={(e) => {
+                    const w = e.nativeEvent.layout.width - 4;
+                    const h = e.nativeEvent.layout.height - 4;
+                    frameWidth.value = w;
+                    frameHeight.value = h;
+                    setFabricExtents({
+                        w: Math.ceil(w),
+                        h: Math.ceil(h),
+                    });
+                }}
+            >
+                <CoverGradientBorder style={windowPleatStyles.outer} borderRadius={14}>
+                    <View style={windowPleatStyles.frame}>
+                        <CoverWindowSky weather={weather} />
+                        <WindowCrossLines />
+                        {stackedCovers.map((cover, i) => {
+                            const isOuter = i === stackedCovers.length - 1;
+                            const showLayer = shouldShowLayerInAllTab(stackedCovers, i)
+                                && (isOuter || !groupDragging);
+                            if (!showLayer) return null;
+                            return (
+                            <StackedCoverLayer
+                                key={cover.entity_id}
+                                cover={cover}
+                                zIndex={i + 2}
+                                stackIndex={i}
+                                totalLayers={stackedCovers.length}
+                                frameWidth={frameWidth}
+                                frameHeight={frameHeight}
+                                syncPosition={syncPosition}
+                                isDragging={isDragging}
+                                groupDraggingRef={groupDraggingRef}
+                                fabricPanelWidth={fabricExtents.w}
+                                fabricPanelHeight={fabricExtents.h}
+                                groupSyncMode={isOuter}
+                                isOuterLayer={isOuter}
+                                outerGesture={
+                                    !isMiddleGroup && isOuter
+                                        ? outerPanelGesture
+                                        : null
+                                }
+                            />
+                            );
+                        })}
+                        {isMiddleGroup && (
+                            <GestureDetector gesture={frameGesture}>
+                                <View style={curtainStyles.allTabFrameTouch} />
+                            </GestureDetector>
+                        )}
                             {isMoving && (
                                 <>
                                     <Animated.View style={[curtainStyles.arrowOverlayLeft, arrowAnimStyle]} pointerEvents="none">
@@ -664,12 +757,11 @@ export function AllLayersCoverCard({
                             )}
                         </View>
                     </CoverGradientBorder>
-                </View>
-            </GestureDetector>
+            </View>
             <CoverCardFooter
                 name={displayName}
                 status={statusText}
-                coverType="curtain_middle"
+                coverType={groupCoverType}
                 isOpen={isOpen}
                 onClose={() => handleAction('close')}
                 onOpen={() => handleAction('open')}
@@ -881,12 +973,13 @@ function HorizontalCurtainCard({ cover, sensor, weather, onUpdate, needsChange, 
         .onUpdate((e) => {
             const fw = frameWidth.value;
             if (fw <= 0) return;
-            const maxW = isMiddle ? fw * 0.5 : fw;
-            // curtain_left: panel hangs from left edge — drag left = open (pull panel away), drag right = close
-            // curtain_right / curtain_middle: drag right = open, drag left = close
-            const sign = (!isMiddle && !isRight) ? -1 : 1;
-            const delta = sign * (e.translationX / maxW) * 100;
-            visualPos.value = Math.max(0, Math.min(100, dragStartPos.value + delta));
+            if (coverType === 'curtain_middle') {
+                visualPos.value = coverPositionFromPanDelta(
+                    dragStartPos.value, e.translationX, fw, coverType,
+                );
+            } else {
+                visualPos.value = coverPositionFromTouchX(e.x, fw, coverType);
+            }
         })
         .onEnd(() => {
             isDragging.value = false;
@@ -927,25 +1020,7 @@ function HorizontalCurtainCard({ cover, sensor, weather, onUpdate, needsChange, 
         .onEnd((e) => {
             const fw = frameWidth.value;
             if (fw <= 0) return;
-            // x=0 → fully closed (pos=0), x=fw → fully open (pos=100)
-            // For left-only curtain: left edge = closed, right edge = open
-            // For right-only or middle: mirror — right edge = closed side
-            let newPos;
-            if (isMiddle) {
-                // In middle mode both panels move symmetrically; treat centre as 0
-                const halfW = fw * 0.5;
-                const distFromEdge = Math.min(e.x, fw - e.x);
-                newPos = Math.round((distFromEdge / halfW) * 100);
-            } else if (isRight) {
-                // right panel: right edge = closed
-                newPos = Math.round(((fw - e.x) / fw) * 100);
-                newPos = 100 - newPos; // invert so tapping left = more open
-            } else {
-                // left panel: left edge = closed, right = open
-                newPos = Math.round((e.x / fw) * 100);
-                newPos = 100 - newPos;
-            }
-            newPos = Math.max(0, Math.min(100, newPos));
+            const newPos = Math.round(coverPositionFromTouchX(e.x, fw, coverType));
             visualPos.value = withTiming(newPos, { duration: 400 });
             runOnJS(handleAction)('set_cover_position', { position: newPos });
         });
@@ -1376,6 +1451,10 @@ const curtainStyles = StyleSheet.create({
         width: '100%',
         flex: 1,
         marginBottom: 4,
+    },
+    allTabFrameTouch: {
+        ...StyleSheet.absoluteFillObject,
+        zIndex: 12,
     },
     windowFrameBorder: {
         flex: 1,

@@ -69,18 +69,78 @@ export function getCoverControlIcons(coverType, isOpen) {
     }
 
     if (coverType === 'curtain_left') {
-        return isOpen
-            ? { close: 'right', open: 'right' }
-            : { close: 'left', open: 'left' };
+        // Panel hangs left — close expands →, open pulls back ←
+        return { close: 'right', open: 'left' };
     }
 
     if (coverType === 'curtain_right') {
-        return isOpen
-            ? { close: 'left', open: 'left' }
-            : { close: 'right', open: 'right' };
+        // Panel hangs right — close expands →, open pulls back ←
+        return { close: 'right', open: 'left' };
     }
 
     return isOpen
         ? { close: 'right', open: 'left' }
         : { close: 'left', open: 'right' };
+}
+
+/**
+ * Map touch X (view coords) to cover open percentage 0–100.
+ * Matches panel/handle layout for middle, left-hung, and right-hung curtains.
+ */
+export function coverPositionFromTouchX(x, frameWidth, coverType) {
+    'worklet';
+    const fw = frameWidth;
+    if (!fw || fw <= 0) return 0;
+
+    let pos;
+    if (coverType === 'curtain_middle') {
+        const halfW = fw * 0.5;
+        const distFromEdge = Math.min(x, fw - x);
+        pos = (distFromEdge / halfW) * 100;
+    } else if (coverType === 'curtain_right') {
+        pos = 100 - ((fw - x) / fw) * 100;
+    } else if (coverType === 'curtain_left') {
+        pos = 100 - (x / fw) * 100;
+    } else {
+        const halfW = fw * 0.5;
+        const distFromEdge = Math.min(x, fw - x);
+        pos = (distFromEdge / halfW) * 100;
+    }
+
+    return Math.max(0, Math.min(100, pos));
+}
+
+/**
+ * Pan delta for middle curtains — drag right spreads panels (opens), drag left closes.
+ * Left/right curtains use absolute touch via coverPositionFromTouchX.
+ */
+export function coverPositionFromPanDelta(startPos, translationX, frameWidth, coverType) {
+    'worklet';
+    const fw = frameWidth;
+    if (!fw || fw <= 0) return startPos;
+    const maxW = coverType === 'curtain_middle' ? fw * 0.5 : fw;
+    const delta = (translationX / maxW) * 100;
+    return Math.max(0, Math.min(100, startPos + delta));
+}
+
+/** Map touch X inside an outer panel to frame coords (for All-tab drag on top layer only). */
+export function coverPositionFromPanelTouchX(xInPanel, panelWidth, frameWidth, coverType) {
+    'worklet';
+    const fw = frameWidth;
+    if (!fw || fw <= 0) return 0;
+
+    let frameX = xInPanel;
+    if (coverType === 'curtain_right') {
+        frameX = fw - panelWidth + xInPanel;
+    } else if (coverType === 'curtain_middle') {
+        const halfW = fw * 0.5;
+        if (xInPanel <= panelWidth) {
+            frameX = xInPanel;
+        } else {
+            frameX = fw - panelWidth + (xInPanel - (fw - panelWidth));
+        }
+    }
+    // curtain_left: panel anchored left, xInPanel is already frame X
+
+    return coverPositionFromTouchX(frameX, fw, coverType);
 }

@@ -261,6 +261,7 @@ export default function DashboardV2Tablet() {
                 if (data.success && Array.isArray(data.covers)) {
                     console.log(`[Cover Mappings] Loaded: ${data.covers.length}`);
                     setCoverMappings(data.covers);
+                    setCoverWindows(data.windows || []);
                 }
             })
             .catch(e => { if (e.name !== 'AbortError') console.log("Cover Mappings Error", e); });

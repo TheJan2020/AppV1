@@ -18,7 +18,7 @@ import {
     useWindowDimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Power, ChevronDown, ChevronUp, Bookmark, BookmarkCheck, Zap, Sun } from 'lucide-react-native';
+import { Power, ChevronDown, ChevronUp, Bookmark, BookmarkCheck, Zap } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { SvgUri } from 'react-native-svg';
 import * as SecureStore from 'expo-secure-store';
@@ -33,7 +33,13 @@ import {
     lightSupportsBrightness,
 } from '../../utils/lightCapabilities';
 
+function entityStateOn(allEntities, entityId) {
+    if (!entityId || !Array.isArray(allEntities)) return false;
+    return allEntities.find((e) => e.entity_id === entityId)?.state === 'on';
+}
+
 const LIGHTS_MASTER_ICON = require('../../assets/ligth_new_icon.png');
+const SUN_REFLECTIVE_MODE_ICON = require('../../assets/sun_reflective_mode.png');
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -198,15 +204,26 @@ function BrightnessSlider({ value, onChange, onRelease, onDragStart, onDragEnd, 
 
 const SPECTRUM_ICON = 28; // circular CCT / RGB chips (px)
 
-function SpectrumSlider({ value, colors, thumbColor, label, onChange, onRelease, onDragStart, onDragEnd, active = true, onIconPress, compact = false }) {
-    // active = true  → white balance / hue follow the main light level (“sun” / brightness drives it)
-    // active = false → you drag this spectrum manually (CCT: yellow↔white disc; RGB: round rainbow)
+function SpectrumSlider({ value, colors, thumbColor, label, onChange, onRelease, onDragStart, onDragEnd, active = false, onIconPress, compact = false }) {
+    // active = true  → Sun Reflective Mode pill (adaptive lighting on)
+    // active = false → manual CCT / RGB icon + slider
     const isCct = String(label).toUpperCase() === 'CCT';
     const discR = SPECTRUM_ICON / 2;
 
-    // Linked: warm yellow sun (brightness drives spectrum)
-    const sunLinkedStroke = '#C9A227';
-    const sunLinkedFill = '#FFE082';
+    if (active) {
+        return (
+            <View style={[styles.spectrumBlock, compact && styles.spectrumBlockTabletSplit]}>
+                <TouchableOpacity
+                    style={styles.sunReflectivePill}
+                    onPress={onIconPress}
+                    activeOpacity={0.75}
+                >
+                    <Image source={SUN_REFLECTIVE_MODE_ICON} style={styles.sunReflectiveIcon} />
+                    <Text style={styles.sunReflectiveText}>Sun Reflective Mode</Text>
+                </TouchableOpacity>
+            </View>
+        );
+    }
 
     const discShell = [
         styles.spectrumRoundDisc,
@@ -214,15 +231,7 @@ function SpectrumSlider({ value, colors, thumbColor, label, onChange, onRelease,
     ];
     const discGradientFill = [StyleSheet.absoluteFillObject, { borderRadius: discR }];
 
-    const modeIcon = active ? (
-        <Sun
-            size={26}
-            color={sunLinkedStroke}
-            fill={sunLinkedFill}
-            stroke={sunLinkedStroke}
-            strokeWidth={1.5}
-        />
-    ) : isCct ? (
+    const modeIcon = isCct ? (
         <View style={discShell}>
             <LinearGradient
                 colors={['#FFEB3B', '#FFF9C4', '#FFFFFF']}
@@ -263,12 +272,11 @@ function SpectrumSlider({ value, colors, thumbColor, label, onChange, onRelease,
                         colors={colors}
                         start={{ x: 0, y: 0.5 }}
                         end={{ x: 1, y: 0.5 }}
-                        style={[styles.spectrumTrack, active && { opacity: 0.25 }]}
+                        style={styles.spectrumTrack}
                     />
                 }
-                thumbColor={active ? 'rgba(255,255,255,0.2)' : thumbColor}
+                thumbColor={thumbColor}
                 thumbBorder
-                disabled={active}
             />
         </View>
     );
@@ -506,6 +514,13 @@ function ExpandedLightCard({
 // ── Main component ────────────────────────────────────────────────────────
 export default function LightsGroupCard({
     lights = [], lightMappings = [], adminUrl, roomName = '',
+    allEntities = [],
+    adaptiveLightingCct = null,
+    adaptiveLightingRgb = null,
+    onAdaptiveCctToggle,
+    onAdaptiveRgbToggle,
+    onAdaptiveCctManualColor,
+    onAdaptiveRgbManualColor,
     onToggle, onBrightnessChange, onColorTempChange, onRgbChange, onLongPress, onTurnOn,
     onSliderDragStart, onSliderDragEnd,
     contentWidth,
@@ -537,8 +552,24 @@ export default function LightsGroupCard({
 
     const [expanded, setExpanded] = useState(false);
     const [colorModalLight, setColorModalLight] = useState(null); // { light, colorCapability }
-    const [cctActive, setCctActive] = useState(true);
-    const [rgbActive, setRgbActive] = useState(true);
+    const [cctActive, setCctActive] = useState(false);
+    const [rgbActive, setRgbActive] = useState(false);
+
+    const cctMainId = adaptiveLightingCct?.main?.entity_id;
+    const rgbMainId = adaptiveLightingRgb?.main?.entity_id;
+    const hasAdaptiveCct = !!cctMainId;
+    const hasAdaptiveRgb = !!rgbMainId;
+
+    /** Sun + disabled slider when HA "Adaptive Lighting: CCT/RGB" main switch is on. */
+    const cctSunLinked = useMemo(() => {
+        if (cctMainId) return entityStateOn(allEntities, cctMainId);
+        return cctActive;
+    }, [allEntities, cctMainId, cctActive]);
+
+    const rgbSunLinked = useMemo(() => {
+        if (rgbMainId) return entityStateOn(allEntities, rgbMainId);
+        return rgbActive;
+    }, [allEntities, rgbMainId, rgbActive]);
 
     const { width: windowWidth } = useWindowDimensions();
     /** RoomDetailView `content` uses padding 20+20; this card uses paddingHorizontal 18+18 */
@@ -894,6 +925,9 @@ export default function LightsGroupCard({
     }, [lights, lightMappings, onBrightnessChange]);
 
     const handleCCTRelease = useCallback((pct) => {
+        if (cctSunLinked) {
+            onAdaptiveCctManualColor?.();
+        }
         blockSync(cctBlocked, cctBlockTimer);
         const kelvin = pctToKelvin(pct);
         if (isMasterController) {
@@ -909,9 +943,12 @@ export default function LightsGroupCard({
                 if (cap === 'cct' || cap === 'rgb') onColorTempChange?.(l.entity_id, kelvin);
             });
         }
-    }, [lights, lightMappings, onColorTempChange, isMasterController]);
+    }, [lights, lightMappings, onColorTempChange, isMasterController, cctSunLinked, onAdaptiveCctManualColor]);
 
     const handleRGBRelease = useCallback((pct) => {
+        if (rgbSunLinked) {
+            onAdaptiveRgbManualColor?.();
+        }
         blockSync(rgbBlocked, rgbBlockTimer);
         const hue = (pct / 100) * 360;
         const rgb = hueToRgb(hue);
@@ -927,7 +964,7 @@ export default function LightsGroupCard({
                 if (effectiveCap(l) === 'rgb') onRgbChange?.(l.entity_id, rgb);
             });
         }
-    }, [lights, lightMappings, onRgbChange, isMasterController]);
+    }, [lights, lightMappings, onRgbChange, isMasterController, rgbSunLinked, onAdaptiveRgbManualColor]);
 
     const toggle = () => {
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -947,6 +984,43 @@ export default function LightsGroupCard({
         const [r, g, b] = hueToRgb((masterRGBPct / 100) * 360);
         return `rgb(${r},${g},${b})`;
     })();
+
+    const handleCctSunPress = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        if (hasAdaptiveCct) {
+            onAdaptiveCctToggle?.();
+        } else {
+            setCctActive((v) => !v);
+        }
+    };
+
+    const handleRgbSunPress = () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        if (hasAdaptiveRgb) {
+            onAdaptiveRgbToggle?.();
+        } else {
+            setRgbActive((v) => !v);
+        }
+    };
+
+    const cctSpectrumSlider = (compact = false) => (
+        <SpectrumSlider
+            label="CCT"
+            value={masterCCTPct}
+            colors={['#FF9F43', '#FFE082', '#FFF8E1', '#D6F5FF', '#A8CFFF']}
+            thumbColor={cctThumbColor}
+            onChange={setMasterCCTPct}
+            onDragStart={() => {
+                blockSync(cctBlocked, cctBlockTimer);
+                onSliderDragStart?.();
+            }}
+            onDragEnd={onSliderDragEnd}
+            onRelease={handleCCTRelease}
+            active={cctSunLinked}
+            onIconPress={handleCctSunPress}
+            compact={compact}
+        />
+    );
 
     // ── Find master controller entity ─────────────────────────────────────
     const masterLight = lights.find(l =>
@@ -1090,6 +1164,8 @@ export default function LightsGroupCard({
                 </View>
             )}
 
+            {hasCCT && masterHasCCT && cctSpectrumSlider(isTabletSplit)}
+
             {/* Chevron */}
             <TouchableOpacity style={styles.chevron} onPress={toggle} activeOpacity={0.7}>
                 {expanded
@@ -1100,27 +1176,7 @@ export default function LightsGroupCard({
             {/* Expanded — CCT/RGB + per-light grid */}
             {expanded && (
                 <>
-            {hasCCT && (
-                <SpectrumSlider
-                    label="CCT"
-                    value={masterCCTPct}
-                    colors={['#FF9F43', '#FFE082', '#FFF8E1', '#D6F5FF', '#A8CFFF']}
-                    thumbColor={cctThumbColor}
-                    onChange={setMasterCCTPct}
-                    onDragStart={() => {
-                        blockSync(cctBlocked, cctBlockTimer);
-                        onSliderDragStart?.();
-                    }}
-                    onDragEnd={onSliderDragEnd}
-                    onRelease={handleCCTRelease}
-                    active={cctActive}
-                    onIconPress={() => {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        setCctActive(v => !v);
-                    }}
-                    compact={isTabletSplit}
-                />
-            )}
+            {hasCCT && !masterHasCCT && cctSpectrumSlider(isTabletSplit)}
 
             {hasRGB && (
                 <SpectrumSlider
@@ -1139,11 +1195,8 @@ export default function LightsGroupCard({
                     }}
                     onDragEnd={onSliderDragEnd}
                     onRelease={handleRGBRelease}
-                    active={rgbActive}
-                    onIconPress={() => {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        setRgbActive(v => !v);
-                    }}
+                    active={rgbSunLinked}
+                    onIconPress={handleRgbSunPress}
                     compact={isTabletSplit}
                 />
             )}
@@ -1302,6 +1355,26 @@ const styles = StyleSheet.create({
     },
     spectrumBlockTabletSplit: {
         marginBottom: 6,
+    },
+    sunReflectivePill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        alignSelf: 'stretch',
+        backgroundColor: '#09091A',
+        borderRadius: 999,
+        paddingVertical: 10,
+        paddingHorizontal: 14,
+        gap: 10,
+    },
+    sunReflectiveIcon: {
+        width: 22,
+        height: 22,
+        resizeMode: 'contain',
+    },
+    sunReflectiveText: {
+        color: '#9199BA',
+        fontSize: 14,
+        fontWeight: '500',
     },
     spectrumIcon: {
         marginBottom: 4, marginLeft: 2,

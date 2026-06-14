@@ -6,6 +6,8 @@
  * @param {object|null} stateObj — live state for `mass_player_type`
  * @param {string[]|Set|null} musicAssistantConfigEntryIds — `entry_id`s where domain is `music_assistant`
  */
+import { inferCoverLayer, findCoverMapping } from './coverWindows';
+
 export function isMusicAssistantMediaPlayer(re, stateObj, musicAssistantConfigEntryIds = null) {
     const ids =
         musicAssistantConfigEntryIds instanceof Set
@@ -110,14 +112,14 @@ export const getRoomEntities = (
     const mapEntity = (reg) => {
         const stateObj = safeAllEntities.find(e => e.entity_id === reg.entity_id);
         const mapping = safeSensorMappings.find(m => m.entity_id === reg.entity_id);
-        const coverMapping = safeCoverMappings.find(m => m.entity_id === reg.entity_id);
+        const coverMapping = findCoverMapping(reg.entity_id, safeCoverMappings);
         return {
             ...reg,
             stateObj: stateObj || { state: 'unavailable', attributes: {} },
             displayName: reg.name || reg.original_name || stateObj?.attributes?.friendly_name || reg.entity_id,
             sensorType: mapping?.sensorType || null,
             coverType: coverMapping?.coverType || null,
-            coverLayer: coverMapping?.coverLayer || null,
+            coverLayer: inferCoverLayer(reg.entity_id, coverMapping?.coverLayer),
             windowId: coverMapping?.windowId || null,
             linkedSensorId: coverMapping?.linkedSensorId || null
         };
