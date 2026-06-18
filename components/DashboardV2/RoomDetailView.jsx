@@ -4,7 +4,7 @@ import { BlurView } from 'expo-blur';
 import { X, Lightbulb, Fan, ChevronLeft, Droplets, Thermometer, DoorOpen, DoorClosed, Lock, LockOpen, Power, Play, Zap, ChevronDown, ChevronUp, Monitor, Edit2 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '../../constants/Colors';
-import { CF, Heading, RoomDeviceStatus } from '../../utils/typography';
+import { CF, Heading } from '../../utils/typography';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { authFetch } from '../../utils/authFetch';
 import { useParentScrollLock } from '../../hooks/useParentScrollLock';
@@ -28,7 +28,7 @@ import SceneCard from './SceneCard';
 import { EditScenesModal, MAX_QUICK_SCENES } from './QuickScenes';
 import LightsGroupCard from './LightsGroupCard';
 import CoversGroupCard from './CoversGroupCard';
-import RoomGroupIconButton, { ROOM_GROUP_ICON_GLYPH_SIZE } from './RoomGroupIconButton';
+import RoomGroupIconButton from './RoomGroupIconButton';
 import { LockPill } from './HomeAccess';
 import useDeviceType from '../../hooks/useDeviceType';
 import { lightSupportsBrightness } from '../../utils/lightCapabilities';
@@ -613,7 +613,7 @@ export default function RoomDetailView({
                                 return (
                                     <View key={d.entity_id} style={styles.sensorChip}>
                                         {isOpen ? <DoorOpen size={14} color="#EF5350" /> : <DoorClosed size={14} color="#4CAF50" />}
-                                        <Text style={styles.doorStatusText}>
+                                        <Text style={styles.sensorText}>
                                             {isOpen ? 'Open' : 'Closed'}
                                         </Text>
                                     </View>
@@ -668,7 +668,7 @@ export default function RoomDetailView({
                                 return (
                                     <View key={d.entity_id} style={styles.sensorChip}>
                                         {isOpen ? <DoorOpen size={14} color="#EF5350" /> : <DoorClosed size={14} color="#4CAF50" />}
-                                        <Text style={styles.doorStatusText}>
+                                        <Text style={styles.sensorText}>
                                             {isOpen ? 'Open' : 'Closed'}
                                         </Text>
                                     </View>
@@ -730,7 +730,7 @@ export default function RoomDetailView({
                                                         return (
                                                             <View key={d.entity_id} style={styles.sensorChip}>
                                                                 {isOpen ? <DoorOpen size={14} color="#EF5350" /> : <DoorClosed size={14} color="#4CAF50" />}
-                                                                <Text style={styles.doorStatusText}>
+                                                                <Text style={styles.sensorText}>
                                                                     {isOpen ? 'Open' : 'Closed'}
                                                                 </Text>
                                                             </View>
@@ -782,7 +782,7 @@ export default function RoomDetailView({
                                                         return (
                                                             <View key={d.entity_id} style={styles.sensorChip}>
                                                                 {isOpen ? <DoorOpen size={14} color="#EF5350" /> : <DoorClosed size={14} color="#4CAF50" />}
-                                                                <Text style={styles.doorStatusText}>
+                                                                <Text style={styles.sensorText}>
                                                                     {isOpen ? 'Open' : 'Closed'}
                                                                 </Text>
                                                             </View>
@@ -1106,9 +1106,10 @@ export default function RoomDetailView({
                                     <View style={styles.mediaSectionWrap}>
                                         <View style={styles.mediaSectionHeader}>
                                             <RoomGroupIconButton
+                                                size={40}
                                                 accessibilityLabel="Media section"
                                             >
-                                                <Monitor size={ROOM_GROUP_ICON_GLYPH_SIZE} color="#fff" strokeWidth={2.2} />
+                                                <Monitor size={18} color="#fff" strokeWidth={2.2} />
                                             </RoomGroupIconButton>
                                             <Text style={styles.mediaSectionTitle}>Media</Text>
                                         </View>
@@ -1428,11 +1429,6 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         color: 'rgba(255,255,255,0.8)'
     },
-    doorStatusText: {
-        ...RoomDeviceStatus,
-        fontSize: 12,
-        color: 'rgba(255,255,255,0.8)',
-    },
     divider: {
         height: 1,
         backgroundColor: 'rgba(255,255,255,0.1)',
@@ -1569,9 +1565,9 @@ const styles = StyleSheet.create({
         marginBottom: 2,
     },
     lightState: {
-        ...RoomDeviceStatus,
         color: Colors.textDim,
         fontSize: 13,
+        fontFamily: CF.medium,
     },
     emptyState: {
         alignItems: 'center',
@@ -1644,7 +1640,6 @@ const styles = StyleSheet.create({
         alignItems: 'center',
     },
     cameraOffText: {
-        ...RoomDeviceStatus,
         color: 'rgba(255,255,255,0.3)',
         fontSize: 12,
     },
