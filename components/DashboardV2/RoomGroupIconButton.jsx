@@ -1,6 +1,12 @@
 import { TouchableOpacity, View, StyleSheet } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 
+/** Standard diameter for Lights / Covers / Climate / Media section master icons. */
+export const ROOM_GROUP_ICON_SIZE = 52;
+
+/** Lucide / image glyph size inside {@link ROOM_GROUP_ICON_SIZE} buttons. */
+export const ROOM_GROUP_ICON_GLYPH_SIZE = 26;
+
 /** Figma room group header icon — linear-gradient(90deg, #602FBE 0%, #7B2FBE 100%) */
 export const ROOM_GROUP_ICON_GRADIENT = ['#602FBE', '#7B2FBE'];
 
@@ -18,7 +24,7 @@ export default function RoomGroupIconButton({
     active = false,
     onPress,
     disabled,
-    size = 52,
+    size = ROOM_GROUP_ICON_SIZE,
     style,
     accessibilityLabel,
 }) {
@@ -29,9 +35,9 @@ export default function RoomGroupIconButton({
             width: size,
             height: size,
             borderRadius: radius,
-            marginRight: size >= 52 ? 14 : 0,
+            marginRight: 14,
         },
-        active && styles.wrapActive,
+        active ? styles.wrapActive : styles.wrapInactive,
         style,
     ];
     const inner = (
@@ -63,17 +69,18 @@ export default function RoomGroupIconButton({
 
 const styles = StyleSheet.create({
     wrap: {
-        borderWidth: 1.5,
-        borderColor: 'rgba(137, 71, 202, 0.55)',
-        shadowColor: '#8947ca',
-        shadowOffset: { width: 0, height: 0 },
-        shadowOpacity: 0.32,
-        shadowRadius: 5,
-        elevation: 2,
         overflow: 'hidden',
     },
+    wrapInactive: {
+        borderWidth: 0,
+        shadowOpacity: 0,
+        elevation: 0,
+    },
     wrapActive: {
+        borderWidth: 1.5,
         borderColor: 'rgba(255, 255, 255, 0.45)',
+        shadowColor: '#8947ca',
+        shadowOffset: { width: 0, height: 0 },
         shadowOpacity: 0.6,
         shadowRadius: 9,
         elevation: 4,

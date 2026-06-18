@@ -12,6 +12,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Headphones, PhoneOff, Volume2 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Heading, CF } from '../../utils/typography';
+import { PrimeBotIcon } from './TabBarIcons';
 import { ROOM_GROUP_ICON_GRADIENT_PROPS } from './RoomGroupIconButton';
 import { getButlerBackendUrl, toButlerWsUrl } from '../../utils/butlerBackend';
 import { ButlerVoiceSession } from '../../services/butler/ButlerVoiceSession';
@@ -33,7 +34,7 @@ const PHASE_LABEL = {
     error: 'Call failed',
 };
 
-function ButlerVoiceModal({ visible, onClose, context }) {
+function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
     const [phase, setPhase] = useState('ringing');
     const [audioRoute, setAudioRoute] = useState('SPEAKER');
     const [routeHint, setRouteHint] = useState('');
@@ -59,6 +60,12 @@ function ButlerVoiceModal({ visible, onClose, context }) {
         await stopSession();
         onClose?.();
     }, [stopSession, onClose]);
+
+    const switchToChat = useCallback(async () => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        await stopSession();
+        onSwitchToChat?.();
+    }, [stopSession, onSwitchToChat]);
 
     const applyRoute = useCallback(async (route) => {
         audioRouteRef.current = route;
@@ -352,13 +359,26 @@ function ButlerVoiceModal({ visible, onClose, context }) {
                         </TouchableOpacity>
                     </View>
 
-                    <TouchableOpacity
-                        style={styles.endCallBtn}
-                        onPress={endSession}
-                        activeOpacity={0.9}
-                    >
-                        <PhoneOff size={28} color="#fff" strokeWidth={2.2} />
-                    </TouchableOpacity>
+                    <View style={styles.callActionsRow}>
+                        <TouchableOpacity
+                            style={styles.chatBtn}
+                            onPress={switchToChat}
+                            activeOpacity={0.85}
+                            accessibilityLabel="Switch to PrimeBot chat"
+                        >
+                            <PrimeBotIcon color="#c9a8f0" size={26} />
+                            <Text style={styles.chatBtnLabel}>Chat</Text>
+                        </TouchableOpacity>
+
+                        <TouchableOpacity
+                            style={styles.endCallBtn}
+                            onPress={endSession}
+                            activeOpacity={0.9}
+                            accessibilityLabel="End Butler call"
+                        >
+                            <PhoneOff size={28} color="#fff" strokeWidth={2.2} />
+                        </TouchableOpacity>
+                    </View>
                 </View>
             </LinearGradient>
         </Modal>
@@ -467,6 +487,29 @@ const styles = StyleSheet.create({
     },
     routeLabelActive: {
         color: '#c9a8f0',
+    },
+    callActionsRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 28,
+    },
+    chatBtn: {
+        width: 72,
+        height: 72,
+        borderRadius: 36,
+        backgroundColor: 'rgba(123,47,190,0.22)',
+        borderWidth: 1.5,
+        borderColor: 'rgba(123,47,190,0.45)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 4,
+    },
+    chatBtnLabel: {
+        fontSize: 10,
+        fontFamily: CF.medium,
+        color: '#c9a8f0',
+        letterSpacing: 0.2,
     },
     endCallBtn: {
         width: 72,

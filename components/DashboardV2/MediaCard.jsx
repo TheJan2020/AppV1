@@ -9,7 +9,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../../constants/Colors';
 import { useState, useEffect, useRef } from 'react';
 import { SvgUri } from 'react-native-svg';
-import { CF } from '../../utils/typography';
+import { CF, RoomDeviceStatus } from '../../utils/typography';
 
 /** Inner TV card (nested inside room Media panel `#13132A`) */
 const TV_CARD_BG = '#09091A';
@@ -817,10 +817,10 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     offHint: {
+        ...RoomDeviceStatus,
         marginTop: 12,
         color: Colors.textDim,
         fontSize: 13,
-        fontFamily: CF.regular,
     },
     expandedSection: {
         marginTop: 10,

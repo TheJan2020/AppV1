@@ -837,6 +837,8 @@ export default function DashboardV2Tablet() {
     const handleTabPress = (tabId) => {
         if (tabId === 'home') {
             router.push('/dashboard-v2');
+        } else if (tabId === 'butler') {
+            void handleVoiceAssistantPress();
         } else {
             setActiveTab(tabId);
         }
@@ -1003,6 +1005,11 @@ export default function DashboardV2Tablet() {
         setShowButlerCall(false);
     }, []);
 
+    const handleButlerSwitchToChat = useCallback(() => {
+        setShowButlerCall(false);
+        setActiveTab('ai');
+    }, []);
+
     const handleRoomReorder = (data) => {
         // IDs of the rooms in their new order
         const reorderedIds = data.map(r => r.area_id);
@@ -1056,8 +1063,6 @@ export default function DashboardV2Tablet() {
                         entities={entities}
                         config={badgeConfig}
                         onRoomPress={handleHeaderRoomPress}
-                        onVoiceAssistantPress={handleVoiceAssistantPress}
-                        voiceAssistantActive={showButlerCall}
                     />
                     <StatusBadges
                         securityState={securityState}
@@ -1531,6 +1536,7 @@ export default function DashboardV2Tablet() {
                     <ButlerVoiceModal
                         visible={showButlerCall}
                         onClose={handleButlerCallClose}
+                        onSwitchToChat={handleButlerSwitchToChat}
                         context={butlerVoiceContext}
                     />
                 </Suspense>
@@ -1542,7 +1548,11 @@ export default function DashboardV2Tablet() {
                 <TabletSidebar activeTab={activeTab} onTabPress={handleTabPress} />
             ) : (
                 activeTab !== 'ai' && (
-                    <TabBar activeTab={activeTab} onTabPress={handleTabPress} />
+                    <TabBar
+                        activeTab={activeTab}
+                        onTabPress={handleTabPress}
+                        butlerActive={showButlerCall}
+                    />
                 )
             )}
 

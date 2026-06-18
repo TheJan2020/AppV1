@@ -87,8 +87,8 @@ private final class PcmEngine {
     let session = AVAudioSession.sharedInstance()
     try session.setCategory(
       .playAndRecord,
-      mode: .voiceChat,
-      options: [.allowBluetoothHFP, .allowBluetoothA2DP]
+      mode: .default,
+      options: [.defaultToSpeaker, .allowBluetoothHFP, .allowBluetoothA2DP, .allowBluetooth]
     )
     try session.setActive(true)
     try session.overrideOutputAudioPort(.speaker)
@@ -109,6 +109,8 @@ private final class PcmEngine {
     }
 
     engine.connect(player, to: engine.mainMixerNode, format: format)
+    engine.mainMixerNode.outputVolume = 1.0
+    player.volume = 1.0
     try engine.start()
     player.play()
 

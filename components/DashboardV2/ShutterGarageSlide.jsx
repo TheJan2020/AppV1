@@ -16,6 +16,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { DoorOpen, Blinds, ChevronUp, ChevronDown, Square, X, Check } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
+import { RoomDeviceStatus } from '../../utils/typography';
 
 // ── Constants — identical to SlideAction ─────────────────────────────────────
 const BUTTON_SIZE = 48;
@@ -593,8 +594,8 @@ const styles = StyleSheet.create({
         opacity: 0.85,
     },
     pillSubLabel: {
+        ...RoomDeviceStatus,
         fontSize: 11,
-        fontWeight: '600',
     },
 
     // SwipePill success overlay
@@ -651,8 +652,8 @@ const styles = StyleSheet.create({
         padding: 4,
     },
     sheetStatus: {
+        ...RoomDeviceStatus,
         fontSize: 12,
-        fontWeight: '600',
         marginBottom: 20,
         paddingLeft: 4,
     },

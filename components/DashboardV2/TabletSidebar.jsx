@@ -1,16 +1,17 @@
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { Video, LayoutGrid, Home, MessageSquare, Settings, Tablet } from 'lucide-react-native';
+import { Video, LayoutGrid, Home, Settings, Tablet } from 'lucide-react-native';
 import { BlurView } from 'expo-blur';
 
 import { memo } from 'react';
 import { CF } from '../../utils/typography';
+import { ButlerIcon, TAB_ICON_SIZE } from './TabBarIcons';
 
 function TabletSidebar({ activeTab, onTabPress }) {
     const tabs = [
         { id: 'home', label: 'Home', icon: Home },
         { id: 'rooms', label: 'Rooms', icon: LayoutGrid },
         { id: 'cctv', label: 'CCTV', icon: Video },
-        { id: 'ai', label: 'A.I.', icon: MessageSquare },
+        { id: 'butler', label: 'Butler' },
         { id: 'tablet', label: 'Tablet', icon: Tablet },
         { id: 'settings', label: 'Settings', icon: Settings },
     ];
@@ -29,11 +30,15 @@ function TabletSidebar({ activeTab, onTabPress }) {
                             onPress={() => onTabPress(tab.id)}
                             activeOpacity={0.7}
                         >
-                            <Icon
-                                size={24}
-                                color={isActive ? '#fff' : 'rgba(255, 255, 255, 0.4)'}
-                                strokeWidth={isActive ? 2 : 1.5}
-                            />
+                            {tab.id === 'butler' ? (
+                                <ButlerIcon active={isActive} size={TAB_ICON_SIZE} />
+                            ) : (
+                                <Icon
+                                    size={24}
+                                    color={isActive ? '#fff' : 'rgba(255, 255, 255, 0.4)'}
+                                    strokeWidth={isActive ? 2 : 1.5}
+                                />
+                            )}
                             <Text style={[styles.label, isActive && styles.activeLabel]}>
                                 {tab.label}
                             </Text>

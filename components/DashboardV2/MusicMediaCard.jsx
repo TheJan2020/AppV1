@@ -30,7 +30,7 @@ import {
     isEmptyQueueError,
 } from '../../utils/haErrorMessages';
 import { SvgUri } from 'react-native-svg';
-import { CF } from '../../utils/typography';
+import { CF, RoomDeviceStatus } from '../../utils/typography';
 import { isMusicAssistantMediaPlayer } from '../../utils/roomHelpers';
 import {
     getMediaPlayerDuration,
@@ -913,10 +913,10 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     offHint: {
+        ...RoomDeviceStatus,
         marginTop: 12,
         color: Colors.textDim,
         fontSize: 13,
-        fontFamily: CF.regular,
     },
     expandedBlock: {
         marginTop: 14,

@@ -23,10 +23,10 @@ import * as Haptics from 'expo-haptics';
 import { SvgUri } from 'react-native-svg';
 import * as SecureStore from 'expo-secure-store';
 import { getAdminUrl } from '../../utils/storage';
-import { Heading } from '../../utils/typography';
+import { Heading, RoomDeviceStatus } from '../../utils/typography';
 import LightControlModal from './LightControlModal';
 import SmoothSlider, { SMOOTH_SLIDER_THUMB as THUMB, SMOOTH_SLIDER_TRACK as TRACK } from './SmoothSlider';
-import RoomGroupIconButton from './RoomGroupIconButton';
+import RoomGroupIconButton, { ROOM_GROUP_ICON_GLYPH_SIZE } from './RoomGroupIconButton';
 import {
     getLightEffectiveCapability,
     isMasterControllerLight,
@@ -202,82 +202,37 @@ function BrightnessSlider({ value, onChange, onRelease, onDragStart, onDragEnd, 
     );
 }
 
-const SPECTRUM_ICON = 28; // circular CCT / RGB chips (px)
-
 function SpectrumSlider({ value, colors, thumbColor, label, onChange, onRelease, onDragStart, onDragEnd, active = false, onIconPress, compact = false }) {
-    // active = true  → Sun Reflective Mode pill (adaptive lighting on)
-    // active = false → manual CCT / RGB icon + slider
-    const isCct = String(label).toUpperCase() === 'CCT';
-    const discR = SPECTRUM_ICON / 2;
-
-    if (active) {
-        return (
-            <View style={[styles.spectrumBlock, compact && styles.spectrumBlockTabletSplit]}>
-                <TouchableOpacity
-                    style={styles.sunReflectivePill}
-                    onPress={onIconPress}
-                    activeOpacity={0.75}
-                >
-                    <Image source={SUN_REFLECTIVE_MODE_ICON} style={styles.sunReflectiveIcon} />
-                    <Text style={styles.sunReflectiveText}>Sun Reflective Mode</Text>
-                </TouchableOpacity>
-            </View>
-        );
-    }
-
-    const discShell = [
-        styles.spectrumRoundDisc,
-        { width: SPECTRUM_ICON, height: SPECTRUM_ICON, borderRadius: discR },
-    ];
-    const discGradientFill = [StyleSheet.absoluteFillObject, { borderRadius: discR }];
-
-    const modeIcon = isCct ? (
-        <View style={discShell}>
-            <LinearGradient
-                colors={['#FFEB3B', '#FFF9C4', '#FFFFFF']}
-                locations={[0, 0.35, 1]}
-                start={{ x: 0, y: 0.5 }}
-                end={{ x: 1, y: 0.5 }}
-                style={discGradientFill}
-            />
-        </View>
-    ) : (
-        <View style={discShell}>
-            <LinearGradient
-                colors={[
-                    '#FF0844', '#FFB347', '#FFEB3B', '#69F0AE',
-                    '#18FFFF', '#448AFF', '#B388FF', '#FF0844',
-                ]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={discGradientFill}
-            />
-        </View>
-    );
-
+    // Sun Reflective Mode pill toggles adaptive lighting; slider shown only when manual control.
     return (
         <View style={[styles.spectrumBlock, compact && styles.spectrumBlockTabletSplit]}>
             <TouchableOpacity
+                style={[
+                    styles.sunReflectivePill,
+                    active && styles.sunReflectivePillActive,
+                ]}
                 onPress={onIconPress}
-                activeOpacity={0.6}
-                style={styles.spectrumIconPlain}
+                activeOpacity={0.75}
             >
-                {modeIcon}
+                <Image source={SUN_REFLECTIVE_MODE_ICON} style={styles.sunReflectiveIcon} />
+                <Text style={styles.sunReflectiveText}>Sun Reflective Mode</Text>
             </TouchableOpacity>
-            <SmoothSlider
-                value={value} max={100} minVal={0}
-                onChange={onChange} onRelease={onRelease} onDragStart={onDragStart} onDragEnd={onDragEnd}
-                trackBg={
-                    <LinearGradient
-                        colors={colors}
-                        start={{ x: 0, y: 0.5 }}
-                        end={{ x: 1, y: 0.5 }}
-                        style={styles.spectrumTrack}
-                    />
-                }
-                thumbColor={thumbColor}
-                thumbBorder
-            />
+            {!active && (
+                <SmoothSlider
+                    value={value} max={100} minVal={0}
+                    onChange={onChange} onRelease={onRelease} onDragStart={onDragStart} onDragEnd={onDragEnd}
+                    trackBg={
+                        <LinearGradient
+                            colors={colors}
+                            start={{ x: 0, y: 0.5 }}
+                            end={{ x: 1, y: 0.5 }}
+                            style={styles.spectrumTrack}
+                        />
+                    }
+                    thumbColor={thumbColor}
+                    thumbBorder
+                />
+            )}
         </View>
     );
 }
@@ -1027,9 +982,11 @@ export default function LightsGroupCard({
         l.entity_id.toLowerCase().includes('master_controller') ||
         l.displayName?.toLowerCase().includes('master controller')
     );
-    const masterIsOn = masterLight
-        ? masterLight?.stateObj?.state === 'on'
-        : lights.some(l => l.stateObj?.state === 'on');
+    const masterIsOn = lights.some(l =>
+        l.stateObj?.state === 'on' &&
+        !l.entity_id.toLowerCase().includes('master_controller') &&
+        !l.displayName?.toLowerCase().includes('master controller')
+    );
 
     const handleMasterToggle = () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -1291,17 +1248,17 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     headerStatus: {
+        ...RoomDeviceStatus,
         marginTop: 2,
         fontSize: 13,
-        fontStyle: 'italic',
         color: 'rgba(255,255,255,0.45)',
     },
     headerStatusOn: {
         color: '#44C8CA',
     },
     masterLightIcon: {
-        width: 26,
-        height: 26,
+        width: ROOM_GROUP_ICON_GLYPH_SIZE,
+        height: ROOM_GROUP_ICON_GLYPH_SIZE,
     },
     sceneButtons: {
         flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 8,
@@ -1365,6 +1322,12 @@ const styles = StyleSheet.create({
         paddingVertical: 10,
         paddingHorizontal: 14,
         gap: 10,
+        marginBottom: 4,
+    },
+    sunReflectivePillActive: {
+        borderWidth: 1.5,
+        borderColor: 'rgba(255,255,255,0.35)',
+        backgroundColor: 'rgba(255,255,255,0.06)',
     },
     sunReflectiveIcon: {
         width: 22,
@@ -1471,7 +1434,7 @@ const styles = StyleSheet.create({
     },
     cardText:    { flex: 1 },
     cardName:    { color: '#fff', fontSize: 12, fontWeight: '600', marginBottom: 2 },
-    cardLabel:   { color: 'rgba(255,255,255,0.40)', fontSize: 12, fontWeight: '500' },
+    cardLabel:   { ...RoomDeviceStatus, color: 'rgba(255,255,255,0.40)', fontSize: 12 },
     cardLabelOn: { color: '#44C8CA' },
 
     // Drag badge (top-right corner while swiping card)

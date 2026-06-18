@@ -9,7 +9,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import * as Haptics from 'expo-haptics';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { CF } from '../../utils/typography';
+import { CF, RoomDeviceStatus } from '../../utils/typography';
 import {
     fetchClimateTimer,
     buildClimateTimer,
@@ -20,7 +20,7 @@ import {
     loadLocalClimateTimer,
 } from '../../utils/climateTimerApi';
 import ServiceMessageToast from './ServiceMessageToast';
-import RoomGroupIconButton from './RoomGroupIconButton';
+import RoomGroupIconButton, { ROOM_GROUP_ICON_GLYPH_SIZE } from './RoomGroupIconButton';
 import { formatHaServiceError } from '../../utils/haErrorMessages';
 import { getClimateTempBounds, isClimateTemperatureValid } from '../../utils/haEntityMerge';
 import { isBadEntityState } from '../../utils/haEntityHealth';
@@ -598,7 +598,7 @@ export default function ClimateCard({
                         onPress={togglePower}
                         accessibilityLabel={isOn ? 'Turn climate off' : 'Turn climate on'}
                     >
-                        <Wind size={26} color="#fff" strokeWidth={2} />
+                        <Wind size={ROOM_GROUP_ICON_GLYPH_SIZE} color="#fff" strokeWidth={2} />
                     </RoomGroupIconButton>
                     <Text style={s.name} numberOfLines={1}>{climate.displayName}</Text>
                 </View>
@@ -833,9 +833,9 @@ const s = StyleSheet.create({
         opacity: 0.55,
     },
     unavailableBadge: {
+        ...RoomDeviceStatus,
         alignSelf: 'center',
         fontSize: 11,
-        fontFamily: CF.semibold,
         color: '#EF5350',
         marginBottom: 10,
         letterSpacing: 0.3,

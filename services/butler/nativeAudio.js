@@ -8,9 +8,16 @@ function isExpoGo() {
     return Constants.appOwnership === 'expo';
 }
 
-/**
- * Probe ExpoPcmPlayer without loading expo-pcm-player JS (lazy native only).
- */
+export function getButlerAudioBackend() {
+    if (Platform.OS !== 'ios' && Platform.OS !== 'android') {
+        return 'unsupported';
+    }
+    if (isPcmPlayerAvailable() && isLiveMicAvailable()) {
+        return 'native';
+    }
+    return 'expo-av';
+}
+
 export function isPcmPlayerAvailable() {
     if (pcmPlayerAvailable !== null) return pcmPlayerAvailable;
     if (Platform.OS !== 'ios') {
@@ -27,10 +34,6 @@ export function isPcmPlayerAvailable() {
     return pcmPlayerAvailable;
 }
 
-/**
- * Probe RNLiveAudioStream without requiring react-native-live-audio-stream:
- * that package's index.js runs `new NativeEventEmitter(null)` at import time and crashes.
- */
 export function isLiveMicAvailable() {
     if (liveMicAvailable !== null) return liveMicAvailable;
     try {
@@ -42,37 +45,42 @@ export function isLiveMicAvailable() {
 }
 
 export function getNativeAudioStatus() {
-    if (isExpoGo()) {
+    const backend = getButlerAudioBackend();
+    const pcm = isPcmPlayerAvailable();
+    const mic = isLiveMicAvailable();
+    const expoGo = isExpoGo();
+
+    if (backend === 'native') {
         return {
-            ready: false,
-            pcm: false,
-            mic: false,
+            ready: true,
+            backend: 'native',
+            pcm: true,
+            mic: true,
             platform: Platform.OS,
-            expoGo: true,
-            message:
-                'Butler voice does not work in Expo Go. Build and open the dev client:\n\nnpx expo run:ios --device',
+            expoGo,
+            message: null,
         };
     }
 
-    const pcm = isPcmPlayerAvailable();
-    const mic = isLiveMicAvailable();
-    let message = null;
-    if (!pcm && !mic) {
-        message =
-            'Voice audio modules are missing. Rebuild the dev client on a physical iPhone:\n\nnpx expo run:ios --device';
-    } else if (!pcm) {
-        message = 'Playback module (ExpoPcmPlayer) is missing. Rebuild:\n\nnpx expo run:ios --device';
-    } else if (!mic) {
-        message = 'Microphone module (RNLiveAudioStream) is missing. Rebuild:\n\nnpx expo run:ios --device';
-    } else if (Platform.OS === 'android') {
-        message = 'Butler voice is iOS-only in this build.';
+    if (backend === 'expo-av') {
+        return {
+            ready: true,
+            backend: 'expo-av',
+            pcm: false,
+            mic: false,
+            platform: Platform.OS,
+            expoGo,
+            message: null,
+        };
     }
+
     return {
-        ready: pcm && mic && Platform.OS === 'ios',
+        ready: false,
+        backend: 'unsupported',
         pcm,
         mic,
         platform: Platform.OS,
-        expoGo: false,
-        message,
+        expoGo,
+        message: 'Butler voice is not supported on this platform.',
     };
 }

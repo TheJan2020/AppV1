@@ -30,11 +30,11 @@ import { LayoutGrid, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'l
 import * as Haptics from 'expo-haptics';
 import CoverCard, { AllLayersCoverCard } from './CoverCard';
 import CoverLayerFilter from './CoverLayerFilter';
-import { Heading, CF } from '../../utils/typography';
+import { Heading, CF, RoomDeviceStatus } from '../../utils/typography';
 import { groupCoversByWindow, layersForWindow, defaultLayerTab, ALL_LAYERS_ID } from '../../utils/coverWindows';
 import { toggleCoverWindow, toggleCoverEntities } from '../../utils/coverWindowControl';
 import SmoothSlider, { SMOOTH_SLIDER_THUMB as THUMB, SMOOTH_SLIDER_TRACK as TRACK } from './SmoothSlider';
-import RoomGroupIconButton from './RoomGroupIconButton';
+import RoomGroupIconButton, { ROOM_GROUP_ICON_GLYPH_SIZE } from './RoomGroupIconButton';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -206,10 +206,9 @@ function WindowCoverSection({
                     active={windowIsOpen}
                     onPress={handleWindowToggle}
                     disabled={toggling}
-                    size={40}
                     accessibilityLabel={`Toggle ${window.name}`}
                 >
-                    <LayoutGrid size={20} color="#fff" />
+                    <LayoutGrid size={ROOM_GROUP_ICON_GLYPH_SIZE} color="#fff" />
                 </RoomGroupIconButton>
                 <Text style={styles.windowTitle}>{window.name}</Text>
             </View>
@@ -279,9 +278,7 @@ export default function CoversGroupCard({
     // ── Master curtain detection ──────────────────────────────────────────
     const masterCover      = covers.find(isMasterCover);
     const individualCovers = covers.filter(c => !isMasterCover(c));
-    const groupIsOpen      = masterCover
-        ? isActive(masterCover)
-        : individualCovers.some(isActive);
+    const groupIsOpen = individualCovers.some(isActive);
     const masterPos        = masterCover ? getPosition(masterCover) : 50;
 
     const openCount = individualCovers.filter(c => isActive(c)).length;
@@ -342,7 +339,7 @@ export default function CoversGroupCard({
                     disabled={groupToggling || !(masterCover || individualCovers.length)}
                     accessibilityLabel="Toggle all covers"
                 >
-                    <LayoutGrid size={26} color="#fff" />
+                    <LayoutGrid size={ROOM_GROUP_ICON_GLYPH_SIZE} color="#fff" />
                 </RoomGroupIconButton>
                 <View style={styles.headerTextBlock}>
                     <Text style={styles.headerTitle}>Covers</Text>
@@ -500,10 +497,9 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
     },
     headerStatus: {
+        ...RoomDeviceStatus,
         marginTop: 2,
         fontSize: 13,
-        fontStyle: 'italic',
-        fontFamily: CF.regular,
         color: 'rgba(255,255,255,0.45)',
     },
     headerStatusOn: {
@@ -541,16 +537,14 @@ const styles = StyleSheet.create({
         gap: 4,
     },
     sliderHintClose: {
+        ...RoomDeviceStatus,
         color: 'rgba(255,255,255,0.35)',
         fontSize: 12,
-        fontWeight: '500',
-        fontFamily: CF.medium,
     },
     sliderHintOpen: {
+        ...RoomDeviceStatus,
         color: 'rgba(68,200,202,0.65)',
         fontSize: 12,
-        fontWeight: '500',
-        fontFamily: CF.medium,
     },
 
     chevron: { alignItems: 'center', paddingVertical: 6 },

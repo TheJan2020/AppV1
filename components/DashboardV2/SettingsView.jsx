@@ -449,7 +449,7 @@ function SettingsView({
                         </View>
                         <View>
                             <Text style={styles.itemName}>Voice Assistant</Text>
-                            <Text style={styles.itemSub}>Legacy center widget (tablet only). Phone uses header mic for Butler.</Text>
+                            <Text style={styles.itemSub}>Legacy center widget (tablet only). Phone uses the Butler tab in the bottom bar.</Text>
                         </View>
                     </View>
                     <Switch

@@ -30,3 +30,8 @@ export const Heading = {
   /** Room subtitle / meta under title */
   sub: { fontFamily: CF.regular, fontSize: 14 },
 };
+
+/** Device state labels on room detail (ON, OFF, Open, Closed, …) */
+export const RoomDeviceStatus = {
+  fontStyle: 'italic',
+};

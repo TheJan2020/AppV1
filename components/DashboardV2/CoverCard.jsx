@@ -2,6 +2,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '../../constants/Colors';
+import { RoomDeviceStatus } from '../../utils/typography';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     useSharedValue, useAnimatedStyle, withTiming, Easing, withRepeat, runOnJS, cancelAnimation,
@@ -1744,9 +1745,9 @@ const curtainStyles = StyleSheet.create({
         marginBottom: 1,
     },
     status: {
+        ...RoomDeviceStatus,
         color: Colors.textDim,
         fontSize: 10,
-        fontWeight: '500',
         textAlign: 'left',
         textTransform: 'uppercase',
     },
@@ -1841,9 +1842,9 @@ const shutterStyles = StyleSheet.create({
         textAlign: 'left',
     },
     statusText: {
+        ...RoomDeviceStatus,
         color: Colors.textDim,
         fontSize: 10,
-        fontWeight: '500',
         textAlign: 'left',
         marginTop: 1,
         marginBottom: 4,

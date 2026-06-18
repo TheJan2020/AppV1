@@ -15,8 +15,8 @@ import {
 import { Wind } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import ClimateCard from './ClimateCard';
-import { Heading, CF } from '../../utils/typography';
-import RoomGroupIconButton from './RoomGroupIconButton';
+import { Heading, CF, RoomDeviceStatus } from '../../utils/typography';
+import RoomGroupIconButton, { ROOM_GROUP_ICON_GLYPH_SIZE } from './RoomGroupIconButton';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -83,7 +83,7 @@ export default function ClimateGroupCard({
                         onPress={handleMasterToggle}
                         accessibilityLabel="Toggle climate"
                     >
-                        <Wind size={26} color="#fff" strokeWidth={2} />
+                        <Wind size={ROOM_GROUP_ICON_GLYPH_SIZE} color="#fff" strokeWidth={2} />
                     </RoomGroupIconButton>
                     <View style={styles.headerTextBlock}>
                         <Text style={styles.headerTitle} numberOfLines={1}>
@@ -170,10 +170,9 @@ const styles = StyleSheet.create({
     },
     headerTitle: { ...Heading.md, color: '#fff' },
     headerStatus: {
+        ...RoomDeviceStatus,
         marginTop: 2,
         fontSize: 13,
-        fontStyle: 'italic',
-        fontFamily: CF.regular,
         color: 'rgba(255,255,255,0.45)',
     },
     headerStatusOn: {
@@ -201,9 +200,8 @@ const styles = StyleSheet.create({
         letterSpacing: 0.3,
     },
     unitStatus: {
+        ...RoomDeviceStatus,
         fontSize: 12,
-        fontStyle: 'italic',
-        fontFamily: CF.regular,
         color: 'rgba(255,255,255,0.4)',
     },
     unitStatusOn: {
