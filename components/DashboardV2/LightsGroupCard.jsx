@@ -202,38 +202,49 @@ function BrightnessSlider({ value, onChange, onRelease, onDragStart, onDragEnd, 
     );
 }
 
-function SpectrumSlider({ value, colors, thumbColor, label, onChange, onRelease, onDragStart, onDragEnd, active = false, onIconPress, compact = false }) {
-    // Sun Reflective Mode pill toggles adaptive lighting; slider shown only when manual control.
+function SpectrumSlider({ value, colors, thumbColor, onChange, onRelease, onDragStart, onDragEnd, compact = false }) {
     return (
         <View style={[styles.spectrumBlock, compact && styles.spectrumBlockTabletSplit]}>
-            <TouchableOpacity
-                style={[
-                    styles.sunReflectivePill,
-                    active && styles.sunReflectivePillActive,
-                ]}
-                onPress={onIconPress}
-                activeOpacity={0.75}
-            >
-                <Image source={SUN_REFLECTIVE_MODE_ICON} style={styles.sunReflectiveIcon} />
-                <Text style={styles.sunReflectiveText}>Sun Reflective Mode</Text>
-            </TouchableOpacity>
-            {!active && (
-                <SmoothSlider
-                    value={value} max={100} minVal={0}
-                    onChange={onChange} onRelease={onRelease} onDragStart={onDragStart} onDragEnd={onDragEnd}
-                    trackBg={
-                        <LinearGradient
-                            colors={colors}
-                            start={{ x: 0, y: 0.5 }}
-                            end={{ x: 1, y: 0.5 }}
-                            style={styles.spectrumTrack}
-                        />
-                    }
-                    thumbColor={thumbColor}
-                    thumbBorder
-                />
-            )}
+            <SmoothSlider
+                value={value} max={100} minVal={0}
+                onChange={onChange} onRelease={onRelease} onDragStart={onDragStart} onDragEnd={onDragEnd}
+                trackBg={
+                    <LinearGradient
+                        colors={colors}
+                        start={{ x: 0, y: 0.5 }}
+                        end={{ x: 1, y: 0.5 }}
+                        style={styles.spectrumTrack}
+                    />
+                }
+                thumbColor={thumbColor}
+                thumbBorder
+            />
         </View>
+    );
+}
+
+function AdaptiveLightingPill({ active, onPress }) {
+    const label = active
+        ? 'Tap to turn off adaptive lighting'
+        : 'Tap to turn on adaptive lighting';
+
+    return (
+        <TouchableOpacity
+            style={[
+                styles.sunReflectivePill,
+                active && styles.sunReflectivePillActive,
+            ]}
+            onPress={onPress}
+            activeOpacity={0.75}
+        >
+            <Image source={SUN_REFLECTIVE_MODE_ICON} style={styles.sunReflectiveIcon} />
+            <Text
+                style={[styles.sunReflectiveText, active && styles.sunReflectiveTextActive]}
+                numberOfLines={2}
+            >
+                {label}
+            </Text>
+        </TouchableOpacity>
     );
 }
 
@@ -470,12 +481,9 @@ function ExpandedLightCard({
 export default function LightsGroupCard({
     lights = [], lightMappings = [], adminUrl, roomName = '',
     allEntities = [],
-    adaptiveLightingCct = null,
-    adaptiveLightingRgb = null,
-    onAdaptiveCctToggle,
-    onAdaptiveRgbToggle,
-    onAdaptiveCctManualColor,
-    onAdaptiveRgbManualColor,
+    adaptiveLighting = null,
+    onAdaptiveToggle,
+    onAdaptiveManualColor,
     onToggle, onBrightnessChange, onColorTempChange, onRgbChange, onLongPress, onTurnOn,
     onSliderDragStart, onSliderDragEnd,
     contentWidth,
@@ -507,24 +515,15 @@ export default function LightsGroupCard({
 
     const [expanded, setExpanded] = useState(false);
     const [colorModalLight, setColorModalLight] = useState(null); // { light, colorCapability }
-    const [cctActive, setCctActive] = useState(false);
-    const [rgbActive, setRgbActive] = useState(false);
 
-    const cctMainId = adaptiveLightingCct?.main?.entity_id;
-    const rgbMainId = adaptiveLightingRgb?.main?.entity_id;
-    const hasAdaptiveCct = !!cctMainId;
-    const hasAdaptiveRgb = !!rgbMainId;
+    const adaptiveMainId = adaptiveLighting?.main?.entity_id;
+    const hasAdaptive = !!adaptiveMainId;
 
-    /** Sun + disabled slider when HA "Adaptive Lighting: CCT/RGB" main switch is on. */
-    const cctSunLinked = useMemo(() => {
-        if (cctMainId) return entityStateOn(allEntities, cctMainId);
-        return cctActive;
-    }, [allEntities, cctMainId, cctActive]);
-
-    const rgbSunLinked = useMemo(() => {
-        if (rgbMainId) return entityStateOn(allEntities, rgbMainId);
-        return rgbActive;
-    }, [allEntities, rgbMainId, rgbActive]);
+    /** When adaptive is on, manual CCT/RGB sliders are hidden. */
+    const adaptiveLinked = useMemo(() => {
+        if (!adaptiveMainId) return false;
+        return entityStateOn(allEntities, adaptiveMainId);
+    }, [allEntities, adaptiveMainId]);
 
     const { width: windowWidth } = useWindowDimensions();
     /** RoomDetailView `content` uses padding 20+20; this card uses paddingHorizontal 18+18 */
@@ -880,8 +879,8 @@ export default function LightsGroupCard({
     }, [lights, lightMappings, onBrightnessChange]);
 
     const handleCCTRelease = useCallback((pct) => {
-        if (cctSunLinked) {
-            onAdaptiveCctManualColor?.();
+        if (adaptiveLinked) {
+            onAdaptiveManualColor?.();
         }
         blockSync(cctBlocked, cctBlockTimer);
         const kelvin = pctToKelvin(pct);
@@ -898,11 +897,11 @@ export default function LightsGroupCard({
                 if (cap === 'cct' || cap === 'rgb') onColorTempChange?.(l.entity_id, kelvin);
             });
         }
-    }, [lights, lightMappings, onColorTempChange, isMasterController, cctSunLinked, onAdaptiveCctManualColor]);
+    }, [lights, lightMappings, onColorTempChange, isMasterController, adaptiveLinked, onAdaptiveManualColor]);
 
     const handleRGBRelease = useCallback((pct) => {
-        if (rgbSunLinked) {
-            onAdaptiveRgbManualColor?.();
+        if (adaptiveLinked) {
+            onAdaptiveManualColor?.();
         }
         blockSync(rgbBlocked, rgbBlockTimer);
         const hue = (pct / 100) * 360;
@@ -919,7 +918,7 @@ export default function LightsGroupCard({
                 if (effectiveCap(l) === 'rgb') onRgbChange?.(l.entity_id, rgb);
             });
         }
-    }, [lights, lightMappings, onRgbChange, isMasterController, rgbSunLinked, onAdaptiveRgbManualColor]);
+    }, [lights, lightMappings, onRgbChange, isMasterController, adaptiveLinked, onAdaptiveManualColor]);
 
     const toggle = () => {
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -940,42 +939,29 @@ export default function LightsGroupCard({
         return `rgb(${r},${g},${b})`;
     })();
 
-    const handleCctSunPress = () => {
+    const handleAdaptivePress = () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        if (hasAdaptiveCct) {
-            onAdaptiveCctToggle?.();
-        } else {
-            setCctActive((v) => !v);
-        }
+        onAdaptiveToggle?.();
     };
 
-    const handleRgbSunPress = () => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        if (hasAdaptiveRgb) {
-            onAdaptiveRgbToggle?.();
-        } else {
-            setRgbActive((v) => !v);
-        }
+    const cctSpectrumSlider = (compact = false) => {
+        if (adaptiveLinked) return null;
+        return (
+            <SpectrumSlider
+                value={masterCCTPct}
+                colors={['#FF9F43', '#FFE082', '#FFF8E1', '#D6F5FF', '#A8CFFF']}
+                thumbColor={cctThumbColor}
+                onChange={setMasterCCTPct}
+                onDragStart={() => {
+                    blockSync(cctBlocked, cctBlockTimer);
+                    onSliderDragStart?.();
+                }}
+                onDragEnd={onSliderDragEnd}
+                onRelease={handleCCTRelease}
+                compact={compact}
+            />
+        );
     };
-
-    const cctSpectrumSlider = (compact = false) => (
-        <SpectrumSlider
-            label="CCT"
-            value={masterCCTPct}
-            colors={['#FF9F43', '#FFE082', '#FFF8E1', '#D6F5FF', '#A8CFFF']}
-            thumbColor={cctThumbColor}
-            onChange={setMasterCCTPct}
-            onDragStart={() => {
-                blockSync(cctBlocked, cctBlockTimer);
-                onSliderDragStart?.();
-            }}
-            onDragEnd={onSliderDragEnd}
-            onRelease={handleCCTRelease}
-            active={cctSunLinked}
-            onIconPress={handleCctSunPress}
-            compact={compact}
-        />
-    );
 
     // ── Find master controller entity ─────────────────────────────────────
     const masterLight = lights.find(l =>
@@ -1133,11 +1119,16 @@ export default function LightsGroupCard({
             {/* Expanded — CCT/RGB + per-light grid */}
             {expanded && (
                 <>
+            {hasAdaptive && (
+                <View style={[styles.spectrumBlock, isTabletSplit && styles.spectrumBlockTabletSplit]}>
+                    <AdaptiveLightingPill active={adaptiveLinked} onPress={handleAdaptivePress} />
+                </View>
+            )}
+
             {hasCCT && !masterHasCCT && cctSpectrumSlider(isTabletSplit)}
 
-            {hasRGB && (
+            {hasRGB && !adaptiveLinked && (
                 <SpectrumSlider
-                    label="RGB"
                     value={masterRGBPct}
                     colors={[
                         '#FF0000', '#FF8000', '#FFFF00',
@@ -1152,8 +1143,6 @@ export default function LightsGroupCard({
                     }}
                     onDragEnd={onSliderDragEnd}
                     onRelease={handleRGBRelease}
-                    active={rgbSunLinked}
-                    onIconPress={handleRgbSunPress}
                     compact={isTabletSplit}
                 />
             )}
@@ -1338,6 +1327,9 @@ const styles = StyleSheet.create({
         color: '#9199BA',
         fontSize: 14,
         fontWeight: '500',
+    },
+    sunReflectiveTextActive: {
+        color: '#ededf5',
     },
     spectrumIcon: {
         marginBottom: 4, marginLeft: 2,

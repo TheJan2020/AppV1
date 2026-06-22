@@ -1,6 +1,5 @@
 import React, { useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity, Image, FlatList, ActivityIndicator } from 'react-native';
-import { Play } from 'lucide-react-native';
 import { dedupeEventsById } from '../../utils/frigateEvents';
 
 export default function FrigateTimeline({ events, onEventPress, onLoadMore, hasMore, loadingMore, selectedEventId, listRef, adminUrl, authHeaders, listHeader }) {
@@ -63,11 +62,6 @@ export default function FrigateTimeline({ events, onEventPress, onLoadMore, hasM
                         style={styles.thumbnail}
                         resizeMode="cover"
                     />
-                    {isSelected && (
-                        <View style={styles.playOverlay}>
-                            <Play size={28} color="white" fill="white" />
-                        </View>
-                    )}
                     {duration != null && (
                         <View style={styles.durationBadge}>
                             <Text style={styles.durationText}>{duration}s</Text>
@@ -185,12 +179,6 @@ const styles = StyleSheet.create({
     thumbnail: {
         width: '100%',
         height: '100%',
-    },
-    playOverlay: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(0,0,0,0.45)',
-        alignItems: 'center',
-        justifyContent: 'center',
     },
     durationBadge: {
         position: 'absolute',

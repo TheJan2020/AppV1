@@ -1,11 +1,7 @@
 /**
- * Home Assistant Adaptive Lighting — mobile controls ONLY the 4th main switch:
- * "Adaptive Lighting: CCT" / "Adaptive Lighting: RGB".
- * Sleep / adapt color / adapt brightness are never touched by the app.
- *
- * Main entity ids vary by HA version, e.g.:
- *   switch.demo_area_adaptive_lighting_demo_area  → Adaptive Lighting: CCT
- *   switch.rgb_adaptive_lighting_rgb              → RGB Adaptive Lighting: RGB
+ * Home Assistant Adaptive Lighting — one main switch per room:
+ * friendly name "Adaptive Lighting" (not separate CCT/RGB configs).
+ * Sleep / adapt color / adapt brightness sub-switches are never touched by the app.
  */
 
 function slugify(value) {
@@ -39,7 +35,7 @@ function friendlyLower(entity) {
     return String(entity?.attributes?.friendly_name || '').trim().toLowerCase();
 }
 
-/** Sub-switches (1–3 in HA): sleep, adapt color, adapt brightness — not the 4th main card. */
+/** Sub-switches (1–3 in HA): sleep, adapt color, adapt brightness — not the main card. */
 function isAdaptiveSubSwitch(entity) {
     const id = entity?.entity_id || '';
     const friendly = friendlyLower(entity);
@@ -55,7 +51,8 @@ function isAdaptiveSubSwitch(entity) {
 }
 
 /**
- * 4th HA card only — friendly name ends with ": CCT" or ": RGB".
+ * Main adaptive lighting switch for a room — friendly name "Adaptive Lighting"
+ * (legacy ": CCT" / ": RGB" suffix switches are ignored).
  */
 export function isAdaptiveLightingMainSwitch(entity) {
     const id = entity?.entity_id || '';
@@ -65,20 +62,13 @@ export function isAdaptiveLightingMainSwitch(entity) {
     const friendly = friendlyLower(entity);
     if (!friendly) return false;
 
-    return /:\s*cct\s*$/i.test(friendly)
-        || /:\s*rgb\s*$/i.test(friendly)
-        || /^adaptive lighting:\s*cct\s*$/i.test(friendly)
-        || /^adaptive lighting:\s*rgb\s*$/i.test(friendly);
-}
+    // Legacy split configs — no longer used in the app
+    if (/:\s*(cct|rgb)\s*$/i.test(friendly)) return false;
 
-/** @returns {'cct' | 'rgb' | 'unknown'} */
-export function classifyMainSwitchType(entity) {
-    if (!isAdaptiveLightingMainSwitch(entity)) return 'unknown';
+    if (friendly === 'adaptive lighting') return true;
+    if (/^adaptive lighting\b/i.test(friendly)) return true;
 
-    const friendly = friendlyLower(entity);
-    if (/:\s*rgb\s*$/i.test(friendly) || friendly.endsWith(' rgb')) return 'rgb';
-    if (/:\s*cct\s*$/i.test(friendly) || friendly.endsWith(' cct')) return 'cct';
-    return 'unknown';
+    return false;
 }
 
 function scoreMainForRoom(mainEntity, lookupKeys, lightIdSet) {
@@ -102,7 +92,7 @@ function scoreMainForRoom(mainEntity, lookupKeys, lightIdSet) {
     return score;
 }
 
-function pickBestMain(candidates, lookupKeys, lightIdSet, roomHasTypeLights) {
+function pickBestMain(candidates, lookupKeys, lightIdSet, roomHasLights) {
     let best = null;
     let bestScore = 0;
 
@@ -116,52 +106,36 @@ function pickBestMain(candidates, lookupKeys, lightIdSet, roomHasTypeLights) {
 
     if (best && bestScore > 0) return best;
 
-    // Shared RGB/CCT config (e.g. switch.rgb_adaptive_lighting_rgb in Demo Area)
-    if (candidates.length === 1 && roomHasTypeLights) return candidates[0];
+    if (candidates.length === 1 && roomHasLights) return candidates[0];
 
     return null;
 }
 
 /**
- * Find main "Adaptive Lighting: CCT" / ": RGB" switches for a room.
- * @returns {{ cct: { main } | null, rgb: { main } | null }}
+ * Find the single "Adaptive Lighting" switch for a room.
+ * @returns {{ main: object } | null}
  */
 export function findAdaptiveLightingForRoom(
     allEntities,
     lightEntityIds,
     roomName,
     areaId,
-    options = {},
 ) {
-    const empty = { cct: null, rgb: null };
-    if (!Array.isArray(allEntities) || !allEntities.length) return empty;
+    if (!Array.isArray(allEntities) || !allEntities.length) return null;
 
     const lightIdSet = new Set(
         (lightEntityIds || []).filter((id) => typeof id === 'string' && id.startsWith('light.'))
     );
+    if (!lightIdSet.size) return null;
+
     const lookupKeys = collectRoomAdaptiveLookupKeys(roomName, areaId);
-    const roomHasCctLights = options.roomHasCctLights ?? lightIdSet.size > 0;
-    const roomHasRgbLights = options.roomHasRgbLights ?? lightIdSet.size > 0;
+    const candidates = allEntities.filter(isAdaptiveLightingMainSwitch);
+    const main = pickBestMain(candidates, lookupKeys, lightIdSet, lightIdSet.size > 0);
 
-    const mainSwitches = allEntities.filter(isAdaptiveLightingMainSwitch);
-
-    const cctCandidates = mainSwitches.filter((e) => classifyMainSwitchType(e) === 'cct');
-    const rgbCandidates = mainSwitches.filter((e) => classifyMainSwitchType(e) === 'rgb');
-
-    const cctMain = roomHasCctLights
-        ? pickBestMain(cctCandidates, lookupKeys, lightIdSet, roomHasCctLights)
-        : null;
-    const rgbMain = roomHasRgbLights
-        ? pickBestMain(rgbCandidates, lookupKeys, lightIdSet, roomHasRgbLights)
-        : null;
-
-    return {
-        cct: cctMain ? { main: cctMain } : null,
-        rgb: rgbMain ? { main: rgbMain } : null,
-    };
+    return main ? { main } : null;
 }
 
-/** Main switch on → sun icon + disabled color slider. */
+/** Main switch on → hide manual CCT/RGB sliders. */
 export function isAdaptiveMainActive(adaptive) {
     return adaptive?.main?.state === 'on';
 }

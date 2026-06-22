@@ -235,17 +235,21 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
         });
 
         const bootstrap = async () => {
+            void playRingVisuals();
+            void connectSession();
+
             const info = await getButlerAudioRouteInfo();
             if (cancelled) return;
 
             hadExternalAudio = Boolean(info.hasExternalAudio);
             const initial = suggestButlerRoute(info);
+            const prevRoute = audioRouteRef.current;
             audioRouteRef.current = initial;
             setAudioRoute(initial);
             setRouteHint(formatAudioRouteLabel(info, initial));
-
-            void playRingVisuals();
-            void connectSession();
+            if (sessionRef.current && initial !== prevRoute) {
+                void sessionRef.current.setRoute(initial);
+            }
         };
 
         void bootstrap();

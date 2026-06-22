@@ -1,15 +1,15 @@
-import { useRef, useState, useEffect, useMemo, useCallback, useContext, lazy, Suspense } from 'react';
+import { useRef, useState, useEffect, useMemo, useCallback, useContext } from 'react';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
 import NotificationModal from '../components/DashboardV2/NotificationModal';
-import { prepareButlerCall } from '../services/butler/openButlerCall';
-
-const ButlerVoiceModal = lazy(() => import('../components/DashboardV2/ButlerVoiceModal'));
+import ButlerVoiceModal from '../components/DashboardV2/ButlerVoiceModal';
+import { canOpenButlerCall, runButlerBackgroundSetup } from '../services/butler/openButlerCall';
+import { getButlerBackendUrl } from '../utils/butlerBackend';
 import AlertNotificationModal from '../components/DashboardV2/AlertNotificationModal';
 import SecurityAlertModal from '../components/DashboardV2/SecurityAlertModal';
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator, Image } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator, Image, Alert } from 'react-native';
 import HomeCameraStrip from '../components/DashboardV2/HomeCameraStrip';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
@@ -163,6 +163,7 @@ export default function DashboardV2() {
         })();
 
         loadConnectionConfig();
+        void getButlerBackendUrl();
     }, []);
 
     const loadConnectionConfig = async () => {
@@ -1070,16 +1071,26 @@ export default function DashboardV2() {
         // the device — once from the server push and once from this local call.
     }, [addNotification]);
 
-    const handleVoiceAssistantPress = useCallback(async () => {
-        const ok = await prepareButlerCall({
+    const handleVoiceAssistantPress = useCallback(() => {
+        const gate = canOpenButlerCall();
+        if (!gate.ok) {
+            Alert.alert('Voice not available', gate.error ?? 'Butler voice is not supported.');
+            return;
+        }
+        setShowButlerCall(true);
+        runButlerBackgroundSetup({
             haUrl: connectionConfig.url,
             haToken: connectionConfig.token,
         });
-        if (ok) setShowButlerCall(true);
     }, [connectionConfig.url, connectionConfig.token]);
 
     const handleButlerCallClose = useCallback(() => {
         setShowButlerCall(false);
+    }, []);
+
+    const handleButlerSwitchToChat = useCallback(() => {
+        setShowButlerCall(false);
+        setActiveTab('ai');
     }, []);
 
     const handleBellPress = useCallback(() => {
@@ -1364,10 +1375,12 @@ export default function DashboardV2() {
     const handleTabPress = useCallback((tabId) => {
         if (tabId === 'tablet') {
             router.push('/dashboard-v2-tablet');
+        } else if (tabId === 'butler') {
+            void handleVoiceAssistantPress();
         } else {
             setActiveTab(tabId);
         }
-    }, []);
+    }, [handleVoiceAssistantPress]);
 
     const handleSettingChange = useCallback((key, val) => {
         if (key === 'showFamily') setShowFamily(val);
@@ -1693,13 +1706,12 @@ export default function DashboardV2() {
             />
 
             {showButlerCall ? (
-                <Suspense fallback={null}>
-                    <ButlerVoiceModal
-                        visible={showButlerCall}
-                        onClose={handleButlerCallClose}
-                        context={butlerVoiceContext}
-                    />
-                </Suspense>
+                <ButlerVoiceModal
+                    visible={showButlerCall}
+                    onClose={handleButlerCallClose}
+                    onSwitchToChat={handleButlerSwitchToChat}
+                    context={butlerVoiceContext}
+                />
             ) : null}
 
             {/* Alert modal — shown when user taps a push notification */}
@@ -2069,7 +2081,11 @@ export default function DashboardV2() {
                 <TabletSidebar activeTab={activeTab} onTabPress={handleTabPress} />
             ) : (
                 activeTab !== 'ai' && (
-                    <TabBar activeTab={activeTab} onTabPress={handleTabPress} />
+                    <TabBar
+                        activeTab={activeTab}
+                        onTabPress={handleTabPress}
+                        butlerActive={showButlerCall}
+                    />
                 )
             )}
 

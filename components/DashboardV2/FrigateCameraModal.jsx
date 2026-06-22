@@ -1,12 +1,12 @@
 import { Modal, View, Text, StyleSheet, TouchableOpacity, FlatList, Image, ActivityIndicator, ScrollView } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { X, User, Car, Dog, AlertTriangle, Clock, Play } from 'lucide-react-native';
+import { X, User, Car, Dog, AlertTriangle, Clock } from 'lucide-react-native';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CF } from '../../utils/typography';
 import CameraSensorOverlay, { isSensorActive, buildEntityMap, resolveSensorIds } from './CameraSensorOverlay';
 import { dedupeEventsById, paginationBeforeCursor } from '../../utils/frigateEvents';
-import FrigateEventPlayerModal from './FrigateEventPlayerModal';
+import FrigateEventImageModal from './FrigateEventImageModal';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -58,8 +58,8 @@ function EventCard({ event, adminUrl, authHeaders, onPress }) {
     const score = event.data?.top_score ?? event.top_score;
     const scoreText = score ? `${Math.round(score * 100)}%` : null;
 
-    const card = (
-        <View style={styles.card}>
+    const cardBody = (
+        <>
             <View style={styles.thumb}>
                 {thumbError ? (
                     <View style={[StyleSheet.absoluteFill, { backgroundColor: '#111', alignItems: 'center', justifyContent: 'center' }]}>
@@ -82,9 +82,6 @@ function EventCard({ event, adminUrl, authHeaders, onPress }) {
                     <Text style={styles.labelText}>{event.label || 'unknown'}</Text>
                     {scoreText && <Text style={styles.scoreText}>{scoreText}</Text>}
                 </View>
-                <View style={styles.playBadge}>
-                    <Play size={14} color="#fff" fill="#fff" />
-                </View>
             </View>
 
             <View style={styles.info}>
@@ -95,14 +92,16 @@ function EventCard({ event, adminUrl, authHeaders, onPress }) {
                 </View>
                 <Text style={styles.agoText}>{timeAgo(event.start_time)}</Text>
             </View>
-        </View>
+        </>
     );
 
-    if (!onPress) return card;
+    if (!onPress) {
+        return <View style={styles.card}>{cardBody}</View>;
+    }
 
     return (
-        <TouchableOpacity activeOpacity={0.85} onPress={() => onPress(event)}>
-            {card}
+        <TouchableOpacity style={styles.card} activeOpacity={0.85} onPress={() => onPress(event)}>
+            {cardBody}
         </TouchableOpacity>
     );
 }
@@ -290,7 +289,7 @@ export default function FrigateCameraModal({ visible, camera, service, onClose, 
 
     return (
         <Modal animationType="slide" transparent={false} visible={visible} onRequestClose={onClose}>
-            <FrigateEventPlayerModal
+            <FrigateEventImageModal
                 visible={!!selectedEvent}
                 event={selectedEvent}
                 adminUrl={service?.adminUrl}
@@ -438,12 +437,15 @@ const styles = StyleSheet.create({
         paddingBottom: 40,
     },
     columnWrapper: {
+        flexDirection: 'row',
         gap: 10,
         paddingHorizontal: 16,
         marginBottom: 10,
     },
     card: {
         flex: 1,
+        minWidth: 0,
+        maxWidth: '48.5%',
         flexDirection: 'column',
         backgroundColor: 'rgba(255,255,255,0.04)',
         borderWidth: 1,
@@ -478,21 +480,6 @@ const styles = StyleSheet.create({
         color: 'rgba(255,255,255,0.7)',
         fontSize: 9,
         fontFamily: CF.regular,
-    },
-    playBadge: {
-        position: 'absolute',
-        top: '50%',
-        left: '50%',
-        marginTop: -16,
-        marginLeft: -16,
-        width: 32,
-        height: 32,
-        borderRadius: 16,
-        backgroundColor: 'rgba(0,0,0,0.55)',
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.25)',
     },
     info: {
         padding: 8,

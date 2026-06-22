@@ -1,12 +1,12 @@
-import { useRef, useState, useEffect, useMemo, useCallback, lazy, Suspense } from 'react';
+import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
-import { prepareButlerCall } from '../services/butler/openButlerCall';
-
-const ButlerVoiceModal = lazy(() => import('../components/DashboardV2/ButlerVoiceModal'));
+import ButlerVoiceModal from '../components/DashboardV2/ButlerVoiceModal';
+import { canOpenButlerCall, runButlerBackgroundSetup } from '../services/butler/openButlerCall';
+import { getButlerBackendUrl } from '../utils/butlerBackend';
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator, InteractionManager } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator, InteractionManager, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import HeaderV2 from '../components/DashboardV2/HeaderV2';
@@ -127,6 +127,7 @@ export default function DashboardV2Tablet() {
         });
 
         loadConnectionConfig();
+        void getButlerBackendUrl();
     }, []);
 
     const loadConnectionConfig = async () => {
@@ -993,12 +994,17 @@ export default function DashboardV2Tablet() {
         })),
     }), [userName, roomsWithCounts]);
 
-    const handleVoiceAssistantPress = useCallback(async () => {
-        const ok = await prepareButlerCall({
+    const handleVoiceAssistantPress = useCallback(() => {
+        const gate = canOpenButlerCall();
+        if (!gate.ok) {
+            Alert.alert('Voice not available', gate.error ?? 'Butler voice is not supported.');
+            return;
+        }
+        setShowButlerCall(true);
+        runButlerBackgroundSetup({
             haUrl: connectionConfig.url,
             haToken: connectionConfig.token,
         });
-        if (ok) setShowButlerCall(true);
     }, [connectionConfig.url, connectionConfig.token]);
 
     const handleButlerCallClose = useCallback(() => {
@@ -1532,14 +1538,12 @@ export default function DashboardV2Tablet() {
             )}
 
             {showButlerCall ? (
-                <Suspense fallback={null}>
-                    <ButlerVoiceModal
-                        visible={showButlerCall}
-                        onClose={handleButlerCallClose}
-                        onSwitchToChat={handleButlerSwitchToChat}
-                        context={butlerVoiceContext}
-                    />
-                </Suspense>
+                <ButlerVoiceModal
+                    visible={showButlerCall}
+                    onClose={handleButlerCallClose}
+                    onSwitchToChat={handleButlerSwitchToChat}
+                    context={butlerVoiceContext}
+                />
             ) : null}
 
             {renderContent()}

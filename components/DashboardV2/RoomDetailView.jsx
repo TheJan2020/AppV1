@@ -5,7 +5,7 @@ import { X, Lightbulb, Fan, ChevronLeft, Droplets, Thermometer, DoorOpen, DoorCl
 import * as Haptics from 'expo-haptics';
 import { Colors } from '../../constants/Colors';
 import { CF, Heading } from '../../utils/typography';
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { authFetch } from '../../utils/authFetch';
 import { useParentScrollLock } from '../../hooks/useParentScrollLock';
 import { GestureHandlerRootView, PanGestureHandler, State } from 'react-native-gesture-handler';
@@ -32,6 +32,7 @@ import RoomGroupIconButton from './RoomGroupIconButton';
 import { LockPill } from './HomeAccess';
 import useDeviceType from '../../hooks/useDeviceType';
 import { lightSupportsBrightness } from '../../utils/lightCapabilities';
+import { findAdaptiveLightingForRoom, isAdaptiveLightingMainSwitch } from '../../utils/adaptiveLighting';
 
 // Convert area_id-style names (e.g. "living_room") to proper display names ("Living Room")
 const roomScenesPrefsKey = (areaId) => `room_scenes_show_prefs_${areaId}`;
@@ -476,6 +477,35 @@ export default function RoomDetailView({
         if (onToggle) onToggle('light', 'turn_on', { entity_id: entityId, rgb_color: rgb });
     };
 
+    const adaptiveLighting = useMemo(() => {
+        const lightIds = actualLightEntities.map((l) => l.entity_id);
+        return findAdaptiveLightingForRoom(allEntities, lightIds, room?.name, sceneAreaId);
+    }, [allEntities, actualLightEntities, room?.name, sceneAreaId]);
+
+    const handleAdaptiveToggle = useCallback(() => {
+        const entityId = adaptiveLighting?.main?.entity_id;
+        if (!entityId || !canControlHa) return;
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        guardedToggle('switch', 'toggle', { entity_id: entityId });
+    }, [adaptiveLighting, canControlHa]);
+
+    const handleAdaptiveManualColor = useCallback(() => {
+        const entityId = adaptiveLighting?.main?.entity_id;
+        if (!entityId || !canControlHa) return;
+        const current = allEntities.find((e) => e.entity_id === entityId);
+        if (current?.state === 'on') {
+            guardedToggle('switch', 'turn_off', { entity_id: entityId });
+        }
+    }, [adaptiveLighting, allEntities, canControlHa]);
+
+    const visibleSwitches = useMemo(
+        () => switches.filter((sw) => !isAdaptiveLightingMainSwitch({
+            entity_id: sw.entity_id,
+            attributes: sw.stateObj?.attributes || {},
+        })),
+        [switches],
+    );
+
     const handleActivatePreferences = async (entities) => {
         for (const entity of entities) {
             const domain = entity.entity_id.split('.')[0];
@@ -530,6 +560,10 @@ export default function RoomDetailView({
                         lightMappings={lightMappings}
                         adminUrl={adminUrl}
                         roomName={room.name}
+                        allEntities={allEntities}
+                        adaptiveLighting={adaptiveLighting}
+                        onAdaptiveToggle={handleAdaptiveToggle}
+                        onAdaptiveManualColor={handleAdaptiveManualColor}
                         contentWidth={useTabletLightsCoversSplit && lightsPanelWidth > 0 ? lightsPanelWidth : undefined}
                         gridColumns={useTabletLightsCoversSplit ? 1 : 2}
                         variant={useTabletLightsCoversSplit ? 'tabletSplit' : 'default'}
@@ -910,7 +944,13 @@ export default function RoomDetailView({
                                     const lockUnavailable = isBadEntityState(lockState);
                                     const isUnlocked = lockState === 'unlocked' || lockState === 'open';
                                     return (
-                                        <View key={lock.entity_id} style={styles.lockPillCell}>
+                                        <View
+                                            key={lock.entity_id}
+                                            style={[
+                                                styles.lockPillCell,
+                                                lockEntities.length === 1 && styles.lockPillCellFull,
+                                            ]}
+                                        >
                                             <LockPill
                                                 name={lock.displayName || lock.entity_id}
                                                 isUnlocked={isUnlocked}
@@ -1068,7 +1108,8 @@ export default function RoomDetailView({
                         </View>
                     )}
 
-                    {/* ── 7. Media — TV (`medias`) + music/speakers (`musicMedias` from `getRoomEntities`) ── */}
+                    {/* ── 7. Media — temporarily hidden ── */}
+                    {/*
                     {(medias.length > 0 || musicMedias.length > 0) && (() => {
                         const rootRows = medias
                             .filter(m => {
@@ -1159,14 +1200,16 @@ export default function RoomDetailView({
                             </View>
                         );
                     })()}
+                    */}
 
-                    {/* ── 9. Switches ── */}
-                    {switches.length > 0 && (
+                    {/* ── 9. Switches — temporarily hidden ── */}
+                    {/*
+                    {visibleSwitches.length > 0 && (
                         <View>
                             <View style={styles.divider} />
                             <Text style={styles.roomSectionHeading}>SWITCHES</Text>
                             <View style={styles.grid}>
-                                {switches.map(sw => (
+                                {visibleSwitches.map(sw => (
                                     <View key={sw.entity_id} style={{ width: cardWidth }}>
                                         <SwitchCard
                                             switchEntity={sw}
@@ -1181,6 +1224,7 @@ export default function RoomDetailView({
                             </View>
                         </View>
                     )}
+                    */}
 
                     {/* ── 11. Automations — at the end ── */}
                     {automations.length > 0 && (
@@ -1726,6 +1770,9 @@ const styles = StyleSheet.create({
     },
     lockPillCell: {
         width: '48%',
+    },
+    lockPillCellFull: {
+        width: '100%',
     },
     // ── Automations ──
     automationSection: {

@@ -232,6 +232,8 @@ export function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, 
     const pillBg       = '#13132A';
     const border       = isPassage
         ? C_BORDER
+        : isUnavailable
+            ? 'rgba(239,83,80,0.28)'
         : inTransit
             ? 'rgba(137,71,202,0.60)'
             : C_BORDER;
@@ -267,29 +269,20 @@ export function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, 
                         </Animated.View>
                     </>
                 ) : isUnavailable ? (
-                    <>
-                        <Animated.View style={[styles.pillLabelWrap, { paddingLeft: 14, paddingRight: KNOB + 8 }]} pointerEvents="none">
-                            <Text style={[styles.pillLabelName, { opacity: 0.55 }]} numberOfLines={1}>{name}</Text>
+                    <View style={styles.unavailableWrap} pointerEvents="none">
+                        <View style={styles.unavailableIcon}>
+                            <LockClosedIcon size={22} color="rgba(255,255,255,0.45)" />
+                        </View>
+                        <View style={styles.unavailableText}>
+                            <Text style={[styles.pillLabelName, styles.unavailableName]} numberOfLines={1}>{name}</Text>
                             <View style={styles.passageBadge}>
                                 <View style={[styles.passageDot, { backgroundColor: '#EF5350' }]} />
                                 <Text style={[styles.passageLabel, { color: 'rgba(239,83,80,0.9)' }]}>
                                     {entityState === 'unknown' ? 'Unknown' : 'Unavailable'}
                                 </Text>
                             </View>
-                        </Animated.View>
-                        <Animated.View
-                            style={[styles.knob, { transform: [{ translateX: 0 }], opacity: 0.45 }]}
-                            pointerEvents="none"
-                        >
-                            <LinearGradient
-                                colors={['#444', '#555']}
-                                start={{ x: 0, y: 0.5 }}
-                                end={{ x: 1, y: 0.5 }}
-                                style={StyleSheet.absoluteFill}
-                            />
-                            <LockClosedIcon size={26} color="rgba(255,255,255,0.5)" />
-                        </Animated.View>
-                    </>
+                        </View>
+                    </View>
                 ) : inTransit ? (
                     <Animated.View style={[styles.garageTransitCenter, transitLabelStyle]} pointerEvents="none">
                         <Text style={[styles.pillLabelName, { color: transitColor, fontWeight: '700', letterSpacing: 0.3 }]}>{transitLabel}</Text>
@@ -1328,6 +1321,30 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         marginTop: 3,
         gap: 4,
+    },
+    unavailableWrap: {
+        ...StyleSheet.absoluteFillObject,
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: 14,
+        gap: 10,
+    },
+    unavailableIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        backgroundColor: 'rgba(255,255,255,0.06)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexShrink: 0,
+    },
+    unavailableText: {
+        flex: 1,
+        minWidth: 0,
+        justifyContent: 'center',
+    },
+    unavailableName: {
+        opacity: 0.55,
     },
     passageDot: {
         width: 6,
