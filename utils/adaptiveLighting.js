@@ -32,7 +32,13 @@ export function collectRoomAdaptiveLookupKeys(roomName, areaId) {
 }
 
 function friendlyLower(entity) {
-    return String(entity?.attributes?.friendly_name || '').trim().toLowerCase();
+    return String(
+        entity?.attributes?.friendly_name
+        || entity?.displayName
+        || entity?.name
+        || entity?.original_name
+        || '',
+    ).trim().toLowerCase();
 }
 
 /** Sub-switches (1–3 in HA): sleep, adapt color, adapt brightness — not the main card. */
@@ -50,8 +56,7 @@ function isAdaptiveSubSwitch(entity) {
     return false;
 }
 
-/**
- * Main adaptive lighting switch for a room — friendly name "Adaptive Lighting"
+/** Main adaptive lighting switch for a room — friendly name "Adaptive Lighting"
  * (legacy ": CCT" / ": RGB" suffix switches are ignored).
  */
 export function isAdaptiveLightingMainSwitch(entity) {
@@ -66,9 +71,41 @@ export function isAdaptiveLightingMainSwitch(entity) {
     if (/:\s*(cct|rgb)\s*$/i.test(friendly)) return false;
 
     if (friendly === 'adaptive lighting') return true;
-    if (/^adaptive lighting\b/i.test(friendly)) return true;
+    if (/\badaptive lighting\b/i.test(friendly)) return true;
 
     return false;
+}
+
+function isAdaptiveLightingMainByEntityId(entity) {
+    const id = (entity?.entity_id || '').toLowerCase();
+    if (!id.startsWith('switch.') || !id.includes('adaptive_lighting')) return false;
+    return !isAdaptiveSubSwitch(entity);
+}
+
+/** Name or entity_id match for the single main adaptive switch (not sub-features). */
+export function isAdaptiveLightingMainEntity(entity) {
+    return isAdaptiveLightingMainSwitch(entity) || isAdaptiveLightingMainByEntityId(entity);
+}
+
+function normalizeRoomSwitchEntity(sw, fromAll) {
+    const entityId = sw?.entity_id;
+    const attrs = {
+        ...(sw?.stateObj?.attributes || {}),
+        ...(fromAll?.attributes || {}),
+    };
+    if (!attrs.friendly_name) {
+        const registryName = sw?.displayName || sw?.name || sw?.original_name;
+        if (registryName) attrs.friendly_name = registryName;
+    }
+    return {
+        ...(fromAll || {}),
+        entity_id: entityId,
+        state: fromAll?.state ?? sw?.stateObj?.state,
+        attributes: attrs,
+        displayName: sw?.displayName,
+        name: sw?.name,
+        original_name: sw?.original_name,
+    };
 }
 
 function scoreMainForRoom(mainEntity, lookupKeys, lightIdSet) {
@@ -92,7 +129,7 @@ function scoreMainForRoom(mainEntity, lookupKeys, lightIdSet) {
     return score;
 }
 
-function pickBestMain(candidates, lookupKeys, lightIdSet, roomHasLights) {
+function pickBestMain(candidates, lookupKeys, lightIdSet) {
     let best = null;
     let bestScore = 0;
 
@@ -106,13 +143,28 @@ function pickBestMain(candidates, lookupKeys, lightIdSet, roomHasLights) {
 
     if (best && bestScore > 0) return best;
 
-    if (candidates.length === 1 && roomHasLights) return candidates[0];
+    // Name may be generic ("Adaptive Lighting") — match by controlled lights overlap
+    if (lightIdSet.size) {
+        let bestOverlap = 0;
+        let bestByLights = null;
+        for (const main of candidates) {
+            const controlled = main.attributes?.lights;
+            if (!Array.isArray(controlled)) continue;
+            const overlap = controlled.filter((lid) => lightIdSet.has(lid)).length;
+            if (overlap > bestOverlap) {
+                bestOverlap = overlap;
+                bestByLights = main;
+            }
+        }
+        if (bestByLights && bestOverlap > 0) return bestByLights;
+    }
 
     return null;
 }
 
 /**
  * Find the single "Adaptive Lighting" switch for a room.
+ * @param {object[]} [roomSwitches] — switch entities assigned to this room (preferred)
  * @returns {{ main: object } | null}
  */
 export function findAdaptiveLightingForRoom(
@@ -120,6 +172,7 @@ export function findAdaptiveLightingForRoom(
     lightEntityIds,
     roomName,
     areaId,
+    roomSwitches = [],
 ) {
     if (!Array.isArray(allEntities) || !allEntities.length) return null;
 
@@ -128,9 +181,20 @@ export function findAdaptiveLightingForRoom(
     );
     if (!lightIdSet.size) return null;
 
+    // Prefer the main switch assigned to this room in HA (entity registry / area).
+    for (const sw of roomSwitches) {
+        const entityId = sw?.entity_id;
+        if (!entityId?.startsWith('switch.')) continue;
+        const fromAll = allEntities.find((e) => e.entity_id === entityId);
+        const entity = normalizeRoomSwitchEntity(sw, fromAll);
+        if (isAdaptiveLightingMainEntity(entity)) {
+            return { main: entity };
+        }
+    }
+
     const lookupKeys = collectRoomAdaptiveLookupKeys(roomName, areaId);
-    const candidates = allEntities.filter(isAdaptiveLightingMainSwitch);
-    const main = pickBestMain(candidates, lookupKeys, lightIdSet, lightIdSet.size > 0);
+    const candidates = allEntities.filter(isAdaptiveLightingMainEntity);
+    const main = pickBestMain(candidates, lookupKeys, lightIdSet);
 
     return main ? { main } : null;
 }

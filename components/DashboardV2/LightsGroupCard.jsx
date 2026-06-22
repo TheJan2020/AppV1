@@ -1,8 +1,8 @@
 /**
  * LightsGroupCard  (v2 – fully rewritten)
  * ────────────────────────────────────────
- * Collapsed  → header + adaptive dots row + master-brightness slider + chevron
- * Expanded   → CCT/RGB master sliders (if supported) + 2-column grid of ExpandedLightCard
+ * Collapsed  → header + dots + brightness slider (if supported) + chevron
+ * Expanded   → adaptive lighting (if configured) + CCT/RGB sliders + light grid
  *
  * Figma-exact border colours:
  *   CCT   → linear-gradient(90deg, #FFE95F 0%, #FFFFFF 49%, #7FB2FF 100%)
@@ -31,7 +31,10 @@ import {
     getLightEffectiveCapability,
     isMasterControllerLight,
     lightSupportsBrightness,
+    lightSupportsCCT,
+    lightSupportsRGB,
 } from '../../utils/lightCapabilities';
+import { readColorTempKelvin } from '../../utils/lightServicePayload';
 
 function entityStateOn(allEntities, entityId) {
     if (!entityId || !Array.isArray(allEntities)) return false;
@@ -678,13 +681,37 @@ export default function LightsGroupCard({
     }, [savedScene, onTurnOn, onToggle, onBrightnessChange, onColorTempChange, onRgbChange, lights]);
 
     // ── Derived capability flags ──────────────────────────────────────────
-    const hasCCT = lights.some(l => effectiveCap(l) === 'cct');
-    const hasRGB = lights.some(l => effectiveCap(l) === 'rgb');
-    const hasOnDimmableLights = lights.some(l =>
-        l.stateObj.state === 'on' &&
-        supportsBrightnessFor(l) &&
-        !isMasterControllerLight(l),
+    const controllableLights = useMemo(
+        () => lights.filter((l) => !isMasterControllerLight(l)),
+        [lights],
     );
+
+    const masterControllerEntity = useMemo(() => {
+        const fromRoom = lights.find((l) => isMasterControllerLight(l));
+        if (fromRoom) return fromRoom;
+
+        const roomSlug = roomName.trim().toLowerCase().replace(/\s+/g, '_');
+        const fromAll = (allEntities || []).find((e) => {
+            if (!e?.entity_id?.startsWith('light.')) return false;
+            const id = e.entity_id.toLowerCase();
+            const name = String(e.attributes?.friendly_name || '').toLowerCase();
+            if (!id.includes('master_controller') && !name.includes('master controller')) return false;
+            if (!roomSlug) return true;
+            return id.includes(roomSlug) || name.includes(roomSlug.replace(/_/g, ' '));
+        });
+        if (!fromAll) return null;
+        return {
+            entity_id: fromAll.entity_id,
+            displayName: fromAll.attributes?.friendly_name || fromAll.entity_id,
+            stateObj: fromAll,
+        };
+    }, [lights, allEntities, roomName]);
+
+    const hasCCT = controllableLights.some((l) => lightSupportsCCT(l, mappingFor(l)));
+    const hasRGB = controllableLights.some((l) => lightSupportsRGB(l, mappingFor(l)));
+
+    /** Show brightness slider when any room light supports brightness (on or off). */
+    const hasDimmableLights = controllableLights.some((l) => supportsBrightnessFor(l));
 
     /** Restore only when bookmark exists and live room state has drifted from it */
     const showRestoreButton = useMemo(
@@ -692,14 +719,12 @@ export default function LightsGroupCard({
         [savedScene, lights, isMasterController, effectiveCap],
     );
 
-    // For master controller rooms: only show CCT/RGB sliders if the master
-    // controller entity itself supports those capabilities.
-    const masterControllerEntity = lights.find(l =>
-        l.entity_id.toLowerCase().includes('master_controller') ||
-        l.displayName?.toLowerCase().includes('master controller')
-    );
-    const masterHasCCT = masterControllerEntity ? effectiveCap(masterControllerEntity) === 'cct' || effectiveCap(masterControllerEntity) === 'rgb' : hasCCT;
-    const masterHasRGB = masterControllerEntity ? effectiveCap(masterControllerEntity) === 'rgb' : hasRGB;
+    // Group CCT/RGB sliders only when a master controller exists — otherwise use per-light controls.
+    const masterMapping = masterControllerEntity ? mappingFor(masterControllerEntity) : null;
+    const showCCTSlider = !!masterControllerEntity
+        && (lightSupportsCCT(masterControllerEntity, masterMapping) || hasCCT);
+    const showRGBSlider = !!masterControllerEntity
+        && (lightSupportsRGB(masterControllerEntity, masterMapping) || hasRGB);
 
     // ── Last-known brightness per light ──────────────────────────────────
     // Updated whenever a light is ON and has brightness.
@@ -723,10 +748,8 @@ export default function LightsGroupCard({
     // would skew the average (they're the controller, not a real light).
     // Non-dimmable on/off lights are excluded so they don't skew the bar.
     const avgBrightness = () => {
-        const dimmableOn = lights.filter(l =>
-            l.stateObj.state === 'on' &&
-            supportsBrightnessFor(l) &&
-            !isMasterControllerLight(l)
+        const dimmableOn = controllableLights.filter(
+            (l) => l.stateObj.state === 'on' && supportsBrightnessFor(l),
         );
         if (!dimmableOn.length) return 0;
         return dimmableOn.reduce(
@@ -757,46 +780,65 @@ export default function LightsGroupCard({
         if (!brightnessBlocked.current) setMasterBrightness(avgBrightness());
     }, [lights]);
 
-    // ── CCT from master controller entity ────────────────────────────────
-    // Reads live color_temp_kelvin from the master_controller entity.
-    // Falls back to a warm default if the master has no CCT state yet.
-    const masterCCTPctFromEntity = () => {
-        const mc = lights.find(l =>
-            l.entity_id.toLowerCase().includes('master_controller') ||
-            l.displayName?.toLowerCase().includes('master controller')
+    // CCT / RGB slider values — master controller when present, else average of ON room lights
+    const cctPctFromRoom = useCallback(() => {
+        if (masterControllerEntity) {
+            const k = readColorTempKelvin(masterControllerEntity.stateObj?.attributes || {});
+            return k ? kelvinToPct(k) : 30;
+        }
+        const onColor = controllableLights.filter(
+            (l) => l.stateObj?.state === 'on' && (effectiveCap(l) === 'cct' || effectiveCap(l) === 'rgb'),
         );
-        const k = mc?.stateObj?.attributes?.color_temp_kelvin;
-        return k ? kelvinToPct(k) : 30; // default: warm-ish
-    };
-    const [masterCCTPct, setMasterCCTPct] = useState(masterCCTPctFromEntity);
-    useEffect(() => {
-        if (!cctBlocked.current) setMasterCCTPct(masterCCTPctFromEntity());
-    }, [lights]);
+        const withK = onColor.filter((l) => l.stateObj?.attributes?.color_temp_kelvin != null);
+        if (!withK.length) return 30;
+        const avgK = withK.reduce((s, l) => s + l.stateObj.attributes.color_temp_kelvin, 0) / withK.length;
+        return kelvinToPct(avgK);
+    }, [masterControllerEntity, controllableLights, effectiveCap]);
 
-    // ── RGB hue from master controller entity ─────────────────────────────
-    // Reads live rgb_color from the master_controller entity.
-    // Falls back to a purple-ish default if not available.
-    const masterRGBPctFromEntity = () => {
-        const mc = lights.find(l =>
-            l.entity_id.toLowerCase().includes('master_controller') ||
-            l.displayName?.toLowerCase().includes('master controller')
+    const rgbPctFromRoom = useCallback(() => {
+        if (masterControllerEntity) {
+            const rgb = masterControllerEntity.stateObj?.attributes?.rgb_color;
+            if (!rgb) return 70;
+            const [rv, gv, bv] = [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255];
+            const max = Math.max(rv, gv, bv);
+            const min = Math.min(rv, gv, bv);
+            const d = max - min;
+            let h = 0;
+            if (d > 0) {
+                if (max === rv) h = ((gv - bv) / d + (gv < bv ? 6 : 0)) / 6;
+                else if (max === gv) h = ((bv - rv) / d + 2) / 6;
+                else h = ((rv - gv) / d + 4) / 6;
+            }
+            return h * 100;
+        }
+        const onRgb = controllableLights.filter(
+            (l) => l.stateObj?.state === 'on' && effectiveCap(l) === 'rgb',
         );
-        const rgb = mc?.stateObj?.attributes?.rgb_color;
-        if (!rgb) return 70; // default purple-ish
+        const withRgb = onRgb.filter((l) => Array.isArray(l.stateObj?.attributes?.rgb_color));
+        if (!withRgb.length) return 70;
+        const rgb = withRgb[0].stateObj.attributes.rgb_color;
         const [rv, gv, bv] = [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255];
-        const max = Math.max(rv, gv, bv), min = Math.min(rv, gv, bv), d = max - min;
+        const max = Math.max(rv, gv, bv);
+        const min = Math.min(rv, gv, bv);
+        const d = max - min;
         let h = 0;
         if (d > 0) {
-            if (max === rv)       h = ((gv - bv) / d + (gv < bv ? 6 : 0)) / 6;
-            else if (max === gv)  h = ((bv - rv) / d + 2) / 6;
-            else                  h = ((rv - gv) / d + 4) / 6;
+            if (max === rv) h = ((gv - bv) / d + (gv < bv ? 6 : 0)) / 6;
+            else if (max === gv) h = ((bv - rv) / d + 2) / 6;
+            else h = ((rv - gv) / d + 4) / 6;
         }
         return h * 100;
-    };
-    const [masterRGBPct, setMasterRGBPct] = useState(masterRGBPctFromEntity);
+    }, [masterControllerEntity, controllableLights, effectiveCap]);
+
+    const [masterCCTPct, setMasterCCTPct] = useState(() => cctPctFromRoom());
     useEffect(() => {
-        if (!rgbBlocked.current) setMasterRGBPct(masterRGBPctFromEntity());
-    }, [lights]);
+        if (!cctBlocked.current) setMasterCCTPct(cctPctFromRoom());
+    }, [lights, cctPctFromRoom]);
+
+    const [masterRGBPct, setMasterRGBPct] = useState(() => rgbPctFromRoom());
+    useEffect(() => {
+        if (!rgbBlocked.current) setMasterRGBPct(rgbPctFromRoom());
+    }, [lights, rgbPctFromRoom]);
 
     // ── Handlers ──────────────────────────────────────────────────────────
     const onLightsCount = lights.filter(l =>
@@ -878,26 +920,48 @@ export default function LightsGroupCard({
         work.forEach(item => onBrightnessChange?.(item.entity_id, Math.round(item.newVal)));
     }, [lights, lightMappings, onBrightnessChange]);
 
+    const resolveCctTargets = useCallback(() => {
+        const mc = masterControllerEntity || lights.find((l) => isMasterControllerLight(l));
+        if (mc && lightSupportsCCT(mc, mappingFor(mc))) {
+            return [mc.entity_id];
+        }
+        if (mc) {
+            const members = controllableLights
+                .filter((l) => l.stateObj?.state === 'on' && (effectiveCap(l) === 'cct' || effectiveCap(l) === 'rgb'))
+                .map((l) => l.entity_id);
+            if (members.length) return members;
+            return [mc.entity_id];
+        }
+        return controllableLights
+            .filter((l) => l.stateObj?.state === 'on' && (effectiveCap(l) === 'cct' || effectiveCap(l) === 'rgb'))
+            .map((l) => l.entity_id);
+    }, [masterControllerEntity, lights, controllableLights, effectiveCap, mappingFor]);
+
+    const resolveRgbTargets = useCallback(() => {
+        const mc = masterControllerEntity || lights.find((l) => isMasterControllerLight(l));
+        if (mc && lightSupportsRGB(mc, mappingFor(mc))) {
+            return [mc.entity_id];
+        }
+        if (mc) {
+            const members = controllableLights
+                .filter((l) => l.stateObj?.state === 'on' && effectiveCap(l) === 'rgb')
+                .map((l) => l.entity_id);
+            if (members.length) return members;
+            return [mc.entity_id];
+        }
+        return controllableLights
+            .filter((l) => l.stateObj?.state === 'on' && effectiveCap(l) === 'rgb')
+            .map((l) => l.entity_id);
+    }, [masterControllerEntity, lights, controllableLights, effectiveCap, mappingFor]);
+
     const handleCCTRelease = useCallback((pct) => {
         if (adaptiveLinked) {
             onAdaptiveManualColor?.();
         }
         blockSync(cctBlocked, cctBlockTimer);
         const kelvin = pctToKelvin(pct);
-        if (isMasterController) {
-            const mc = lights.find(l =>
-                l.entity_id.toLowerCase().includes('master_controller') ||
-                l.displayName?.toLowerCase().includes('master controller')
-            );
-            if (mc) onColorTempChange?.(mc.entity_id, kelvin);
-        } else {
-            lights.forEach(l => {
-                if (l.stateObj.state !== 'on') return;
-                const cap = effectiveCap(l);
-                if (cap === 'cct' || cap === 'rgb') onColorTempChange?.(l.entity_id, kelvin);
-            });
-        }
-    }, [lights, lightMappings, onColorTempChange, isMasterController, adaptiveLinked, onAdaptiveManualColor]);
+        resolveCctTargets().forEach((entityId) => onColorTempChange?.(entityId, kelvin));
+    }, [onColorTempChange, adaptiveLinked, onAdaptiveManualColor, resolveCctTargets]);
 
     const handleRGBRelease = useCallback((pct) => {
         if (adaptiveLinked) {
@@ -906,19 +970,8 @@ export default function LightsGroupCard({
         blockSync(rgbBlocked, rgbBlockTimer);
         const hue = (pct / 100) * 360;
         const rgb = hueToRgb(hue);
-        if (isMasterController) {
-            const mc = lights.find(l =>
-                l.entity_id.toLowerCase().includes('master_controller') ||
-                l.displayName?.toLowerCase().includes('master controller')
-            );
-            if (mc) onRgbChange?.(mc.entity_id, rgb);
-        } else {
-            lights.forEach(l => {
-                if (l.stateObj.state !== 'on') return;
-                if (effectiveCap(l) === 'rgb') onRgbChange?.(l.entity_id, rgb);
-            });
-        }
-    }, [lights, lightMappings, onRgbChange, isMasterController, adaptiveLinked, onAdaptiveManualColor]);
+        resolveRgbTargets().forEach((entityId) => onRgbChange?.(entityId, rgb));
+    }, [onRgbChange, adaptiveLinked, onAdaptiveManualColor, resolveRgbTargets]);
 
     const toggle = () => {
         LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
@@ -1087,8 +1140,8 @@ export default function LightsGroupCard({
                 !l.displayName?.toLowerCase().includes('master controller')
             )} />
 
-            {/* Master brightness — only when at least one ON light supports dimming */}
-            {hasOnDimmableLights && (
+            {/* Collapsed — brightness only */}
+            {hasDimmableLights && (
                 <View style={[styles.spectrumBlock, isTabletSplit && styles.spectrumBlockTabletSplit]}>
                     <BrightnessSlider
                         value={masterBrightness}
@@ -1107,8 +1160,6 @@ export default function LightsGroupCard({
                 </View>
             )}
 
-            {hasCCT && masterHasCCT && cctSpectrumSlider(isTabletSplit)}
-
             {/* Chevron */}
             <TouchableOpacity style={styles.chevron} onPress={toggle} activeOpacity={0.7}>
                 {expanded
@@ -1116,7 +1167,7 @@ export default function LightsGroupCard({
                     : <ChevronDown size={22} color="rgba(255,255,255,0.45)" />}
             </TouchableOpacity>
 
-            {/* Expanded — CCT/RGB + per-light grid */}
+            {/* Expanded — adaptive + CCT/RGB + per-light grid */}
             {expanded && (
                 <>
             {hasAdaptive && (
@@ -1125,9 +1176,9 @@ export default function LightsGroupCard({
                 </View>
             )}
 
-            {hasCCT && !masterHasCCT && cctSpectrumSlider(isTabletSplit)}
+            {showCCTSlider && cctSpectrumSlider(isTabletSplit)}
 
-            {hasRGB && !adaptiveLinked && (
+            {showRGBSlider && !adaptiveLinked && (
                 <SpectrumSlider
                     value={masterRGBPct}
                     colors={[

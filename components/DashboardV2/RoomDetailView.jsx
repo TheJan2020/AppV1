@@ -32,7 +32,8 @@ import RoomGroupIconButton from './RoomGroupIconButton';
 import { LockPill } from './HomeAccess';
 import useDeviceType from '../../hooks/useDeviceType';
 import { lightSupportsBrightness } from '../../utils/lightCapabilities';
-import { findAdaptiveLightingForRoom, isAdaptiveLightingMainSwitch } from '../../utils/adaptiveLighting';
+import { findAdaptiveLightingForRoom, isAdaptiveLightingMainEntity } from '../../utils/adaptiveLighting';
+import { buildLightColorTempPayload, buildLightRgbPayload } from '../../utils/lightServicePayload';
 
 // Convert area_id-style names (e.g. "living_room") to proper display names ("Living Room")
 const roomScenesPrefsKey = (areaId) => `room_scenes_show_prefs_${areaId}`;
@@ -455,6 +456,13 @@ export default function RoomDetailView({
     const lockEntities = lights.filter(l => l.entity_id.startsWith('lock.'));
     const actualLightEntities = lights.filter(l => !l.entity_id.startsWith('lock.'));
 
+    const resolveLightEntity = useCallback((entityId) => {
+        const fromAll = allEntities.find((e) => e.entity_id === entityId);
+        if (fromAll) return fromAll;
+        const fromRoom = actualLightEntities.find((l) => l.entity_id === entityId);
+        return fromRoom?.stateObj || null;
+    }, [allEntities, actualLightEntities]);
+
     const handleUpdate = (entityId, payload) => {
         if (payload.toggle) {
             // Power toggle from modal header
@@ -462,7 +470,19 @@ export default function RoomDetailView({
             if (onToggle) onToggle('light', 'toggle', { entity_id: entityId });
             return;
         }
-        if (onToggle) onToggle('light', 'turn_on', { entity_id: entityId, ...payload });
+        if (!onToggle) return;
+        const entity = resolveLightEntity(entityId);
+        if (payload.brightness !== undefined) {
+            onToggle('light', 'turn_on', { entity_id: entityId, brightness: payload.brightness });
+            return;
+        }
+        if (payload.kelvin !== undefined) {
+            onToggle('light', 'turn_on', buildLightColorTempPayload(entityId, entity, payload.kelvin));
+            return;
+        }
+        if (payload.rgb_color !== undefined) {
+            onToggle('light', 'turn_on', buildLightRgbPayload(entityId, entity, payload.rgb_color));
+        }
     };
 
     const handleBrightness = (entityId, brightness) => {
@@ -470,17 +490,21 @@ export default function RoomDetailView({
     };
 
     const handleColorTemp = (entityId, kelvin) => {
-        if (onToggle) onToggle('light', 'turn_on', { entity_id: entityId, color_temp_kelvin: kelvin });
+        if (!onToggle) return;
+        const entity = resolveLightEntity(entityId);
+        onToggle('light', 'turn_on', buildLightColorTempPayload(entityId, entity, kelvin));
     };
 
     const handleRgb = (entityId, rgb) => {
-        if (onToggle) onToggle('light', 'turn_on', { entity_id: entityId, rgb_color: rgb });
+        if (!onToggle) return;
+        const entity = resolveLightEntity(entityId);
+        onToggle('light', 'turn_on', buildLightRgbPayload(entityId, entity, rgb));
     };
 
     const adaptiveLighting = useMemo(() => {
         const lightIds = actualLightEntities.map((l) => l.entity_id);
-        return findAdaptiveLightingForRoom(allEntities, lightIds, room?.name, sceneAreaId);
-    }, [allEntities, actualLightEntities, room?.name, sceneAreaId]);
+        return findAdaptiveLightingForRoom(allEntities, lightIds, room?.name, sceneAreaId, switches);
+    }, [allEntities, actualLightEntities, room?.name, sceneAreaId, switches]);
 
     const handleAdaptiveToggle = useCallback(() => {
         const entityId = adaptiveLighting?.main?.entity_id;
@@ -499,10 +523,16 @@ export default function RoomDetailView({
     }, [adaptiveLighting, allEntities, canControlHa]);
 
     const visibleSwitches = useMemo(
-        () => switches.filter((sw) => !isAdaptiveLightingMainSwitch({
-            entity_id: sw.entity_id,
-            attributes: sw.stateObj?.attributes || {},
-        })),
+        () => switches.filter((sw) => {
+            const entity = {
+                entity_id: sw.entity_id,
+                attributes: sw.stateObj?.attributes || {},
+                displayName: sw.displayName,
+                name: sw.name,
+                original_name: sw.original_name,
+            };
+            return !isAdaptiveLightingMainEntity(entity);
+        }),
         [switches],
     );
 

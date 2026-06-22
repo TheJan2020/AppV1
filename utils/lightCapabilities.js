@@ -60,3 +60,21 @@ export function isMasterControllerLight(light) {
     const name = light?.displayName?.toLowerCase() || '';
     return id.includes('master_controller') || name.includes('master controller');
 }
+
+/** True when entity supports color temperature (mapping or HA color_temp mode). */
+export function lightSupportsCCT(light, mapping = null) {
+    const cap = getLightEffectiveCapability(light, mapping);
+    if (cap === 'cct' || cap === 'rgb') return true;
+    const modes = light?.stateObj?.attributes?.supported_color_modes || [];
+    if (modes.includes('color_temp')) return true;
+    return light?.stateObj?.attributes?.color_temp_kelvin != null;
+}
+
+/** True when entity supports RGB / HS color (mapping or HA modes). */
+export function lightSupportsRGB(light, mapping = null) {
+    const cap = getLightEffectiveCapability(light, mapping);
+    if (cap === 'rgb') return true;
+    const modes = light?.stateObj?.attributes?.supported_color_modes || [];
+    if (modes.some((m) => RGB_MODES.has(m))) return true;
+    return Array.isArray(light?.stateObj?.attributes?.rgb_color);
+}

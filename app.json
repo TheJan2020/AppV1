@@ -14,7 +14,7 @@
     },
     "ios": {
       "bundleIdentifier": "ai.primewave.app",
-      "buildNumber": "54",
+      "buildNumber": "55",
       "supportsTablet": true,
       "entitlements": {
         "aps-environment": "production"
