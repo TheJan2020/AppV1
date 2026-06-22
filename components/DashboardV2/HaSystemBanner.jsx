@@ -1,4 +1,4 @@
-import { Alert, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { Alert, Linking, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { AlertTriangle, ChevronRight, ServerOff, WifiOff } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
 
@@ -22,7 +22,19 @@ export default function HaSystemBanner({ banner }) {
     const label = banner.shortLabel || banner.title;
 
     const onPress = () => {
-        Alert.alert(banner.title, banner.body, [{ text: 'OK' }]);
+        const buttons = [{ text: 'OK' }];
+        
+        // Add "Contact Support" button for critical system issues
+        if (banner.variant === 'ha_down' || banner.variant === 'admin_down' || banner.variant === 'degraded') {
+            buttons.unshift({
+                text: 'Contact Support',
+                onPress: () => {
+                    Linking.openURL('mailto:info@primewave.ai?subject=Primewave System Issue&body=Issue: ' + banner.title);
+                }
+            });
+        }
+
+        Alert.alert(banner.title, banner.body, buttons);
     };
 
     return (

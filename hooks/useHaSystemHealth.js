@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import {
     analyzeEntitiesHealth,
     HA_STATUS,
@@ -7,8 +7,64 @@ import {
 
 /**
  * Derive banner copy + whether HA service calls should be allowed.
+ * Warnings are delayed by 10 seconds to avoid showing transient connection issues.
  */
 export function useHaSystemHealth({ entities = [], haStatus, adminStatus }) {
+    const [debouncedStatus, setDebouncedStatus] = useState({
+        haStatus: haStatus,
+        adminStatus: adminStatus,
+        showWarning: false,
+    });
+    const timerRef = useRef(null);
+    const errorStartTimeRef = useRef(null);
+
+    // Debounce error states by 10 seconds
+    useEffect(() => {
+        const hasError = 
+            haStatus === HA_STATUS.DISCONNECTED ||
+            haStatus === HA_STATUS.AUTH_FAILED ||
+            adminStatus === ADMIN_STATUS.ERROR;
+
+        const hasDegradedEntities = analyzeEntitiesHealth(entities, { thresholdPct: 0.5 }).isDegraded;
+
+        if (hasError || hasDegradedEntities) {
+            // Start or continue error timer
+            if (!errorStartTimeRef.current) {
+                errorStartTimeRef.current = Date.now();
+            }
+
+            if (timerRef.current) {
+                clearTimeout(timerRef.current);
+            }
+
+            timerRef.current = setTimeout(() => {
+                setDebouncedStatus({
+                    haStatus,
+                    adminStatus,
+                    showWarning: true,
+                });
+            }, 10000); // 10 second delay
+        } else {
+            // Clear error state immediately when recovered
+            if (timerRef.current) {
+                clearTimeout(timerRef.current);
+                timerRef.current = null;
+            }
+            errorStartTimeRef.current = null;
+            setDebouncedStatus({
+                haStatus,
+                adminStatus,
+                showWarning: false,
+            });
+        }
+
+        return () => {
+            if (timerRef.current) {
+                clearTimeout(timerRef.current);
+            }
+        };
+    }, [haStatus, adminStatus, entities]);
+
     return useMemo(() => {
         const entityHealth = analyzeEntitiesHealth(entities, { thresholdPct: 0.5 });
 
@@ -21,6 +77,11 @@ export function useHaSystemHealth({ entities = [], haStatus, adminStatus }) {
         const adminDown = adminStatus === ADMIN_STATUS.ERROR;
 
         let banner = null;
+
+        // Only show banner if debounce timer has completed OR if it's a config issue (NOT_CONFIGURED/AUTH_FAILED)
+        const shouldShowBanner = debouncedStatus.showWarning || 
+            haStatus === HA_STATUS.NOT_CONFIGURED || 
+            haStatus === HA_STATUS.AUTH_FAILED;
 
         if (haLoading) {
             banner = null;
@@ -38,27 +99,27 @@ export function useHaSystemHealth({ entities = [], haStatus, adminStatus }) {
                 title: 'Home Assistant login failed',
                 body: 'Your access token was rejected. Check Settings and try again.',
             };
-        } else if (haStatus === HA_STATUS.DISCONNECTED) {
+        } else if (shouldShowBanner && haStatus === HA_STATUS.DISCONNECTED) {
             banner = {
                 variant: 'ha_down',
                 shortLabel: 'HA is down',
                 title: 'Home Assistant is offline',
-                body: 'Cannot reach your Home Assistant server. Controls are disabled until it reconnects.',
+                body: 'Cannot reach your Home Assistant server. Controls are disabled until it reconnects. If this persists, please contact support.',
             };
-        } else if (adminDown) {
+        } else if (shouldShowBanner && adminDown) {
             banner = {
                 variant: 'admin_down',
                 shortLabel: 'Admin server down',
-                title: 'Admin dashboard unreachable',
-                body: 'Scenes, mappings, and some features may not work until the admin server is back.',
+                title: 'System issue detected',
+                body: 'The admin dashboard is unreachable. Scenes, mappings, and some features may not work. Please contact support if this continues.',
             };
-        } else if (entityHealth.isDegraded) {
+        } else if (shouldShowBanner && entityHealth.isDegraded) {
             const pct = Math.round(entityHealth.badPct * 100);
             banner = {
                 variant: 'degraded',
                 shortLabel: 'HA is down',
                 title: 'Home Assistant degraded',
-                body: `${entityHealth.badCount} of ${entityHealth.total} devices are unknown or unavailable (${pct}%). Home Assistant may be starting up or having issues.`,
+                body: `${entityHealth.badCount} of ${entityHealth.total} devices are unknown or unavailable (${pct}%). Home Assistant may be starting up or having issues. Contact support if this persists.`,
             };
         }
 
@@ -72,5 +133,5 @@ export function useHaSystemHealth({ entities = [], haStatus, adminStatus }) {
             haDisconnected,
             adminDown,
         };
-    }, [entities, haStatus, adminStatus]);
+    }, [entities, haStatus, adminStatus, debouncedStatus.showWarning]);
 }
