@@ -5,7 +5,7 @@ const SAMPLE_RATE = 24000;
 function getNativePlayer() {
     if (!isPcmPlayerAvailable()) {
         throw new Error(
-            'expo-pcm-player native module missing. Rebuild the dev client: npx expo run:ios --device',
+            'expo-pcm-player native module missing. Rebuild the native app.',
         );
     }
     return require('expo-pcm-player').default;

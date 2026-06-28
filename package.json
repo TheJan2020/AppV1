@@ -7,7 +7,8 @@
     "start:dev-client": "expo start --dev-client",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "postinstall": "patch-package"
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "2.2.0",
@@ -53,10 +54,13 @@
   "private": true,
   "expo": {
     "autolinking": {
-      "searchPaths": ["./modules"]
+      "searchPaths": [
+        "./modules"
+      ]
     }
   },
   "devDependencies": {
-    "babel-preset-expo": "^54.0.9"
+    "babel-preset-expo": "^54.0.9",
+    "patch-package": "^8.0.1"
   }
 }

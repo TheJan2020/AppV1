@@ -1,0 +1,68 @@
+diff --git a/node_modules/react-native-live-audio-stream/ios/RNLiveAudioStream.m b/node_modules/react-native-live-audio-stream/ios/RNLiveAudioStream.m
+index a6f2317..635d78a 100644
+--- a/node_modules/react-native-live-audio-stream/ios/RNLiveAudioStream.m
++++ b/node_modules/react-native-live-audio-stream/ios/RNLiveAudioStream.m
+@@ -23,23 +23,35 @@ @implementation RNLiveAudioStream
+     RCTLogInfo(@"[RNLiveAudioStream] start");
+     AVAudioSession *audioSession = [AVAudioSession sharedInstance];
+     NSError *error = nil;
+-    BOOL success;
+-
+-    // Apple recommended:
+-    // Instead of setting your category and mode properties independently, set them at the same time
+-    if (@available(iOS 10.0, *)) {
+-        success = [audioSession setCategory: AVAudioSessionCategoryPlayAndRecord
+-                                       mode: AVAudioSessionModeVoiceChat
+-                                    options: AVAudioSessionCategoryOptionDuckOthers |
+-                                             AVAudioSessionCategoryOptionAllowBluetooth |
+-                                             AVAudioSessionCategoryOptionAllowAirPlay
+-                                      error: &error];
+-    } else {
+-        success = [audioSession setCategory: AVAudioSessionCategoryPlayAndRecord withOptions: AVAudioSessionCategoryOptionDuckOthers error: &error];
+-        success = [audioSession setMode: AVAudioSessionModeVoiceChat error: &error] && success;
++    BOOL success = YES;
++
++    // Primewave: ExpoPcmPlayer already configures AVAudioSession before mic start.
++    // Re-setting category/mode while AVAudioEngine is running crashes on iOS 17+ (e.g. iPhone 15 Pro).
++    if (![audioSession.category isEqualToString:AVAudioSessionCategoryPlayAndRecord]) {
++        if (@available(iOS 10.0, *)) {
++            success = [audioSession setCategory:AVAudioSessionCategoryPlayAndRecord
++                                           mode:AVAudioSessionModeVoiceChat
++                                        options:AVAudioSessionCategoryOptionAllowBluetooth |
++                                                 AVAudioSessionCategoryOptionDefaultToSpeaker
++                                          error:&error];
++        } else {
++            success = [audioSession setCategory:AVAudioSessionCategoryPlayAndRecord
++                                      withOptions:AVAudioSessionCategoryOptionDefaultToSpeaker
++                                            error:&error];
++            success = [audioSession setMode:AVAudioSessionModeVoiceChat error:&error] && success;
++        }
++        if (!success || error != nil) {
++            RCTLog(@"[RNLiveAudioStream] Problem setting up AVAudioSession category and mode. Error: %@", error);
++            return;
++        }
++        success = [audioSession setActive:YES error:&error];
++        if (!success || error != nil) {
++            RCTLog(@"[RNLiveAudioStream] setActive failed: %@", error);
++            return;
++        }
+     }
+-    if (!success || error != nil) {
+-        RCTLog(@"[RNLiveAudioStream] Problem setting up AVAudioSession category and mode. Error: %@", error);
++
++    if (_recordState.mIsRunning) {
+         return;
+     }
+ 
+@@ -97,7 +109,10 @@ void HandleInputBuffer(void *inUserData,
+ 
+ - (void)dealloc {
+     RCTLogInfo(@"[RNLiveAudioStream] dealloc");
+-    AudioQueueDispose(_recordState.mQueue, true);
++    if (_recordState.mQueue) {
++        AudioQueueDispose(_recordState.mQueue, true);
++        _recordState.mQueue = NULL;
++    }
+ }
+ 
+ @end

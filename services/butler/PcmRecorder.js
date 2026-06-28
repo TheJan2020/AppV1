@@ -16,7 +16,7 @@ function getLiveAudioStream() {
 }
 
 /**
- * 16 kHz mono PCM mic capture for Gemini Live (requires dev build).
+ * 16 kHz mono PCM mic capture for Butler voice (requires dev / store build).
  */
 export class PcmRecorder {
     constructor() {
@@ -29,36 +29,43 @@ export class PcmRecorder {
 
     start(onChunk) {
         if (this.started) return;
-        const LiveAudioStream = getLiveAudioStream();
-        this.LiveAudioStream = LiveAudioStream;
-        this.onChunk = onChunk;
-        this.chunkCount = 0;
+        try {
+            const LiveAudioStream = getLiveAudioStream();
+            this.LiveAudioStream = LiveAudioStream;
+            this.onChunk = onChunk;
+            this.chunkCount = 0;
 
-        const initOpts = {
-            sampleRate: 16000,
-            channels: 1,
-            bitsPerSample: 16,
-            bufferSize: 2048,
-        };
-        if (Platform.OS === 'android') {
-            initOpts.audioSource = 6;
-        }
-        LiveAudioStream.init(initOpts);
-
-        this.subscription = LiveAudioStream.on('data', (data) => {
-            this.chunkCount++;
-            if (this.chunkCount === 1) {
-                console.log('[PcmRecorder] first mic chunk');
-            } else if (this.chunkCount % 100 === 0) {
-                console.log(`[PcmRecorder] ${this.chunkCount} chunks sent`);
+            const initOpts = {
+                sampleRate: 16000,
+                channels: 1,
+                bitsPerSample: 16,
+                bufferSize: 2048,
+            };
+            if (Platform.OS === 'android') {
+                initOpts.audioSource = 6;
             }
-            const out = INPUT_GAIN === 1 ? data : amplifyPcm16Base64(data, INPUT_GAIN);
-            this.onChunk?.(out);
-        });
+            LiveAudioStream.init(initOpts);
 
-        LiveAudioStream.start();
-        this.started = true;
-        console.log('[PcmRecorder] started');
+            this.subscription = LiveAudioStream.on('data', (data) => {
+                this.chunkCount++;
+                if (this.chunkCount === 1) {
+                    console.log('[PcmRecorder] first mic chunk');
+                } else if (this.chunkCount % 100 === 0) {
+                    console.log(`[PcmRecorder] ${this.chunkCount} chunks sent`);
+                }
+                const out = INPUT_GAIN === 1 ? data : amplifyPcm16Base64(data, INPUT_GAIN);
+                this.onChunk?.(out);
+            });
+
+            LiveAudioStream.start();
+            this.started = true;
+            console.log('[PcmRecorder] started');
+        } catch (e) {
+            this.started = false;
+            this.subscription = null;
+            this.LiveAudioStream = null;
+            throw e;
+        }
     }
 
     stop() {

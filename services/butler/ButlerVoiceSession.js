@@ -1,7 +1,6 @@
 import { Audio } from 'expo-av';
 import { ButlerProxyClient } from './ButlerProxyClient';
-import { PcmPlayer } from './PcmPlayer';
-import { PcmRecorder } from './PcmRecorder';
+import { createButlerPcmPlayer, createButlerPcmRecorder } from './audioBackend';
 import { getNativeAudioStatus } from './nativeAudio';
 
 export function buildContextMessage(context) {
@@ -55,8 +54,8 @@ export class ButlerVoiceSession {
         }
 
         this.client = new ButlerProxyClient(this.wsBaseUrl);
-        this.player = new PcmPlayer();
-        this.recorder = new PcmRecorder();
+        this.player = createButlerPcmPlayer();
+        this.recorder = createButlerPcmRecorder();
 
         this.client.setAllowInterruption(true);
         let micRestartedForPlayback = false;
@@ -66,13 +65,15 @@ export class ButlerVoiceSession {
             this.emit('speaking', null);
             if (!micRestartedForPlayback && this.recorder?.chunkCount === 0) {
                 micRestartedForPlayback = true;
-                try {
-                    console.log('[ButlerVoice] restarting mic after playback begins');
-                    this.recorder.stop();
-                    this.recorder.start(sendMic);
-                } catch (e) {
-                    console.warn('[ButlerVoice] mic restart', e?.message ?? e);
-                }
+                void (async () => {
+                    try {
+                        console.log('[ButlerVoice] restarting mic after playback begins');
+                        this.recorder.stop();
+                        this.recorder.start(sendMic);
+                    } catch (e) {
+                        console.warn('[ButlerVoice] mic restart', e?.message ?? e);
+                    }
+                })();
             }
             try {
                 this.player.enqueue(b64);

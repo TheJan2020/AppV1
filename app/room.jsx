@@ -9,6 +9,7 @@ import { useRoomAreaEntities } from '../hooks/useRoomAreaEntities';
 import { applyHaStateChangedEvent, applyClimateServiceToEntity } from '../utils/haEntityMerge';
 import { HA_STATUS, ADMIN_STATUS } from '../utils/haEntityHealth';
 import { useHaSystemHealth } from '../hooks/useHaSystemHealth';
+import { fetchEnrichedLightMappings } from '../utils/lightMappingsClient';
 import { StatusBar } from 'expo-status-bar';
 
 /** Expo Router may pass repeated query keys as string[]. Normalize for area matching. */
@@ -185,10 +186,9 @@ export default function RoomPage() {
         if (!connectionConfig.loaded || !connectionConfig.adminUrl) return;
 
         const adminUrl = connectionConfig.adminUrl;
-        const lightsUrl = adminUrl.endsWith('/') ? `${adminUrl}api/monitored-entities?type=light` : `${adminUrl}/api/monitored-entities?type=light`;
+        const baseUrl = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
 
-        fetch(lightsUrl)
-            .then(res => res.json())
+        fetchEnrichedLightMappings(baseUrl, fetch)
             .then(data => {
                 if (Array.isArray(data)) {
                     setLightMappings(data);

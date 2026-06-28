@@ -18,9 +18,8 @@ import {
     useWindowDimensions,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Power, ChevronDown, ChevronUp, Bookmark, BookmarkCheck, Zap } from 'lucide-react-native';
+import { ChevronDown, ChevronUp, Bookmark, BookmarkCheck, Zap } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
-import { SvgUri } from 'react-native-svg';
 import * as SecureStore from 'expo-secure-store';
 import { getAdminUrl } from '../../utils/storage';
 import { Heading, RoomDeviceStatus } from '../../utils/typography';
@@ -35,6 +34,8 @@ import {
     lightSupportsRGB,
 } from '../../utils/lightCapabilities';
 import { readColorTempKelvin } from '../../utils/lightServicePayload';
+import { getLightMapping, getLightTypes } from '../../utils/lightMappingsClient';
+import LightTypeIcon from './LightTypeIcon';
 
 function entityStateOn(allEntities, entityId) {
     if (!entityId || !Array.isArray(allEntities)) return false;
@@ -43,6 +44,9 @@ function entityStateOn(allEntities, entityId) {
 
 const LIGHTS_MASTER_ICON = require('../../assets/ligth_new_icon.png');
 const SUN_REFLECTIVE_MODE_ICON = require('../../assets/sun_reflective_mode.png');
+/** Expanded light row — icon circle + glyph sizes */
+const LIGHT_CARD_ICON_BOX = 44;
+const LIGHT_CARD_ICON_SIZE = 30;
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -292,9 +296,8 @@ function ExpandedLightCard({
     const border    = pickBorder(isOn, effectiveCapability);
     const fillColor = isOn ? resolveActiveColor(light, effectiveCapability) : 'transparent';
     const iconBg    = isOn ? fillColor : 'rgba(255,255,255,0.06)';
-    const iconColor = isOn ? '#fff'    : 'rgba(255,255,255,0.28)';
-    const iconUrl   = mapping?.lightType?.icon_path && adminUrl
-        ? `${adminUrl}${mapping.lightType.icon_path}` : null;
+    const iconColor = isOn ? '#000000' : '#ffffff';
+    const typeName  = mapping?.lightType?.name;
 
     const [livePct, setLivePct]           = useState(haPct);
     const [isDraggingCard, setIsDragging] = useState(false);
@@ -464,9 +467,11 @@ function ExpandedLightCard({
                 {/* Card content */}
                 <View style={styles.cardTouch}>
                     <View style={[styles.cardIcon, { backgroundColor: iconBg }]}>
-                        {iconUrl
-                            ? <SvgUri width={20} height={20} uri={iconUrl} fill={iconColor} stroke={iconColor} />
-                            : <Power size={20} color={iconColor} />}
+                        <LightTypeIcon
+                            typeName={typeName}
+                            size={LIGHT_CARD_ICON_SIZE}
+                            color={iconColor}
+                        />
                     </View>
                     <View style={styles.cardText}>
                         <Text style={styles.cardName} numberOfLines={1}>{light.displayName}</Text>
@@ -500,15 +505,22 @@ export default function LightsGroupCard({
         roomName.toLowerCase().includes('master controller') ||
         lights.some(l => l.entity_id.toLowerCase().includes('master_controller'));
 
-    // ── effectiveCap must be declared first — used by all callbacks below ─
-    const effectiveCap = useCallback((l) => {
-        const m = lightMappings.find(x => x.entity_id === l.entity_id);
-        return getLightEffectiveCapability(l, m);
+    const [lightTypes, setLightTypes] = useState(() => getLightTypes());
+
+    useEffect(() => {
+        const cached = getLightTypes();
+        if (cached.length) setLightTypes(cached);
     }, [lightMappings]);
 
+    // ── effectiveCap must be declared first — used by all callbacks below ─
+    const effectiveCap = useCallback((l) => {
+        const m = getLightMapping(l.entity_id, lightMappings, lightTypes, l.displayName);
+        return getLightEffectiveCapability(l, m);
+    }, [lightMappings, lightTypes]);
+
     const mappingFor = useCallback(
-        (l) => lightMappings.find(m => m.entity_id === l.entity_id),
-        [lightMappings],
+        (l) => getLightMapping(l.entity_id, lightMappings, lightTypes, l.displayName),
+        [lightMappings, lightTypes],
     );
 
     const supportsBrightnessFor = useCallback(
@@ -1206,13 +1218,13 @@ export default function LightsGroupCard({
                         <View key={l.entity_id} style={[styles.cell, lightCellWidth > 0 && { width: lightCellWidth }]}>
                             <ExpandedLightCard
                                 light={l}
-                                mapping={lightMappings.find(m => m.entity_id === l.entity_id)}
+                                mapping={mappingFor(l)}
                                 adminUrl={adminUrl}
                                 onToggle={onToggle}
                                 onBrightnessChange={onBrightnessChange}
                                 onLongPress={onLongPress}
                                 onColorTap={(tappedLight, detectedCapability) => {
-                                    const m = lightMappings.find(m => m.entity_id === tappedLight.entity_id);
+                                    const m = mappingFor(tappedLight);
                                     const cap = detectedCapability || m?.colorCapability || null;
                                     setColorModalLight({ light: tappedLight, colorCapability: cap });
                                 }}
@@ -1472,8 +1484,11 @@ const styles = StyleSheet.create({
         paddingHorizontal: 12, paddingVertical: 10, gap: 10,
     },
     cardIcon: {
-        width: 38, height: 38, borderRadius: 19,
-        alignItems: 'center', justifyContent: 'center',
+        width: LIGHT_CARD_ICON_BOX,
+        height: LIGHT_CARD_ICON_BOX,
+        borderRadius: LIGHT_CARD_ICON_BOX / 2,
+        alignItems: 'center',
+        justifyContent: 'center',
     },
     cardText:    { flex: 1 },
     cardName:    { color: '#fff', fontSize: 12, fontWeight: '600', marginBottom: 2 },

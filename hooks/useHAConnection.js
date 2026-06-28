@@ -2,6 +2,7 @@ import { useRef, useState, useEffect } from 'react';
 import { HAService } from '../services/ha';
 import { FrigateService } from '../services/frigate';
 import { authFetch } from '../utils/authFetch';
+import { fetchEnrichedLightMappings } from '../utils/lightMappingsClient';
 import { applyHaStateChangedEvent, applyClimateServiceToEntity } from '../utils/haEntityMerge';
 import { HA_STATUS, ADMIN_STATUS } from '../utils/haEntityHealth';
 import { useHaSystemHealth } from './useHaSystemHealth';
@@ -96,9 +97,8 @@ export default function useHAConnection() {
         const adminUrl = connectionConfig.adminUrl;
         const baseUrl = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
 
-        // Light mappings
-    authFetch(`${baseUrl}api/monitored-entities?type=light&t=${Date.now()}`, { signal: controller.signal })
-            .then(res => res.json())
+        // Light mappings (+ icon type inference from entity_id)
+        fetchEnrichedLightMappings(baseUrl, authFetch, { signal: controller.signal })
             .then(data => { if (Array.isArray(data)) setLightMappings(data); })
             .catch(e => { if (e.name !== 'AbortError') console.log('[useHAConnection] Light mappings error:', e); });
 

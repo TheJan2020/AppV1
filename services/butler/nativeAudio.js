@@ -1,21 +1,17 @@
 import { NativeModules, Platform } from 'react-native';
-import Constants from 'expo-constants';
 
 let pcmPlayerAvailable = null;
 let liveMicAvailable = null;
-
-function isExpoGo() {
-    return Constants.appOwnership === 'expo';
-}
 
 export function getButlerAudioBackend() {
     if (Platform.OS !== 'ios' && Platform.OS !== 'android') {
         return 'unsupported';
     }
-    if (isPcmPlayerAvailable() && isLiveMicAvailable()) {
+    // iOS native path needs BOTH playback (expo-pcm-player) and mic (live-audio-stream).
+    if (Platform.OS === 'ios' && isPcmPlayerAvailable() && isLiveMicAvailable()) {
         return 'native';
     }
-    return 'expo-av';
+    return 'unsupported';
 }
 
 export function isPcmPlayerAvailable() {
@@ -48,7 +44,6 @@ export function getNativeAudioStatus() {
     const backend = getButlerAudioBackend();
     const pcm = isPcmPlayerAvailable();
     const mic = isLiveMicAvailable();
-    const expoGo = isExpoGo();
 
     if (backend === 'native') {
         return {
@@ -57,19 +52,6 @@ export function getNativeAudioStatus() {
             pcm: true,
             mic: true,
             platform: Platform.OS,
-            expoGo,
-            message: null,
-        };
-    }
-
-    if (backend === 'expo-av') {
-        return {
-            ready: true,
-            backend: 'expo-av',
-            pcm: false,
-            mic: false,
-            platform: Platform.OS,
-            expoGo,
             message: null,
         };
     }
@@ -80,7 +62,6 @@ export function getNativeAudioStatus() {
         pcm,
         mic,
         platform: Platform.OS,
-        expoGo,
         message: 'Butler voice is not supported on this platform.',
     };
 }

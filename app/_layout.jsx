@@ -10,6 +10,7 @@ import * as ScreenOrientation from 'expo-screen-orientation';
 import * as Notifications from 'expo-notifications';
 import { registerForPushNotificationsAsync } from '../services/notifications';
 import { NotifContext } from '../services/NotifContext';
+import { preloadLocalLightIcons } from '../utils/lightTypeAssets';
 
 LogBox.ignoreLogs([
     "It looks like you might be using shared value's .value",
@@ -64,6 +65,10 @@ export default function RootLayout() {
             timestamp: new Date().toISOString(),
         };
     };
+
+    useEffect(() => {
+        preloadLocalLightIcons().catch(() => {});
+    }, []);
 
     useEffect(() => {
         registerForPushNotificationsAsync().then(token => {

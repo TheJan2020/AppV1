@@ -1,9 +1,7 @@
 import { useState, useEffect, memo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, FlatList, TextInput, Alert, ActivityIndicator, Switch } from 'react-native';
 import { Colors } from '../../constants/Colors';
-import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles, Monitor, LayoutGrid, Mic } from 'lucide-react-native';
-import { getButlerBackendOverride, setButlerBackendUrl, checkButlerBackendHealth } from '../../utils/butlerBackend';
-import { getNativeAudioStatus } from '../../services/butler/nativeAudio';
+import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles, Monitor, LayoutGrid } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { AIService } from '../../services/ai';
 import * as SecureStore from 'expo-secure-store';
@@ -42,14 +40,11 @@ function SettingsView({
     const [selectedArea, setSelectedArea] = useState(null);
     const [faceIdEnabled, setFaceIdEnabled] = useState(false);
     const [storedUserName, setStoredUserName] = useState('');
-    const [butlerBackendUrl, setButlerBackendUrlState] = useState('');
-    const [butlerHealth, setButlerHealth] = useState(null);
 
     useEffect(() => {
         SecureStore.getItemAsync('face_id_enabled').then(val => {
             setFaceIdEnabled(val === 'true');
         });
-        getButlerBackendOverride().then(setButlerBackendUrlState);
     }, []);
 
     useEffect(() => {
@@ -458,55 +453,6 @@ function SettingsView({
                         trackColor={{ false: '#767577', true: Colors.primary }}
                         thumbColor={showVoiceAssistant ? '#fff' : '#f4f3f4'}
                     />
-                </View>
-
-                <View style={[styles.listItem, { flexDirection: 'column', alignItems: 'stretch', gap: 10 }]}>
-                    <View style={styles.itemInfo}>
-                        <View style={styles.iconContainer}>
-                            <Mic size={20} color={Colors.text} />
-                        </View>
-                        <View style={{ flex: 1 }}>
-                            <Text style={styles.itemName}>Butler override (optional)</Text>
-                            <Text style={styles.itemSub}>Leave empty to use App Backend (HTTPS). For local dev only: direct Butlerv1 URL</Text>
-                        </View>
-                    </View>
-                    <TextInput
-                        style={styles.butlerUrlInput}
-                        value={butlerBackendUrl}
-                        onChangeText={setButlerBackendUrlState}
-                        placeholder="Leave empty — or http://192.168.100.67:8787"
-                        placeholderTextColor="rgba(255,255,255,0.25)"
-                        autoCapitalize="none"
-                        autoCorrect={false}
-                        keyboardType="url"
-                    />
-                    <View style={{ flexDirection: 'row', gap: 10 }}>
-                        <TouchableOpacity
-                            style={styles.butlerUrlBtn}
-                            onPress={async () => {
-                                await setButlerBackendUrl(butlerBackendUrl);
-                                const native = getNativeAudioStatus();
-                                const h = await checkButlerBackendHealth();
-                                setButlerHealth(h);
-                                if (!native.ready) {
-                                    Alert.alert('Voice build required', native.message ?? 'Rebuild on a physical iPhone.');
-                                    return;
-                                }
-                                const via = h.proxied ? 'via App Backend (HTTPS)' : 'direct Butlerv1';
-                                Alert.alert(
-                                    h.ok ? 'Butler reachable' : 'Butler unreachable',
-                                    h.ok
-                                        ? `${via}\n${h.base}\nHA ready: ${h.data?.ha_ready ? 'yes' : 'no'} · ${h.data?.entities_cached ?? 0} entities`
-                                        : (h.error || 'Check AppBackend BUTLER_URL and Butlerv1 on port 8787'),
-                                );
-                            }}
-                        >
-                            <Text style={styles.butlerUrlBtnText}>Save & test</Text>
-                        </TouchableOpacity>
-                    </View>
-                    {butlerHealth?.ok === false && butlerHealth?.error ? (
-                        <Text style={styles.butlerHealthErr}>{butlerHealth.error}</Text>
-                    ) : null}
                 </View>
 
                 {/* Show Preference Button Toggle */}
@@ -1126,34 +1072,6 @@ const styles = StyleSheet.create({
         color: Colors.error,
         fontSize: 16,
         fontWeight: '600',
-    },
-    butlerUrlInput: {
-        backgroundColor: 'rgba(255,255,255,0.06)',
-        borderRadius: 10,
-        paddingHorizontal: 14,
-        paddingVertical: 12,
-        color: '#fff',
-        fontSize: 14,
-        fontFamily: CF.regular,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.08)',
-    },
-    butlerUrlBtn: {
-        alignSelf: 'flex-start',
-        backgroundColor: 'rgba(123,47,190,0.25)',
-        paddingVertical: 10,
-        paddingHorizontal: 16,
-        borderRadius: 10,
-    },
-    butlerUrlBtnText: {
-        color: '#c9a8f0',
-        fontSize: 13,
-        fontFamily: CF.semibold,
-    },
-    butlerHealthErr: {
-        fontSize: 12,
-        color: Colors.error,
-        fontFamily: CF.regular,
     },
 });
 

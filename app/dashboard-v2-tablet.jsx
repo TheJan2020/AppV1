@@ -4,6 +4,7 @@ import SecurityControlModal from '../components/DashboardV2/SecurityControlModal
 import ButlerVoiceModal from '../components/DashboardV2/ButlerVoiceModal';
 import { canOpenButlerCall, runButlerBackgroundSetup } from '../services/butler/openButlerCall';
 import { getButlerBackendUrl } from '../utils/butlerBackend';
+import { fetchEnrichedLightMappings } from '../utils/lightMappingsClient';
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator, InteractionManager, Alert } from 'react-native';
@@ -200,6 +201,12 @@ export default function DashboardV2Tablet() {
 
         const adminUrl = connectionConfig.adminUrl;
         const baseUrl = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
+        const haToken = connectionConfig.token;
+        const authHeaders = haToken ? { Authorization: `Bearer ${haToken}` } : {};
+        const fetchWithAuth = (url, opts) => fetch(url, {
+            ...opts,
+            headers: { ...authHeaders, ...(opts?.headers || {}) },
+        });
 
         // 1. Quick Scenes (New)
         const qsUrl = `${baseUrl}api/quick-scenes?t=${Date.now()}`;
@@ -214,11 +221,9 @@ export default function DashboardV2Tablet() {
             })
             .catch(e => { if (e.name !== 'AbortError') console.log("[Quick Scenes] Error:", e); });
 
-        // 2. Lights
-        const lightsUrl = `${baseUrl}api/monitored-entities?type=light&t=${Date.now()}`;
+        // 2. Lights (+ icon type inference from entity_id)
         console.log('[Dashboard] Fetching light mappings...');
-        fetch(lightsUrl, { signal: controller.signal })
-            .then(res => res.json())
+        fetchEnrichedLightMappings(baseUrl, fetchWithAuth, { signal: controller.signal })
             .then(data => {
                 if (Array.isArray(data)) {
                     console.log('[Light Mappings] Loaded:', data.length);

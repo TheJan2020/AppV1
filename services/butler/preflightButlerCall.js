@@ -3,7 +3,7 @@ import { getNativeAudioStatus } from './nativeAudio';
 
 /**
  * Run before opening the Butler call UI. Fails fast with a user-visible message
- * instead of crashing the JS runtime (which triggers Expo "Refreshing…").
+ * instead of crashing the app.
  */
 let cachedHealth = null;
 let cachedHealthAt = 0;

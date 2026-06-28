@@ -5,6 +5,7 @@ import NotificationModal from '../components/DashboardV2/NotificationModal';
 import ButlerVoiceModal from '../components/DashboardV2/ButlerVoiceModal';
 import { canOpenButlerCall, runButlerBackgroundSetup } from '../services/butler/openButlerCall';
 import { getButlerBackendUrl } from '../utils/butlerBackend';
+import { fetchEnrichedLightMappings } from '../utils/lightMappingsClient';
 import AlertNotificationModal from '../components/DashboardV2/AlertNotificationModal';
 import SecurityAlertModal from '../components/DashboardV2/SecurityAlertModal';
 
@@ -292,10 +293,9 @@ export default function DashboardV2() {
                 setScenesFetched(true);
             });
 
-        // 2. Lights
-        const lightsUrl = `${baseUrl}api/monitored-entities?type=light&t=${Date.now()}`;
-        fetch(lightsUrl, { signal: controller.signal, headers: authHeaders })
-            .then(res => res.json())
+        // 2. Lights (+ icon type inference from entity_id)
+        const fetchWithAuth = (url, opts) => fetch(url, { ...opts, headers: authHeaders });
+        fetchEnrichedLightMappings(baseUrl, fetchWithAuth, { signal: controller.signal })
             .then(data => {
                 if (Array.isArray(data)) setLightMappings(data);
             })
@@ -653,7 +653,23 @@ export default function DashboardV2() {
                 }
             });
         } else {
+            // No HA connection available - user needs to log out and reconfigure
+            console.log('[Dashboard] No HA URL/Token - redirecting to login');
             setHaStatus(HA_STATUS.NOT_CONFIGURED);
+            Alert.alert(
+                'Connection Required',
+                'Your Home Assistant connection is not configured. Please log in again.',
+                [
+                    {
+                        text: 'Go to Login',
+                        onPress: async () => {
+                            await SecureStore.deleteItemAsync('is_logged_in');
+                            await SecureStore.deleteItemAsync('logged_in_user');
+                            router.replace('/login');
+                        }
+                    }
+                ]
+            );
         }
 
         // 3. Connect to Frigate (proxied through admin backend)

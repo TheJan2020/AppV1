@@ -11,7 +11,7 @@ import { useParentScrollLock } from '../../hooks/useParentScrollLock';
 import { GestureHandlerRootView, PanGestureHandler, State } from 'react-native-gesture-handler';
 import Animated, { useSharedValue, useAnimatedStyle, withRepeat, withTiming, withSpring, Easing, cancelAnimation } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
-import { SvgUri } from 'react-native-svg';
+import LightTypeIcon from './LightTypeIcon';
 
 import LightControlModal from './LightControlModal';
 import ClimateGroupCard from './ClimateGroupCard';
@@ -34,6 +34,7 @@ import useDeviceType from '../../hooks/useDeviceType';
 import { lightSupportsBrightness } from '../../utils/lightCapabilities';
 import { findAdaptiveLightingForRoom, isAdaptiveLightingMainEntity } from '../../utils/adaptiveLighting';
 import { buildLightColorTempPayload, buildLightRgbPayload } from '../../utils/lightServicePayload';
+import { getLightMapping } from '../../utils/lightMappingsClient';
 
 // Convert area_id-style names (e.g. "living_room") to proper display names ("Living Room")
 const roomScenesPrefsKey = (areaId) => `room_scenes_show_prefs_${areaId}`;
@@ -145,6 +146,9 @@ function FanCard({ fan, onToggle, needsChange: fanCardNeedsChange }) {
 }
 
 // Light Card Component
+const LIGHT_CARD_ICON_SIZE = 30;
+const LIGHT_CARD_DEFAULT_ICON_SIZE = 20;
+
 function LightCard({ light, onToggle, onBrightnessChange, onLongPress, needsChange: lightCardNeedsChange, mapping, adminUrl }) {
     const isLock = light.entity_id.startsWith('lock.');
 
@@ -234,7 +238,7 @@ function LightCard({ light, onToggle, onBrightnessChange, onLongPress, needsChan
     const activeColor = getDynamicColor();
     const percentage = isOn ? Math.round((localBrightness / 255) * 100) : 0;
     const fillWidth = `${percentage}%`;
-    const iconColor = isOn ? '#fff' : Colors.textDim;
+    const iconColor = isOn ? '#000000' : '#ffffff';
     const iconBg = isOn ? activeColor : 'rgba(255,255,255,0.1)';
 
     const handlePress = () => {
@@ -252,7 +256,7 @@ function LightCard({ light, onToggle, onBrightnessChange, onLongPress, needsChan
         }
     };
 
-    const iconUrl = (mapping?.lightType?.icon_path && adminUrl) ? `${adminUrl}${mapping.lightType.icon_path}` : null;
+    const typeName = mapping?.lightType?.name;
 
     return (
         <PanGestureHandler
@@ -293,11 +297,11 @@ function LightCard({ light, onToggle, onBrightnessChange, onLongPress, needsChan
                                         { backgroundColor: activeColor, borderRadius: 17, zIndex: -1 },
                                         pulseStyle
                                     ]} />}
-                                    {iconUrl ? (
-                                        <SvgUri width={24} height={24} uri={iconUrl} fill={iconColor} stroke={iconColor} />
-                                    ) : (
-                                        <Lightbulb size={24} color={iconColor} fill={isOn ? '#fff' : 'transparent'} />
-                                    )}
+                                    <LightTypeIcon
+                                        typeName={typeName}
+                                        size={LIGHT_CARD_ICON_SIZE}
+                                        color={iconColor}
+                                    />
                                 </View>
                             </View>
                         ) : (
@@ -307,12 +311,14 @@ function LightCard({ light, onToggle, onBrightnessChange, onLongPress, needsChan
                                     { backgroundColor: activeColor, borderRadius: 20, zIndex: -1 },
                                     pulseStyle
                                 ]} />
-                                {iconUrl ? (
-                                    <SvgUri width={24} height={24} uri={iconUrl} fill={iconColor} stroke={iconColor} />
-                                ) : isLock ? (
-                                    isOn ? <LockOpen size={24} color={iconColor} /> : <Lock size={24} color={iconColor} />
+                                {isLock ? (
+                                    isOn ? <LockOpen size={LIGHT_CARD_DEFAULT_ICON_SIZE} color={iconColor} /> : <Lock size={LIGHT_CARD_DEFAULT_ICON_SIZE} color={iconColor} />
                                 ) : (
-                                    <Lightbulb size={24} color={iconColor} fill={isOn ? '#fff' : 'transparent'} />
+                                    <LightTypeIcon
+                                        typeName={typeName}
+                                        size={LIGHT_CARD_ICON_SIZE}
+                                        color={iconColor}
+                                    />
                                 )}
                             </View>
                         )}
@@ -610,7 +616,7 @@ export default function RoomDetailView({
                         onColorTempChange={handleColorTemp}
                         onRgbChange={handleRgb}
                         onLongPress={(l) => {
-                            const m = lightMappings.find(m => m.entity_id === l.entity_id);
+                            const m = getLightMapping(l.entity_id, lightMappings, null, l.displayName);
                             setSelectedLight({ ...l, colorCapability: m?.colorCapability || null });
                         }}
                     />
@@ -1602,9 +1608,9 @@ const styles = StyleSheet.create({
         backgroundColor: '#8947ca',
     },
     iconContainer: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
+        width: 44,
+        height: 44,
+        borderRadius: 22,
         alignItems: 'center',
         justifyContent: 'center',
     },

@@ -17,6 +17,7 @@ function RoomAreasNavBar({ tabs = [], activeKey, onSelect }) {
                 horizontal
                 showsHorizontalScrollIndicator
                 nestedScrollEnabled
+                style={styles.scroll}
                 contentContainerStyle={styles.row}
             >
                 {tabs.map((tab) => {
@@ -41,24 +42,30 @@ function RoomAreasNavBar({ tabs = [], activeKey, onSelect }) {
 
 const styles = StyleSheet.create({
     wrap: {
-        marginBottom: 18,
+        width: '100%',
+        marginBottom: 14,
         backgroundColor: '#13132A',
-        borderRadius: 28,
+        borderRadius: 20,
         overflow: 'hidden',
-        paddingHorizontal: 6,
-        paddingVertical: 6,
+        paddingHorizontal: 5,
+        paddingVertical: 4,
+    },
+    scroll: {
+        flexGrow: 0,
+        flexShrink: 0,
     },
     row: {
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 4,
-        paddingVertical: 2,
+        justifyContent: 'center',
+        gap: 3,
+        minWidth: '100%',
     },
     pill: {
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-        borderRadius: 22,
-        borderWidth: 1.5,
+        paddingHorizontal: 14,
+        paddingVertical: 6,
+        borderRadius: 16,
+        borderWidth: 1,
         borderColor: 'transparent',
     },
     pillActive: {
@@ -67,7 +74,7 @@ const styles = StyleSheet.create({
     },
     label: {
         color: 'rgba(237,237,245,0.55)',
-        fontSize: 14,
+        fontSize: 13,
         fontFamily: CF.medium,
         letterSpacing: -0.2,
     },
