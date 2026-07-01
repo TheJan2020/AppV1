@@ -25,8 +25,8 @@ function loadButlerSvgXml() {
     return butlerXmlPromise;
 }
 
-/** PrimeBot text chat — speech bubble */
-export function PrimeBotIcon({ color, size = TAB_ICON_SIZE }) {
+/** Butler text chat — speech bubble */
+export function ButlerChatIcon({ color, size = TAB_ICON_SIZE }) {
     return (
         <Svg width={size} height={size} viewBox="0 0 26.59 21.42" fill="none">
             <Path

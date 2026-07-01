@@ -1,30 +1,26 @@
-import { useEffect } from 'react';
-import { View, Text, StyleSheet, Image } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { View, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
-import Animated, {
-    useSharedValue,
-    useAnimatedStyle,
-    withSpring,
-    withSequence,
-    withDelay,
-    runOnJS
-} from 'react-native-reanimated';
-import { Home } from 'lucide-react-native';
-import { Colors } from '../constants/Colors';
+import LottieView from 'lottie-react-native';
+import * as SplashScreen from 'expo-splash-screen';
 import * as SecureStore from 'expo-secure-store';
+import { Colors } from '../constants/Colors';
+
+const MIN_SPLASH_MS = 2200;
 
 export default function Splash() {
     const router = useRouter();
-    const scale = useSharedValue(0);
-    const opacity = useSharedValue(0);
+    const lottieRef = useRef(null);
+    const [sessionReady, setSessionReady] = useState(false);
+    const [minTimeElapsed, setMinTimeElapsed] = useState(false);
+    const navigationTarget = useRef(null);
 
     useEffect(() => {
-        scale.value = withSequence(
-            withSpring(1.2),
-            withSpring(1)
-        );
-        opacity.value = withDelay(500, withSpring(1));
+        const timer = setTimeout(() => setMinTimeElapsed(true), MIN_SPLASH_MS);
+        return () => clearTimeout(timer);
+    }, []);
 
+    useEffect(() => {
         let cancelled = false;
         (async () => {
             try {
@@ -36,26 +32,29 @@ export default function Splash() {
                 ]);
                 if (cancelled) return;
 
-                // Restore session only if we have a valid profile AND a saved user
                 if (isLoggedIn === 'true' && activeProfileId && profilesJson && userJson) {
                     const profiles = JSON.parse(profilesJson);
                     const activeProfile = profiles.find(p => p.id === activeProfileId);
                     if (activeProfile) {
                         const user = JSON.parse(userJson);
-                        router.replace({
+                        navigationTarget.current = {
                             pathname: '/dashboard-v2',
                             params: {
                                 userName: user.name || '',
                                 userId: user.userId || ''
                             }
-                        });
+                        };
+                        setSessionReady(true);
                         return;
                     }
                 }
             } catch (e) {
                 console.log('[Splash] Error checking session:', e);
             }
-            if (!cancelled) router.replace('/login');
+            if (!cancelled) {
+                navigationTarget.current = { pathname: '/login' };
+                setSessionReady(true);
+            }
         })();
 
         return () => {
@@ -63,23 +62,26 @@ export default function Splash() {
         };
     }, []);
 
-    const animatedStyle = useAnimatedStyle(() => ({
-        transform: [{ scale: scale.value }],
-        opacity: opacity.value
-    }));
+    useEffect(() => {
+        if (sessionReady && minTimeElapsed && navigationTarget.current) {
+            router.replace(navigationTarget.current);
+        }
+    }, [sessionReady, minTimeElapsed, router]);
+
+    const onAnimationLoaded = () => {
+        SplashScreen.hideAsync().catch(() => {});
+    };
 
     return (
-        <View style={styles.container}>
-            <Animated.View style={[styles.imageContainer, animatedStyle]}>
-                <Image
-                    source={require('../assets/splash-screen-dark.png')}
-                    style={styles.logo}
-                    resizeMode="contain"
-                />
-            </Animated.View>
-            <Animated.Text style={[styles.text, { opacity: opacity }]}>
-                Control Your Home
-            </Animated.Text>
+        <View style={styles.container} onLayout={onAnimationLoaded}>
+            <LottieView
+                ref={lottieRef}
+                source={require('../assets/PrimeWave.json')}
+                autoPlay
+                loop
+                style={styles.animation}
+                onAnimationLoaded={onAnimationLoaded}
+            />
         </View>
     );
 }
@@ -91,18 +93,8 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         alignItems: 'center',
     },
-    imageContainer: {
-        marginBottom: 20,
-        alignItems: 'center',
+    animation: {
+        width: '100%',
+        height: '100%',
     },
-    logo: {
-        width: 300,
-        height: 120,
-    },
-    text: {
-        color: Colors.text,
-        fontSize: 32,
-        fontWeight: 'bold',
-        letterSpacing: 1,
-    }
 });

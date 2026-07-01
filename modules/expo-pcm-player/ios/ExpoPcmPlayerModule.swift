@@ -85,11 +85,10 @@ private final class PcmEngine {
     stopLocked()
 
     let session = AVAudioSession.sharedInstance()
-    // voiceChat + playAndRecord for duplex Butler calls.
-    // Do NOT use allowBluetoothA2DP with playAndRecord — invalid on iOS 17+ and can crash.
+    // videoChat keeps duplex mic+speaker but is louder on speakerphone than voiceChat.
     try session.setCategory(
       .playAndRecord,
-      mode: .voiceChat,
+      mode: .videoChat,
       options: [.defaultToSpeaker, .allowBluetoothHFP]
     )
     try session.setActive(true)

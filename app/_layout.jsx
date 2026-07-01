@@ -11,6 +11,9 @@ import * as Notifications from 'expo-notifications';
 import { registerForPushNotificationsAsync } from '../services/notifications';
 import { NotifContext } from '../services/NotifContext';
 import { preloadLocalLightIcons } from '../utils/lightTypeAssets';
+import * as SplashScreen from 'expo-splash-screen';
+
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 LogBox.ignoreLogs([
     "It looks like you might be using shared value's .value",

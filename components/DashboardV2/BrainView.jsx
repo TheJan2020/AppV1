@@ -13,6 +13,7 @@ import { AIService } from '../../services/ai';
 const AI_AVATAR = require('../../assets/ai.png');
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, runOnJS, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
+import { ButlerIcon } from './TabBarIcons';
 import { Lock, X } from 'lucide-react-native';
 
 function TypingDots() {
@@ -80,7 +81,7 @@ async function fetchCameraSnapshot(entityId, haUrl, haToken) {
     }
 }
 
-function BrainView({ entities = [], callService, registryDevices = [], registryEntities = [], registryAreas = [], onExit, haUrl, haToken }) {
+function BrainView({ entities = [], callService, registryDevices = [], registryEntities = [], registryAreas = [], onExit, onStartVoiceCall, haUrl, haToken }) {
     const [message, setMessage] = useState('');
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(false);
@@ -391,11 +392,15 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
             keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0} // Reduced from 100 since no TabBar
         >
             <View style={styles.header}>
-                <TouchableOpacity onPress={onExit} style={styles.backBtn}>
+                <TouchableOpacity
+                    onPress={onExit}
+                    style={styles.backBtn}
+                    accessibilityLabel="Back to home"
+                >
                     <ChevronLeft size={26} color="#fff" />
                 </TouchableOpacity>
                 <View style={{ alignItems: 'center' }}>
-                    <Text style={styles.title}>PrimeBot</Text>
+                    <Text style={styles.title}>Butler</Text>
                     {chatStatus === 'connecting' && (
                         <Text style={styles.statusText}>Connecting…</Text>
                     )}
@@ -403,7 +408,18 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
                         <Text style={[styles.statusText, { color: '#ff6b6b' }]}>Disconnected</Text>
                     )}
                 </View>
-                <View style={{ width: 36 }} />
+                {onStartVoiceCall ? (
+                    <TouchableOpacity
+                        onPress={onStartVoiceCall}
+                        style={styles.backBtn}
+                        activeOpacity={0.85}
+                        accessibilityLabel="Butler voice"
+                    >
+                        <ButlerIcon active size={22} />
+                    </TouchableOpacity>
+                ) : (
+                    <View style={{ width: 36 }} />
+                )}
             </View>
 
             <ScrollView

@@ -17,7 +17,7 @@ export const Heading = {
   xl: { fontFamily: CF.bold, fontSize: 32 },
   /** Inline room / sheet title */
   lg24: { fontFamily: CF.bold, fontSize: 24 },
-  /** PrimeBot, prominent modal titles */
+  /** Butler chat, prominent modal titles */
   lg: { fontFamily: CF.bold, fontSize: 22 },
   /** Section headers in room (Cameras, …), overlay titles */
   section: { fontFamily: CF.semibold, fontSize: 18 },

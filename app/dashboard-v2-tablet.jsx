@@ -1429,6 +1429,7 @@ export default function DashboardV2Tablet() {
                         registryEntities={registryEntities}
                         registryAreas={registryAreas}
                         onExit={() => setActiveTab('home')}
+                        onStartVoiceCall={handleVoiceAssistantPress}
                         haUrl={connectionConfig.url}
                         haToken={connectionConfig.token}
                     />

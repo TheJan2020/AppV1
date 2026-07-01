@@ -28,8 +28,11 @@ export class ButlerProxyClient {
         }
     }
 
-    connect(timeoutMs = 15000) {
-        const url = `${this.wsBaseUrl}/voice?allow_interruption=${this.allowInterruption ? 'true' : 'false'}`;
+    connect(callLanguage = null, timeoutMs = 15000) {
+        const lang =
+            callLanguage === 'en' || callLanguage === 'ar' ? callLanguage : null;
+        const langQuery = lang ? `&lang=${lang}` : '';
+        const url = `${this.wsBaseUrl}/voice?allow_interruption=${this.allowInterruption ? 'true' : 'false'}${langQuery}`;
         console.log('[ButlerProxy] connecting', url);
         return new Promise((resolve, reject) => {
             let settled = false;

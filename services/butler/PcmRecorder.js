@@ -1,6 +1,6 @@
-import { Buffer } from 'buffer';
 import { Platform } from 'react-native';
 import { isLiveMicAvailable } from './nativeAudio';
+import { amplifyPcm16Base64 } from './pcmGain';
 
 /** Boost quiet iPhone mics when held at arm's length / speakerphone. */
 const INPUT_GAIN = Platform.OS === 'ios' ? 2.5 : 1;
@@ -77,17 +77,4 @@ export class PcmRecorder {
         this.started = false;
         console.log(`[PcmRecorder] stopped (${this.chunkCount} chunks)`);
     }
-}
-
-function amplifyPcm16Base64(b64, gain) {
-    const buf = Buffer.from(b64, 'base64');
-    const out = Buffer.alloc(buf.length);
-    const samples = Math.floor(buf.length / 2);
-    for (let i = 0; i < samples; i++) {
-        let s = buf.readInt16LE(i * 2) * gain;
-        if (s > 32767) s = 32767;
-        else if (s < -32768) s = -32768;
-        out.writeInt16LE(s, i * 2);
-    }
-    return out.toString('base64');
 }

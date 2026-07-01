@@ -1,6 +1,12 @@
+import { Buffer } from 'buffer';
+import { Platform } from 'react-native';
 import { isPcmPlayerAvailable } from './nativeAudio';
+import { amplifyPcm16Base64 } from './pcmGain';
 
 const SAMPLE_RATE = 24000;
+
+/** Gemini Live replies are often quiet on phone speaker — boost playback. */
+const OUTPUT_GAIN = Platform.OS === 'ios' ? 3.0 : 2.5;
 
 function getNativePlayer() {
     if (!isPcmPlayerAvailable()) {
@@ -26,8 +32,9 @@ export class PcmPlayer {
     }
 
     enqueue(pcmBase64) {
+        const boosted = amplifyPcm16Base64(pcmBase64, OUTPUT_GAIN);
         void this.ensurePrepared(this.route).then(() => {
-            this._module().playPcm(pcmBase64).catch((e) => {
+            this._module().playPcm(boosted).catch((e) => {
                 console.warn('[PcmPlayer] playPcm', e?.message ?? e);
             });
         });

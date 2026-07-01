@@ -1106,6 +1106,7 @@ export default function DashboardV2() {
 
     const handleButlerSwitchToChat = useCallback(() => {
         setShowButlerCall(false);
+        setAiTabVisited(true);
         setActiveTab('ai');
     }, []);
 
@@ -2066,6 +2067,7 @@ export default function DashboardV2() {
                         registryEntities={registryEntities}
                         registryAreas={registryAreas}
                         onExit={handleAiExit}
+                        onStartVoiceCall={handleVoiceAssistantPress}
                         haUrl={haHttpUrl}
                         haToken={connectionConfig.token}
                     />

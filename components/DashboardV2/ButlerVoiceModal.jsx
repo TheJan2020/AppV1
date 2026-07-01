@@ -12,7 +12,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Headphones, PhoneOff, Volume2 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Heading, CF } from '../../utils/typography';
-import { PrimeBotIcon } from './TabBarIcons';
+import { ButlerChatIcon } from './TabBarIcons';
 import { ROOM_GROUP_ICON_GRADIENT_PROPS } from './RoomGroupIconButton';
 import { getButlerBackendUrl, toButlerWsUrl } from '../../utils/butlerBackend';
 import { ButlerVoiceSession } from '../../services/butler/ButlerVoiceSession';
@@ -368,9 +368,9 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
                             style={styles.chatBtn}
                             onPress={switchToChat}
                             activeOpacity={0.85}
-                            accessibilityLabel="Switch to PrimeBot chat"
+                            accessibilityLabel="Switch to Butler chat"
                         >
-                            <PrimeBotIcon color="#c9a8f0" size={26} />
+                            <ButlerChatIcon color="#c9a8f0" size={26} />
                             <Text style={styles.chatBtnLabel}>Chat</Text>
                         </TouchableOpacity>
 
