@@ -39,7 +39,7 @@ export class PcmRecorder {
                 sampleRate: 16000,
                 channels: 1,
                 bitsPerSample: 16,
-                bufferSize: 2048,
+                bufferSize: 4096,
             };
             if (Platform.OS === 'android') {
                 initOpts.audioSource = 6;

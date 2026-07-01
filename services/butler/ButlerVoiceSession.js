@@ -9,7 +9,7 @@ export function buildContextMessage(context) {
     if (context.userName) lines.push(`User: ${context.userName}`);
     if (context.time) lines.push(`Local time: ${context.time}`);
     if (context.rooms?.length) {
-        const names = context.rooms.map((r) => r.name || r.area_id).filter(Boolean).slice(0, 24);
+        const names = context.rooms.map((r) => r.name || r.area_id).filter(Boolean).slice(0, 10);
         if (names.length) lines.push(`Rooms: ${names.join(', ')}`);
     }
     if (!lines.length) return '';
@@ -85,6 +85,9 @@ export class ButlerVoiceSession {
         this.client.on('text', (t) => this.emit('text', t));
         this.client.on('toolCall', (name) => this.emit('toolCall', name));
         this.client.on('error', (err) => this.emit('error', { message: err?.message ?? String(err) }));
+        this.client.on('close', (reason) => {
+            this.emit('error', { message: `Call disconnected${reason ? `: ${reason}` : ''}` });
+        });
 
         try {
             // Prepare playback session BEFORE mic — otherwise first Butler audio
@@ -103,7 +106,10 @@ export class ButlerVoiceSession {
         }
 
         const ctxMsg = buildContextMessage(context);
-        if (ctxMsg) this.client.sendContext(ctxMsg);
+        if (ctxMsg) {
+            // Defer so mic + Gemini handshake aren't competing with a large context frame.
+            setTimeout(() => this.client?.sendContext(ctxMsg), 400);
+        }
 
         try {
             this.recorder.start(sendMic);

@@ -7,6 +7,8 @@ export class ButlerProxyClient {
         this.ws = null;
         this.allowInterruption = true;
         this.listeners = {};
+        this._pingTimer = null;
+        this._connected = false;
     }
 
     on(event, fn) {
@@ -28,7 +30,7 @@ export class ButlerProxyClient {
         }
     }
 
-    connect(callLanguage = null, timeoutMs = 15000) {
+    connect(callLanguage = null, timeoutMs = 30000) {
         const lang =
             callLanguage === 'en' || callLanguage === 'ar' ? callLanguage : null;
         const langQuery = lang ? `&lang=${lang}` : '';
@@ -56,6 +58,8 @@ export class ButlerProxyClient {
             }, timeoutMs);
             ws.onopen = () => {
                 console.log('[ButlerProxy] open');
+                this._connected = true;
+                this._startPing();
                 this.emit('open');
                 finish(resolve);
             };
@@ -67,15 +71,40 @@ export class ButlerProxyClient {
             };
             ws.onclose = (ev) => {
                 console.warn('[ButlerProxy] closed', ev.code, ev.reason);
+                this._stopPing();
+                const wasConnected = this._connected;
+                this._connected = false;
                 this.emit('close', `${ev.code} ${ev.reason || ''}`.trim());
                 if (!settled) {
                     finish(reject, new Error(`Butler connection closed (${ev.code})`));
+                } else if (wasConnected) {
+                    this.emit('error', new Error(`Butler disconnected (${ev.code})`));
                 }
             };
         });
     }
 
+    _startPing() {
+        this._stopPing();
+        this._pingTimer = setInterval(() => {
+            if (this.ws?.readyState === WebSocket.OPEN) {
+                try {
+                    this.ws.send(JSON.stringify({ type: 'ping' }));
+                } catch (_) { /* ignore */ }
+            }
+        }, 25000);
+    }
+
+    _stopPing() {
+        if (this._pingTimer) {
+            clearInterval(this._pingTimer);
+            this._pingTimer = null;
+        }
+    }
+
     close() {
+        this._stopPing();
+        this._connected = false;
         this.ws?.close();
         this.ws = null;
     }
@@ -117,6 +146,8 @@ export class ButlerProxyClient {
                 break;
             case 'interrupted':
                 this.emit('interrupted');
+                break;
+            case 'pong':
                 break;
             case 'error':
                 this.emit('error', new Error(String(msg.message ?? 'Butler backend error')));
