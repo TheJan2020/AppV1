@@ -1,9 +1,34 @@
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
+import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 import { getAdminUrl } from '../utils/storage';
 import { authFetch } from '../utils/authFetch';
+
+const SETTINGS_KEY_PROFILES = 'ha_profiles';
+const SETTINGS_KEY_ACTIVE_PROFILE = 'ha_active_profile_id';
+
+/**
+ * Extracts the current userId from the active profile.
+ * Returns null if no profile or no userId is configured.
+ */
+async function getCurrentUserId() {
+    try {
+        const activeProfileId = await SecureStore.getItemAsync(SETTINGS_KEY_ACTIVE_PROFILE);
+        if (!activeProfileId) return null;
+
+        const profilesJson = await SecureStore.getItemAsync(SETTINGS_KEY_PROFILES);
+        if (!profilesJson) return null;
+
+        const profiles = JSON.parse(profilesJson);
+        const activeProfile = profiles.find(p => p.id === activeProfileId);
+        return activeProfile?.userId || null;
+    } catch (error) {
+        console.error('[Push] Error extracting userId:', error.message);
+        return null;
+    }
+}
 
 // Configure how notifications behave when the app is in foreground
 Notifications.setNotificationHandler({
@@ -86,14 +111,16 @@ export async function registerForPushNotificationsAsync() {
 async function registerTokenWithBackend(token, backendUrl) {
     try {
         const deviceName = Device.modelName || 'Unknown Device';
+        const userId = await getCurrentUserId();
+
         const response = await authFetch(`${backendUrl}/api/notifications/register`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token, deviceName }),
+            body: JSON.stringify({ token, deviceName, userId }),
         });
 
         if (response.ok) {
-            console.log('[Push] Token registered with backend');
+            console.log(`[Push] Token registered with backend (userId: ${userId || 'unknown'})`);
         } else {
             console.error('[Push] Backend registration failed:', response.status);
         }
@@ -105,22 +132,37 @@ async function registerTokenWithBackend(token, backendUrl) {
 /**
  * Unregisters the current device's push token from the backend.
  * Call this on logout so the server stops sending pushes to this device.
+ * This ensures that when switching accounts, old notifications don't leak to the new account.
  */
 export async function unregisterPushTokenAsync() {
     try {
         const projectId = Constants?.expoConfig?.extra?.eas?.projectId ?? Constants?.easConfig?.projectId;
-        if (!projectId || !Device.isDevice) return;
+        if (!projectId || !Device.isDevice) {
+            console.log('[Push] Skipping unregister: no projectId or not a device');
+            return;
+        }
 
         const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
         const token = tokenData?.data;
-        if (!token) return;
+        if (!token) {
+            console.warn('[Push] No token to unregister');
+            return;
+        }
 
         const backendUrl = await getAdminUrl();
-        if (!backendUrl) return;
+        if (!backendUrl) {
+            console.warn('[Push] No backend URL — cannot unregister token');
+            return;
+        }
 
         const url = `${backendUrl}/api/notifications/register?token=${encodeURIComponent(token)}`;
-        await authFetch(url, { method: 'DELETE' });
-        console.log('[Push] Token unregistered on logout');
+        const response = await authFetch(url, { method: 'DELETE' });
+        
+        if (response.ok) {
+            console.log('[Push] ✓ Token unregistered on logout (device cleanup successful)');
+        } else {
+            console.error('[Push] Unregister failed with status:', response.status);
+        }
     } catch (e) {
         // Non-fatal — logout should always proceed even if this fails
         console.warn('[Push] Failed to unregister token on logout:', e.message);

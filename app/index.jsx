@@ -76,10 +76,11 @@ export default function Splash() {
         <View style={styles.container} onLayout={onAnimationLoaded}>
             <LottieView
                 ref={lottieRef}
-                source={require('../assets/PrimeWave.json')}
+                source={require('../assets/PrimeWave2.json')}
                 autoPlay
                 loop
                 style={styles.animation}
+                speed={0.6}
                 onAnimationLoaded={onAnimationLoaded}
             />
         </View>
