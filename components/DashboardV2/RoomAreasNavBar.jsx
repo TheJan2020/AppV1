@@ -42,7 +42,7 @@ function RoomAreasNavBar({ tabs = [], activeKey, onSelect }) {
 
 const styles = StyleSheet.create({
     wrap: {
-        width: '100%',
+        alignSelf: 'center',
         marginBottom: 14,
         backgroundColor: '#13132A',
         borderRadius: 20,
@@ -57,9 +57,7 @@ const styles = StyleSheet.create({
     row: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'center',
         gap: 3,
-        minWidth: '100%',
     },
     pill: {
         paddingHorizontal: 14,

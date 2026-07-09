@@ -1,7 +1,7 @@
 import { useState, useEffect, memo } from 'react';
 import { View, Text, TouchableOpacity, StyleSheet, ScrollView, FlatList, TextInput, Alert, ActivityIndicator, Switch } from 'react-native';
 import { Colors } from '../../constants/Colors';
-import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles, Monitor, LayoutGrid } from 'lucide-react-native';
+import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles, Monitor, LayoutGrid, Timer } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { AIService } from '../../services/ai';
 import * as SecureStore from 'expo-secure-store';
@@ -67,6 +67,49 @@ function SettingsView({
     const [alertModalVisible, setAlertModalVisible] = useState(false);
     const [preferencesModalVisible, setPreferencesModalVisible] = useState(false);
     const [preferencedEntitiesModalVisible, setPreferencedEntitiesModalVisible] = useState(false);
+
+    // Still-open reminder (locks/sensors when armed, garage, shutters >50%)
+    const REMINDER_OPTIONS = [10, 15, 20, 25, 30, 45, 60];
+    const [stillOpenMinutes, setStillOpenMinutes] = useState(25);
+    const [savingReminder, setSavingReminder] = useState(false);
+
+    useEffect(() => {
+        if (!adminUrl) return;
+        const base = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
+        authFetch(`${base}api/config`)
+            .then(r => r.json())
+            .then(cfg => {
+                const ms = Number(cfg?.still_open_reminder_ms);
+                if (ms > 0) setStillOpenMinutes(Math.round(ms / 60000));
+            })
+            .catch(() => {});
+    }, [adminUrl]);
+
+    const saveStillOpenMinutes = async (minutes) => {
+        if (!adminUrl) {
+            Alert.alert('Error', 'Admin URL is not configured.');
+            return;
+        }
+        setStillOpenMinutes(minutes);
+        setSavingReminder(true);
+        try {
+            const base = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
+            const res = await authFetch(`${base}api/config`);
+            const cfg = await res.json();
+            const next = { ...cfg, still_open_reminder_ms: minutes * 60 * 1000 };
+            const saveRes = await authFetch(`${base}api/config`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(next),
+            });
+            const data = await saveRes.json();
+            if (!saveRes.ok) throw new Error(data?.error || 'Failed to save');
+        } catch (e) {
+            Alert.alert('Error', e.message || 'Failed to save reminder time');
+        } finally {
+            setSavingReminder(false);
+        }
+    };
 
     // Generic Toggle Handler (Persist + Notify Parent)
     const handleToggleSetting = async (key, val) => {
@@ -476,7 +519,46 @@ function SettingsView({
             </View>
 
             <View style={styles.section}>
-                <Text style={styles.sectionHeader}>Data & System</Text>
+                <Text style={styles.sectionHeader}>Notifications</Text>
+
+                <View style={styles.listItem}>
+                    <View style={[styles.itemInfo, { flex: 1 }]}>
+                        <View style={styles.iconContainer}>
+                            <Timer size={20} color={Colors.text} />
+                        </View>
+                        <View style={{ flex: 1 }}>
+                            <Text style={styles.itemName}>Still-Open Reminder</Text>
+                            <Text style={styles.itemSub}>
+                                Remind again if lock/sensor (when armed), garage, or shutter (&gt;50%) stays open
+                            </Text>
+                            <View style={styles.reminderChips}>
+                                {REMINDER_OPTIONS.map((m) => {
+                                    const active = stillOpenMinutes === m;
+                                    return (
+                                        <TouchableOpacity
+                                            key={m}
+                                            style={[styles.reminderChip, active && styles.reminderChipActive]}
+                                            onPress={() => saveStillOpenMinutes(m)}
+                                            disabled={savingReminder}
+                                        >
+                                            <Text style={[styles.reminderChipText, active && styles.reminderChipTextActive]}>
+                                                {m}m
+                                            </Text>
+                                        </TouchableOpacity>
+                                    );
+                                })}
+                            </View>
+                            {savingReminder ? (
+                                <ActivityIndicator size="small" color={Colors.primary} style={{ marginTop: 8 }} />
+                            ) : (
+                                <Text style={[styles.itemSub, { marginTop: 6 }]}>
+                                    Current: every {stillOpenMinutes} minutes
+                                </Text>
+                            )}
+                        </View>
+                    </View>
+                </View>
+
                 <TouchableOpacity style={styles.listItem} onPress={() => setMonitoredModalVisible(true)}>
                     <View style={styles.itemInfo}>
                         <View style={styles.iconContainer}>
@@ -502,6 +584,10 @@ function SettingsView({
                     </View>
                     <ChevronRight size={20} color={Colors.textDim} />
                 </TouchableOpacity>
+            </View>
+
+            <View style={styles.section}>
+                <Text style={styles.sectionHeader}>Data & System</Text>
 
                 <TouchableOpacity style={styles.listItem} onPress={() => setPreferencedEntitiesModalVisible(true)}>
                     <View style={styles.itemInfo}>
@@ -886,6 +972,32 @@ const styles = StyleSheet.create({
     itemSub: {
         color: Colors.textDim,
         fontSize: 12,
+    },
+    reminderChips: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+        marginTop: 10,
+    },
+    reminderChip: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 8,
+        backgroundColor: 'rgba(255,255,255,0.06)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+    },
+    reminderChipActive: {
+        backgroundColor: 'rgba(137,71,202,0.25)',
+        borderColor: Colors.primary,
+    },
+    reminderChipText: {
+        color: Colors.textDim,
+        fontSize: 12,
+        fontFamily: CF.semibold,
+    },
+    reminderChipTextActive: {
+        color: '#fff',
     },
     stateText: {
         color: Colors.textDim,

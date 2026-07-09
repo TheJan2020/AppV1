@@ -9,12 +9,14 @@ export default function CoverLayerFilter({ options = [], value, onChange }) {
     if (!options.length) return null;
 
     return (
-        <ScrollView
-            horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.scrollContent}
-        >
-            <View style={styles.bar}>
+        <View style={styles.wrap}>
+            <ScrollView
+                horizontal
+                showsHorizontalScrollIndicator={false}
+                nestedScrollEnabled
+                style={styles.scroll}
+                contentContainerStyle={styles.row}
+            >
                 {options.map((opt) => {
                     const active = value === opt.id;
                     return (
@@ -22,7 +24,7 @@ export default function CoverLayerFilter({ options = [], value, onChange }) {
                             key={opt.id}
                             style={[styles.pill, active && styles.pillActive]}
                             onPress={() => onChange?.(opt.id)}
-                            activeOpacity={0.75}
+                            activeOpacity={0.85}
                         >
                             <Text style={[styles.pillText, active && styles.pillTextActive]}>
                                 {opt.label}
@@ -30,41 +32,48 @@ export default function CoverLayerFilter({ options = [], value, onChange }) {
                         </TouchableOpacity>
                     );
                 })}
-            </View>
-        </ScrollView>
+            </ScrollView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
-    scrollContent: {
-        paddingVertical: 2,
+    wrap: {
+        alignSelf: 'center',
+        marginBottom: 14,
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderRadius: 20,
+        overflow: 'hidden',
+        paddingHorizontal: 5,
+        paddingVertical: 4,
     },
-    bar: {
+    scroll: {
+        flexGrow: 0,
+        flexShrink: 0,
+    },
+    row: {
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: '#0f0f1f',
-        borderRadius: 999,
-        padding: 4,
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.1)',
-        gap: 2,
+        gap: 3,
     },
     pill: {
-        paddingHorizontal: 18,
-        paddingVertical: 8,
-        borderRadius: 999,
+        paddingHorizontal: 14,
+        paddingVertical: 6,
+        borderRadius: 16,
         borderWidth: 1,
         borderColor: 'transparent',
     },
     pillActive: {
-        borderColor: 'rgba(255,255,255,0.85)',
+        borderColor: 'rgba(255,255,255,0.92)',
     },
     pillText: {
-        color: 'rgba(255,255,255,0.5)',
+        color: 'rgba(237,237,245,0.55)',
         fontSize: 13,
         fontFamily: CF.medium,
+        letterSpacing: -0.2,
     },
     pillTextActive: {
-        color: '#fff',
+        color: '#ededf5',
+        fontFamily: CF.semibold,
     },
 });
