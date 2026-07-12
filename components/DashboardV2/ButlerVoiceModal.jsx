@@ -7,8 +7,11 @@ import {
     TouchableOpacity,
     Animated,
     Easing,
+    ScrollView,
+    AppState,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { Headphones, PhoneOff, Volume2 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Heading, CF } from '../../utils/typography';
@@ -26,24 +29,204 @@ import {
 const RING_COUNT = 2;
 const RING_MS = 900;
 const RING_GAP_MS = 350;
+const KEEP_AWAKE_TAG = 'butler-voice-call';
 
 const PHASE_LABEL = {
     ringing: 'Ringing…',
-    butler: 'Butler',
-    live: 'Connected',
+    butler: 'Butler speaking',
+    live: 'Listening…',
     error: 'Call failed',
 };
+
+let msgSeq = 0;
+function nextMsgId() {
+    msgSeq += 1;
+    return `m${msgSeq}`;
+}
+
+/** Drop internal analysis / tool dumps that should never appear in the UI. */
+function isNoiseTranscript(text) {
+    const t = String(text || '').trim();
+    if (!t) return true;
+    if (t.startsWith('[') && (t.includes('context') || t.includes('live') || t.includes('system'))) return true;
+    if (/^\s*\{[\s\S]*"?(tool|function|name|args)"?\s*:/.test(t)) return true;
+    if (/function_call|tool_call|list_entities|get_entity_state|call_service/i.test(t) && t.length < 220) return true;
+    if (/^(thinking|analysis|plan|tool)\s*:/i.test(t)) return true;
+    return false;
+}
+
+/** Normalize for echo / greeting comparisons. */
+function normText(s) {
+    return String(s || '')
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+/** Prefer Arabic only when the device locale is Arabic; otherwise English (pins STT). */
+function preferredCallLanguage() {
+    try {
+        const locale = String(
+            Intl?.DateTimeFormat?.().resolvedOptions?.().locale || '',
+        ).toLowerCase();
+        if (locale.startsWith('ar')) return 'ar';
+    } catch (_) { /* ignore */ }
+    return 'en';
+}
+
+/**
+ * Gemini Live sometimes captions English speech in Devanagari/Hindi phonetics
+ * while still understanding English. Drop those wrong-script captions for YOU.
+ */
+function isWrongScriptForCall(text, callLanguage) {
+    const t = String(text || '');
+    if (!t.trim()) return true;
+    const latin = (t.match(/[A-Za-z]/g) || []).length;
+    const arabic = (t.match(/[\u0600-\u06FF]/g) || []).length;
+    const devanagari = (t.match(/[\u0900-\u097F]/g) || []).length;
+    const cjk = (t.match(/[\u3040-\u30FF\u3400-\u9FFF]/g) || []).length;
+    if (callLanguage === 'en') {
+        // English call captions must be Latin — never Hindi/CJK phonetic dumps
+        if (devanagari >= 2 || cjk >= 2) return true;
+        if (arabic >= 4 && latin === 0) return true;
+        return false;
+    }
+    if (callLanguage === 'ar') {
+        if (devanagari >= 2 || cjk >= 2) return true;
+        return false;
+    }
+    return false;
+}
+
+/** Infer en/ar from the first real user caption script. */
+function detectSpokenLanguage(text) {
+    const t = String(text || '');
+    const arabic = (t.match(/[\u0600-\u06FF]/g) || []).length;
+    const latin = (t.match(/[A-Za-z]/g) || []).length;
+    if (arabic >= 3 && arabic >= latin) return 'ar';
+    if (latin >= 2) return 'en';
+    return null;
+}
+
+/** Collapse whitespace only — real cleanup happens via backend ASR polish. */
+function normalizeCaption(text) {
+    return String(text || '').replace(/\s+/g, ' ').trim();
+}
+
+/** Butler speech often echoes into the mic and is wrongly labeled as YOU. */
+function isButlerEchoOrGreeting(text, messages = [], lastAssistantText = '') {
+    const raw = String(text || '').trim();
+    if (!raw) return true;
+    // Classic opening / filler lines that are never real user speech
+    if (
+        /^(hello[,.]?\s*)?(i am|i'm)\s+butler\b|how can i help|waiting for your request|certainly|checking now|one moment|wait[,.]?\s*(let me|i am)?\s*check|أهلاً|كيف يمكنني|كيف أقدر|لحظة|أتأكد/i.test(
+            raw,
+        )
+    ) {
+        return true;
+    }
+    const t = normText(raw);
+    if (t.length < 2) return true;
+
+    const assistantCandidates = [];
+    if (lastAssistantText) assistantCandidates.push(lastAssistantText);
+    const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant' && m.text);
+    if (lastAssistant?.text) assistantCandidates.push(lastAssistant.text);
+
+    for (const assistant of assistantCandidates) {
+        const a = normText(assistant);
+        if (!a) continue;
+        if (t === a) return true;
+        // User caption is just a slice of what Butler just said
+        if (t.length >= 4 && a.includes(t)) return true;
+        if (a.length >= 8 && t.startsWith(a.slice(0, Math.min(18, a.length)))) return true;
+        // High word overlap with Butler's recent line
+        const aw = new Set(a.split(' ').filter((w) => w.length > 2));
+        const tw = t.split(' ').filter((w) => w.length > 2);
+        if (tw.length >= 2 && aw.size > 0) {
+            const overlap = tw.filter((w) => aw.has(w)).length;
+            if (overlap / tw.length >= 0.75) return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Display the current turn's caption for a role.
+ *
+ * The backend is the single source of truth for stitching Gemini's ASR/TTS
+ * caption deltas together (see transcript_polish.merge_transcript_delta) —
+ * every `userTranscript` / `assistantTranscript` event already carries the
+ * full cumulative text for the turn. The client's only job is to show it,
+ * so we replace the open bubble's text rather than re-guessing overlaps.
+ */
+function mergeTranscript(prev, role, cumulativeText) {
+    const text = normalizeCaption(cumulativeText);
+    if (!text || isNoiseTranscript(text)) return prev;
+
+    const last = prev[prev.length - 1];
+    if (last && last.role === role && !last.final) {
+        return [...prev.slice(0, -1), { ...last, text }];
+    }
+    return [...prev, { id: nextMsgId(), role, text, final: false }];
+}
+
+/**
+ * Replace the latest YOU bubble with the backend-polished caption.
+ *
+ * If the live caption got split into several bubbles (e.g. a barge-in that
+ * briefly re-triggered `speaking`), collapse the whole trailing run of user
+ * bubbles into the single polished one instead of only touching the last —
+ * otherwise earlier fragments (like a stray "شيء") are left stranded on
+ * screen even after the backend sends the correct, complete text.
+ */
+function applyFinalUserCaption(prev, text) {
+    const cleaned = normalizeCaption(text);
+    if (!cleaned || isNoiseTranscript(cleaned)) return prev;
+    let cutoff = prev.length;
+    for (let i = prev.length - 1; i >= 0; i -= 1) {
+        if (prev[i].role !== 'user') break;
+        cutoff = i;
+    }
+    if (cutoff === prev.length) {
+        return [...prev, { id: nextMsgId(), role: 'user', text: cleaned, final: true }];
+    }
+    const id = prev[cutoff].id;
+    return [...prev.slice(0, cutoff), { id, role: 'user', text: cleaned, final: true }];
+}
+
+function finalizeRole(prev, role) {
+    if (!prev.length) return prev;
+    return prev.map((m) => {
+        if (m.role !== role || m.final) return m;
+        return { ...m, text: normalizeCaption(m.text), final: true };
+    });
+}
+
+function finalizeAll(prev) {
+    return prev.map((m) =>
+        m.final ? m : { ...m, text: normalizeCaption(m.text), final: true },
+    );
+}
 
 function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
     const [phase, setPhase] = useState('ringing');
     const [audioRoute, setAudioRoute] = useState('SPEAKER');
     const [routeHint, setRouteHint] = useState('');
     const [errorHint, setErrorHint] = useState('');
+    const [messages, setMessages] = useState([]);
+    const [statusHint, setStatusHint] = useState('');
 
     const sessionRef = useRef(null);
     const audioRouteRef = useRef('SPEAKER');
     const contextRef = useRef(context);
     const butlerSpokeRef = useRef(false);
+    const butlerSpeakingRef = useRef(false); // UI phase only — barge-in still shows YOU text
+    const lastAssistantTextRef = useRef('');
+    const callLanguageRef = useRef(preferredCallLanguage());
+    const languageLockedRef = useRef(false);
+    const scrollRef = useRef(null);
     contextRef.current = context;
 
     const ringScale = useRef(new Animated.Value(1)).current;
@@ -75,8 +258,11 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
             await sessionRef.current?.setRoute(route);
             const info = await getButlerAudioRouteInfo();
             setRouteHint(formatAudioRouteLabel(info, route));
+            // Route switch must never surface as "Call failed"
         } catch (e) {
             console.warn('[ButlerVoice] setRoute', e?.message ?? e);
+            const info = await getButlerAudioRouteInfo().catch(() => null);
+            setRouteHint(formatAudioRouteLabel(info, route) || 'Could not switch audio route');
         }
     }, []);
 
@@ -119,23 +305,39 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
 
     useEffect(() => {
         if (!visible) {
+            void deactivateKeepAwake(KEEP_AWAKE_TAG);
             void stopSession();
             setPhase('ringing');
             setAudioRoute('SPEAKER');
             setRouteHint('');
             setErrorHint('');
+            setMessages([]);
+            setStatusHint('');
             butlerSpokeRef.current = false;
+            butlerSpeakingRef.current = false;
+            lastAssistantTextRef.current = '';
+            callLanguageRef.current = preferredCallLanguage();
+            languageLockedRef.current = false;
             return undefined;
         }
 
         let cancelled = false;
         let hadExternalAudio = false;
         butlerSpokeRef.current = false;
+        butlerSpeakingRef.current = false;
+        lastAssistantTextRef.current = '';
+        callLanguageRef.current = preferredCallLanguage();
+        languageLockedRef.current = false;
         setPhase('ringing');
         setAudioRoute('SPEAKER');
         audioRouteRef.current = 'SPEAKER';
         setRouteHint('');
         setErrorHint('');
+        setMessages([]);
+        setStatusHint('');
+
+        // Keep screen on for the whole call (prevents lock / dim during long tool waits)
+        void activateKeepAwakeAsync(KEEP_AWAKE_TAG).catch(() => {});
 
         const liveAnim = Animated.loop(
             Animated.sequence([
@@ -178,20 +380,132 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
 
                 session.on('speaking', () => {
                     if (cancelled) return;
+                    // `speaking` fires on EVERY audio chunk Butler streams (many times
+                    // per second), not just once per turn. Only finalize the user's
+                    // bubble on the silence→speaking edge — otherwise a user utterance
+                    // that overlaps trailing Butler audio gets its live caption closed
+                    // and reopened on every chunk, fragmenting one sentence into many
+                    // disjoint "YOU" bubbles (e.g. "شيء" / "I'm saying on the").
+                    const wasSpeaking = butlerSpeakingRef.current;
                     butlerSpokeRef.current = true;
+                    butlerSpeakingRef.current = true;
                     setPhase('butler');
+                    setStatusHint('');
+                    if (!wasSpeaking) {
+                        // Close the user's bubble so butler captions can't attach to it
+                        setMessages((prev) => finalizeRole(prev, 'user'));
+                    }
                 });
                 session.on('listening', () => {
                     if (cancelled) return;
+                    butlerSpeakingRef.current = false;
+                    setMessages((prev) => finalizeAll(prev.filter((m) => m.role !== 'status' || m.text)));
                     if (butlerSpokeRef.current) setPhase('live');
+                    setStatusHint('');
+                });
+                session.on('userTranscript', (text) => {
+                    if (cancelled) return;
+                    if (isNoiseTranscript(text)) return;
+                    // Drop Gemini's wrong-script English→Hindi phonetics, etc.
+                    if (isWrongScriptForCall(text, callLanguageRef.current)) return;
+                    const live = normalizeCaption(text);
+                    if (!live) return;
+                    setMessages((prev) => {
+                        // Drop speaker-echo of Butler; keep real barge-in speech
+                        if (isButlerEchoOrGreeting(live, prev, lastAssistantTextRef.current)) {
+                            return prev;
+                        }
+                        // Lock call language from the first real Latin/Arabic utterance
+                        if (!languageLockedRef.current) {
+                            const detected = detectSpokenLanguage(live);
+                            if (detected) {
+                                languageLockedRef.current = true;
+                                callLanguageRef.current = detected;
+                                session.lockCallLanguage(detected);
+                            }
+                        }
+                        // Provisional live caption — backend will replace with polished final
+                        butlerSpeakingRef.current = false;
+                        const cleaned = finalizeRole(
+                            prev.filter((m) => m.role !== 'status'),
+                            'assistant',
+                        );
+                        return mergeTranscript(cleaned, 'user', live);
+                    });
+                    setPhase('live');
+                    setStatusHint('');
+                });
+                session.on('userTranscriptFinal', (text) => {
+                    if (cancelled) return;
+                    if (isNoiseTranscript(text)) return;
+                    if (isWrongScriptForCall(text, callLanguageRef.current)) return;
+                    const finalText = normalizeCaption(text);
+                    if (!finalText) return;
+                    if (isButlerEchoOrGreeting(finalText, [], lastAssistantTextRef.current)) return;
+                    setMessages((prev) => applyFinalUserCaption(prev, finalText));
+                    setPhase('live');
+                });
+                session.on('assistantTranscript', (text) => {
+                    if (cancelled) return;
+                    if (isNoiseTranscript(text)) return;
+                    const live = normalizeCaption(text);
+                    if (!live) return;
+                    butlerSpokeRef.current = true;
+                    butlerSpeakingRef.current = true;
+                    lastAssistantTextRef.current = live;
+                    setMessages((prev) => {
+                        // If a YOU bubble already has this butler line (echo), remove it
+                        const withoutEcho = prev.filter(
+                            (m) =>
+                                !(
+                                    m.role === 'user' &&
+                                    isButlerEchoOrGreeting(m.text, [{ role: 'assistant', text: live }], live)
+                                ),
+                        );
+                        // Finalize prior YOU before Butler caption grows
+                        const cleaned = finalizeRole(
+                            withoutEcho.filter((m) => m.role !== 'status'),
+                            'user',
+                        );
+                        return mergeTranscript(cleaned, 'assistant', live);
+                    });
+                    setPhase('butler');
+                    setStatusHint('');
+                });
+                // Do NOT render raw model `text` events — they often contain
+                // bilingual thinking / tool planning ("analysis") and pollute the chat.
+                // Tool calls stay silent in the UI — no "checking" status bubble.
+                session.on('toolCall', () => {
+                    if (cancelled) return;
+                    setMessages((prev) => prev.filter((m) => m.role !== 'status'));
+                });
+                session.on('toolResult', () => {
+                    if (cancelled) return;
+                    setStatusHint('');
+                });
+                session.on('interrupted', () => {
+                    if (cancelled) return;
+                    butlerSpeakingRef.current = false;
+                    setPhase('live');
+                    setMessages((prev) => finalizeRole(prev, 'assistant'));
                 });
                 session.on('error', ({ message }) => {
                     if (cancelled) return;
+                    butlerSpeakingRef.current = false;
                     setPhase('error');
-                    setErrorHint(message?.slice(0, 80) ?? '');
+                    const raw = String(message || '');
+                    let friendly = raw.slice(0, 120);
+                    if (/1007|CONTENT_TYPE_AUDIO|invalid frame/i.test(raw)) {
+                        friendly = 'Audio route interrupted. Tap Speaker, then try the call again.';
+                    } else if (/disconnected|closed/i.test(raw)) {
+                        friendly = 'Call disconnected. Please try again.';
+                    }
+                    setErrorHint(friendly);
                 });
 
-                const result = await session.start(contextRef.current);
+                const result = await session.start(contextRef.current, {
+                    callLanguage: callLanguageRef.current,
+                });
                 if (cancelled) {
                     await session.stop();
                     return;
@@ -216,23 +530,32 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
 
             if (externalNow && !hadExternalAudio) {
                 hadExternalAudio = true;
-                if (audioRouteRef.current === 'SPEAKER') {
-                    Haptics.selectionAsync();
-                    audioRouteRef.current = 'HEADSET';
-                    setAudioRoute('HEADSET');
-                    void sessionRef.current?.setRoute('HEADSET');
-                } else {
-                    void sessionRef.current?.setRoute('HEADSET');
-                }
+                // Auto-route to headset/Bluetooth when it connects mid-call
+                Haptics.selectionAsync();
+                audioRouteRef.current = 'HEADSET';
+                setAudioRoute('HEADSET');
+                void sessionRef.current?.setRoute('HEADSET');
             } else if (!externalNow && hadExternalAudio) {
                 hadExternalAudio = false;
+                // BT/wired disconnected — fall back to speaker so audio isn't lost
                 if (audioRouteRef.current === 'HEADSET') {
-                    void sessionRef.current?.setRoute('HEADSET');
+                    audioRouteRef.current = 'SPEAKER';
+                    setAudioRoute('SPEAKER');
+                    void sessionRef.current?.setRoute('SPEAKER');
                 }
             } else if (externalNow) {
                 hadExternalAudio = true;
             }
         });
+
+        // Leaving the app ends the call (avoids runaway greetings in background).
+        const onAppState = (next) => {
+            if (next === 'background') {
+                cancelled = true;
+                void endSession();
+            }
+        };
+        const appSub = AppState.addEventListener('change', onAppState);
 
         const bootstrap = async () => {
             void playRingVisuals();
@@ -256,13 +579,23 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
 
         return () => {
             cancelled = true;
+            appSub.remove();
             unsubRoute();
             liveAnim.stop();
             livePulse.setValue(1);
             ringScale.setValue(1);
+            void deactivateKeepAwake(KEEP_AWAKE_TAG);
             void stopSession();
         };
-    }, [visible, stopSession, runRingPulse, livePulse]);
+    }, [visible, stopSession, endSession, runRingPulse, livePulse]);
+
+    useEffect(() => {
+        if (!messages.length) return;
+        const t = setTimeout(() => {
+            scrollRef.current?.scrollToEnd?.({ animated: true });
+        }, 50);
+        return () => clearTimeout(t);
+    }, [messages]);
 
     const statusLabel = PHASE_LABEL[phase] ?? 'Butler';
     const showRingRipple = phase === 'ringing';
@@ -306,12 +639,55 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
                     </View>
 
                     <Text style={styles.statusLine}>{statusLabel}</Text>
+                    {statusHint ? (
+                        <Text style={styles.statusHint} numberOfLines={1}>{statusHint}</Text>
+                    ) : null}
                     {routeHint ? (
                         <Text style={styles.routeHint} numberOfLines={1}>{routeHint}</Text>
                     ) : null}
                     {phase === 'error' && errorHint ? (
                         <Text style={styles.errorHint} numberOfLines={2}>{errorHint}</Text>
                     ) : null}
+
+                    <ScrollView
+                        ref={scrollRef}
+                        style={styles.transcript}
+                        contentContainerStyle={styles.transcriptContent}
+                        showsVerticalScrollIndicator={false}
+                    >
+                        {messages.length === 0 ? (
+                            <Text style={styles.transcriptEmpty}>
+                                Your conversation will appear here
+                            </Text>
+                        ) : (
+                            messages.map((m) => {
+                                if (m.role === 'status') {
+                                    return (
+                                        <View key={m.id} style={styles.statusBubble}>
+                                            <Text style={styles.statusBubbleText}>{m.text}</Text>
+                                        </View>
+                                    );
+                                }
+                                const isUser = m.role === 'user';
+                                return (
+                                    <View
+                                        key={m.id}
+                                        style={[
+                                            styles.bubble,
+                                            isUser ? styles.bubbleUser : styles.bubbleButler,
+                                        ]}
+                                    >
+                                        <Text style={styles.bubbleRole}>
+                                            {isUser ? 'You' : 'Butler'}
+                                        </Text>
+                                        <Text style={styles.bubbleText}>
+                                            {m.text}
+                                        </Text>
+                                    </View>
+                                );
+                            })
+                        )}
+                    </ScrollView>
                 </View>
 
                 <View style={styles.controls}>
@@ -399,33 +775,33 @@ const styles = StyleSheet.create({
     content: {
         flex: 1,
         alignItems: 'center',
-        paddingHorizontal: 32,
+        paddingHorizontal: 24,
     },
     callerName: {
         ...Heading.lg24,
         color: '#ededf5',
         letterSpacing: -0.5,
-        marginBottom: 40,
+        marginBottom: 20,
     },
     avatarWrap: {
-        width: 160,
-        height: 160,
+        width: 120,
+        height: 120,
         alignItems: 'center',
         justifyContent: 'center',
-        marginBottom: 40,
+        marginBottom: 16,
     },
     ringRipple: {
         position: 'absolute',
-        width: 160,
-        height: 160,
-        borderRadius: 80,
+        width: 120,
+        height: 120,
+        borderRadius: 60,
         borderWidth: 2,
         borderColor: 'rgba(123,47,190,0.55)',
     },
     avatar: {
-        width: 120,
-        height: 120,
-        borderRadius: 60,
+        width: 88,
+        height: 88,
+        borderRadius: 44,
         alignItems: 'center',
         justifyContent: 'center',
         shadowColor: '#7B2FBE',
@@ -435,22 +811,29 @@ const styles = StyleSheet.create({
         elevation: 12,
     },
     avatarLetter: {
-        fontSize: 44,
+        fontSize: 34,
         fontFamily: CF.semibold,
         color: '#fff',
         letterSpacing: -1,
     },
     statusLine: {
-        fontSize: 17,
+        fontSize: 16,
         fontFamily: CF.medium,
         color: 'rgba(237,237,245,0.72)',
         letterSpacing: -0.2,
     },
-    routeHint: {
-        marginTop: 6,
+    statusHint: {
+        marginTop: 4,
         fontSize: 13,
+        fontFamily: CF.medium,
+        color: 'rgba(201,168,240,0.95)',
+        letterSpacing: -0.1,
+    },
+    routeHint: {
+        marginTop: 4,
+        fontSize: 12,
         fontFamily: CF.regular,
-        color: 'rgba(201,168,240,0.85)',
+        color: 'rgba(201,168,240,0.7)',
         letterSpacing: -0.1,
     },
     errorHint: {
@@ -461,10 +844,76 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         maxWidth: 280,
     },
+    transcript: {
+        flex: 1,
+        alignSelf: 'stretch',
+        marginTop: 18,
+        marginBottom: 8,
+    },
+    transcriptContent: {
+        paddingBottom: 12,
+        gap: 10,
+    },
+    transcriptEmpty: {
+        textAlign: 'center',
+        color: 'rgba(237,237,245,0.28)',
+        fontSize: 13,
+        fontFamily: CF.regular,
+        marginTop: 24,
+    },
+    bubble: {
+        maxWidth: '88%',
+        borderRadius: 16,
+        paddingHorizontal: 14,
+        paddingVertical: 10,
+    },
+    bubbleUser: {
+        alignSelf: 'flex-end',
+        backgroundColor: 'rgba(123,47,190,0.28)',
+        borderWidth: 1,
+        borderColor: 'rgba(123,47,190,0.4)',
+    },
+    bubbleButler: {
+        alignSelf: 'flex-start',
+        backgroundColor: 'rgba(255,255,255,0.07)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+    },
+    bubbleRole: {
+        fontSize: 10,
+        fontFamily: CF.semibold,
+        color: 'rgba(201,168,240,0.85)',
+        marginBottom: 3,
+        letterSpacing: 0.3,
+        textTransform: 'uppercase',
+    },
+    bubbleText: {
+        fontSize: 15,
+        fontFamily: CF.regular,
+        lineHeight: 22,
+        letterSpacing: -0.2,
+        color: '#ededf5',
+        writingDirection: 'auto',
+    },
+    statusBubble: {
+        alignSelf: 'center',
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 12,
+        backgroundColor: 'rgba(68,200,202,0.12)',
+        borderWidth: 1,
+        borderColor: 'rgba(68,200,202,0.28)',
+    },
+    statusBubbleText: {
+        fontSize: 12,
+        fontFamily: CF.medium,
+        color: '#7ad4d6',
+        fontStyle: 'italic',
+    },
     controls: {
         alignItems: 'center',
         paddingHorizontal: 32,
-        gap: 28,
+        gap: 22,
     },
     routeRow: {
         flexDirection: 'row',
