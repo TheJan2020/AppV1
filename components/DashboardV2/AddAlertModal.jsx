@@ -1,4 +1,7 @@
 import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, TextInput, FlatList, Alert, KeyboardAvoidingView, Platform } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { GestureDetector } from 'react-native-gesture-handler';
+import useSwipeDismiss from '../../hooks/useSwipeDismiss';
 import { BlurView } from 'expo-blur';
 import { X, ArrowRight, Check, Search, Save } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
@@ -7,6 +10,7 @@ import { authFetch } from '../../utils/authFetch';
 import ModalBackdrop from '../ModalBackdrop';
 
 export default function AddAlertModal({ visible, onClose, onSuccess, initialRule = null, adminUrl }) {
+    const { sheetAnimStyle, dismissGesture, backdropAnimStyle } = useSwipeDismiss({ visible, onClose });
     const [step, setStep] = useState(1);
     const [entities, setEntities] = useState([]);
     const [filteredEntities, setFilteredEntities] = useState([]);
@@ -198,10 +202,11 @@ export default function AddAlertModal({ visible, onClose, onSuccess, initialRule
             visible={visible}
             onRequestClose={onClose}
         >
-            <View style={styles.overlay}>
+            <Animated.View style={[styles.overlay, backdropAnimStyle]}>
                 <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
                 <ModalBackdrop onPress={onClose} />
-                <View style={[styles.contentContainer, { height: step === 1 ? '85%' : '75%' }]}>
+                <GestureDetector gesture={dismissGesture}>
+                <Animated.View style={[styles.contentContainer, { height: step === 1 ? '85%' : '75%' }, sheetAnimStyle]}>
                     <View style={styles.header}>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
                             <X size={24} color={Colors.textDim} />
@@ -219,8 +224,9 @@ export default function AddAlertModal({ visible, onClose, onSuccess, initialRule
                     </View>
 
                     {step === 1 ? renderStep1() : renderStep2()}
-                </View>
-            </View>
+                </Animated.View>
+                </GestureDetector>
+            </Animated.View>
         </Modal>
     );
 }

@@ -458,6 +458,24 @@ export default function RoomDetailView({
     const mainTemp = tempSensors.length > 0 ? tempSensors[0] : null;
     const mainHumidity = humiditySensors.length > 0 ? humiditySensors[0] : null;
 
+    // Prefer dedicated temp/humidity sensors; fall back to climate entity readings
+    const resolveIndoorTemp = () => {
+        if (mainTemp?.stateObj?.state != null && !isNaN(Number(mainTemp.stateObj.state))) {
+            return Math.round(Number(mainTemp.stateObj.state));
+        }
+        const climate = (climates || []).find(c => c.stateObj?.attributes?.current_temperature != null);
+        const t = climate?.stateObj?.attributes?.current_temperature;
+        return t != null && !isNaN(Number(t)) ? Math.round(Number(t)) : null;
+    };
+    const resolveIndoorHumidity = () => {
+        if (mainHumidity?.stateObj?.state != null && !isNaN(Number(mainHumidity.stateObj.state))) {
+            return Math.round(Number(mainHumidity.stateObj.state));
+        }
+        const climate = (climates || []).find(c => c.stateObj?.attributes?.current_humidity != null);
+        const h = climate?.stateObj?.attributes?.current_humidity;
+        return h != null && !isNaN(Number(h)) ? Math.round(Number(h)) : null;
+    };
+
     // Split locks out of the lights array (they arrive merged from roomHelpers)
     const lockEntities = lights.filter(l => l.entity_id.startsWith('lock.'));
     const actualLightEntities = lights.filter(l => !l.entity_id.startsWith('lock.'));
@@ -707,15 +725,15 @@ export default function RoomDetailView({
                             const weatherEntity = allEntities?.find(e => e.entity_id && e.entity_id.startsWith('weather.'));
                             const outdoorTemp = weatherEntity?.attributes?.temperature ?? null;
                             const outdoorHumidity = weatherEntity?.attributes?.humidity != null ? Math.round(weatherEntity.attributes.humidity) : null;
-                            const indoorTemp = mainTemp?.stateObj?.state != null && !isNaN(Number(mainTemp.stateObj.state)) ? Math.round(Number(mainTemp.stateObj.state)) : null;
-                            const indoorHumidity = mainHumidity?.stateObj?.state != null && !isNaN(Number(mainHumidity.stateObj.state)) ? Math.round(Number(mainHumidity.stateObj.state)) : null;
+                            const indoorTemp = resolveIndoorTemp();
+                            const indoorHumidity = resolveIndoorHumidity();
 
                             return (
                                 <>
                                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                                         <Text style={styles.subtitleLabel}>Outdoor</Text>
                                         <Thermometer size={13} color={Colors.textDim} />
-                                        <Text style={styles.subtitle}>{outdoorTemp != null ? `${outdoorTemp}°C` : '--'}</Text>
+                                        <Text style={styles.subtitle}>{outdoorTemp != null ? `${outdoorTemp} °C` : '--'}</Text>
                                         <Droplets size={13} color={Colors.textDim} />
                                         <Text style={styles.subtitle}>{outdoorHumidity != null ? `${outdoorHumidity}%` : '--'}</Text>
                                     </View>
@@ -723,7 +741,7 @@ export default function RoomDetailView({
                                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 8 }}>
                                             <Text style={styles.subtitleLabel}>Indoor</Text>
                                             <Thermometer size={13} color={Colors.textDim} />
-                                            <Text style={styles.subtitle}>{indoorTemp != null ? `${indoorTemp}°C` : '--'}</Text>
+                                            <Text style={styles.subtitle}>{indoorTemp != null ? `${indoorTemp} °C` : '--'}</Text>
                                             <Droplets size={13} color={Colors.textDim} />
                                             <Text style={styles.subtitle}>{indoorHumidity != null ? `${indoorHumidity}%` : '--'}</Text>
                                         </View>
@@ -774,14 +792,14 @@ export default function RoomDetailView({
                                         const weatherEntity = allEntities?.find(e => e.entity_id && e.entity_id.startsWith('weather.'));
                                         const outdoorTemp = weatherEntity?.attributes?.temperature ?? null;
                                         const outdoorHumidity = weatherEntity?.attributes?.humidity != null ? Math.round(weatherEntity.attributes.humidity) : null;
-                                        const indoorTemp = mainTemp?.stateObj?.state != null && !isNaN(Number(mainTemp.stateObj.state)) ? Math.round(Number(mainTemp.stateObj.state)) : null;
-                                        const indoorHumidity = mainHumidity?.stateObj?.state != null && !isNaN(Number(mainHumidity.stateObj.state)) ? Math.round(Number(mainHumidity.stateObj.state)) : null;
+                                        const indoorTemp = resolveIndoorTemp();
+                                        const indoorHumidity = resolveIndoorHumidity();
                                         return (
                                             <View style={styles.headerStatsRow}>
                                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                                                     <Text style={styles.subtitleLabel}>Outdoor</Text>
                                                     <Thermometer size={13} color="rgba(255,255,255,0.7)" />
-                                                    <Text style={styles.subtitle}>{outdoorTemp != null ? `${outdoorTemp}°C` : '--'}</Text>
+                                                    <Text style={styles.subtitle}>{outdoorTemp != null ? `${outdoorTemp} °C` : '--'}</Text>
                                                     <Droplets size={13} color="rgba(255,255,255,0.7)" />
                                                     <Text style={styles.subtitle}>{outdoorHumidity != null ? `${outdoorHumidity}%` : '--'}</Text>
                                                 </View>
@@ -789,7 +807,7 @@ export default function RoomDetailView({
                                                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 8 }}>
                                                         <Text style={styles.subtitleLabel}>Indoor</Text>
                                                         <Thermometer size={13} color="rgba(255,255,255,0.7)" />
-                                                        <Text style={styles.subtitle}>{indoorTemp != null ? `${indoorTemp}°C` : '--'}</Text>
+                                                        <Text style={styles.subtitle}>{indoorTemp != null ? `${indoorTemp} °C` : '--'}</Text>
                                                         <Droplets size={13} color="rgba(255,255,255,0.7)" />
                                                         <Text style={styles.subtitle}>{indoorHumidity != null ? `${indoorHumidity}%` : '--'}</Text>
                                                     </View>
@@ -826,14 +844,14 @@ export default function RoomDetailView({
                                         const weatherEntity = allEntities?.find(e => e.entity_id && e.entity_id.startsWith('weather.'));
                                         const outdoorTemp = weatherEntity?.attributes?.temperature ?? null;
                                         const outdoorHumidity = weatherEntity?.attributes?.humidity != null ? Math.round(weatherEntity.attributes.humidity) : null;
-                                        const indoorTemp = mainTemp?.stateObj?.state != null && !isNaN(Number(mainTemp.stateObj.state)) ? Math.round(Number(mainTemp.stateObj.state)) : null;
-                                        const indoorHumidity = mainHumidity?.stateObj?.state != null && !isNaN(Number(mainHumidity.stateObj.state)) ? Math.round(Number(mainHumidity.stateObj.state)) : null;
+                                        const indoorTemp = resolveIndoorTemp();
+                                        const indoorHumidity = resolveIndoorHumidity();
                                         return (
                                             <View style={styles.headerStatsRow}>
                                                 <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
                                                     <Text style={styles.subtitleLabel}>Outdoor</Text>
                                                     <Thermometer size={13} color="rgba(255,255,255,0.7)" />
-                                                    <Text style={styles.subtitle}>{outdoorTemp != null ? `${outdoorTemp}°C` : '--'}</Text>
+                                                    <Text style={styles.subtitle}>{outdoorTemp != null ? `${outdoorTemp} °C` : '--'}</Text>
                                                     <Droplets size={13} color="rgba(255,255,255,0.7)" />
                                                     <Text style={styles.subtitle}>{outdoorHumidity != null ? `${outdoorHumidity}%` : '--'}</Text>
                                                 </View>
@@ -841,7 +859,7 @@ export default function RoomDetailView({
                                                     <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, marginLeft: 8 }}>
                                                         <Text style={styles.subtitleLabel}>Indoor</Text>
                                                         <Thermometer size={13} color="rgba(255,255,255,0.7)" />
-                                                        <Text style={styles.subtitle}>{indoorTemp != null ? `${indoorTemp}°C` : '--'}</Text>
+                                                        <Text style={styles.subtitle}>{indoorTemp != null ? `${indoorTemp} °C` : '--'}</Text>
                                                         <Droplets size={13} color="rgba(255,255,255,0.7)" />
                                                         <Text style={styles.subtitle}>{indoorHumidity != null ? `${indoorHumidity}%` : '--'}</Text>
                                                     </View>

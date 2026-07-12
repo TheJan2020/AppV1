@@ -138,7 +138,7 @@ export default function RoomClimateChart({ tempEntityId, humidityEntityId, admin
                     {currentTemp !== null && (
                         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
                             <Thermometer size={16} color="#FF9800" />
-                            <Text style={[styles.statValue, { color: '#FF9800' }]}>{currentTemp?.toFixed(1)}°C</Text>
+                            <Text style={[styles.statValue, { color: '#FF9800' }]}>{currentTemp?.toFixed(1)} °C</Text>
                         </View>
                     )}
                 </View>

@@ -10,6 +10,7 @@ private final class PcmEngine {
   private var player: AVAudioPlayerNode?
   private var format: AVAudioFormat?
   private var sessionReady = false
+  private var preferredRoute: String = "SPEAKER"
   private var routeObserver: NSObjectProtocol?
   private let lock = NSLock()
 
@@ -36,6 +37,10 @@ private final class PcmEngine {
     for input in session.availableInputs ?? [] {
       if Self.isBluetoothPort(input.portType) {
         bluetoothConnected = true
+        if outputName.isEmpty {
+          outputName = input.portName
+          outputType = input.portType.rawValue
+        }
       }
       if Self.isWiredHeadsetPort(input.portType) {
         wiredHeadset = true
@@ -49,6 +54,7 @@ private final class PcmEngine {
       "hasExternalAudio": hasExternal,
       "outputName": outputName,
       "outputType": outputType,
+      "preferredRoute": preferredRoute,
     ]
   }
 
@@ -79,20 +85,54 @@ private final class PcmEngine {
     }
   }
 
+  /// One stable session category for the whole call.
+  /// Mid-call we only flip speaker override + preferred input — never recreate the category,
+  /// or the mic stream breaks and Gemini closes with 1007 / CONTENT_TYPE_AUDIO.
+  private func activateSession() throws {
+    let session = AVAudioSession.sharedInstance()
+    // HFP covers AirPods / BT headsets with mic. Avoid A2DP here — it can switch the
+    // session into a media content type and break duplex voice (Gemini 1007).
+    try session.setCategory(
+      .playAndRecord,
+      mode: .voiceChat,
+      options: [.allowBluetoothHFP, .defaultToSpeaker]
+    )
+    try session.setActive(true)
+  }
+
+  private func applyOutputRoute(_ route: String) throws {
+    let session = AVAudioSession.sharedInstance()
+    let useSpeaker = route.uppercased() == "SPEAKER"
+    preferredRoute = useSpeaker ? "SPEAKER" : "HEADSET"
+
+    if useSpeaker {
+      try session.overrideOutputAudioPort(.speaker)
+      if let builtIn = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+        try? session.setPreferredInput(builtIn)
+      }
+    } else {
+      // Clear speaker override → iOS routes to BT / wired / earpiece.
+      try session.overrideOutputAudioPort(.none)
+      if let btInput = session.availableInputs?.first(where: { Self.isBluetoothPort($0.portType) }) {
+        try? session.setPreferredInput(btInput)
+      } else if let wiredMic = session.availableInputs?.first(where: { $0.portType == .headsetMic }) {
+        try? session.setPreferredInput(wiredMic)
+      }
+    }
+
+    #if DEBUG
+    let outs = session.currentRoute.outputs.map { "\($0.portType.rawValue):\($0.portName)" }.joined(separator: ",")
+    print("[ExpoPcmPlayer] route=\(preferredRoute) outputs=[\(outs)]")
+    #endif
+  }
+
   func prepare(sampleRate: Double) throws {
     lock.lock()
     defer { lock.unlock() }
-    stopLocked()
+    stopLocked(keepRouteMonitor: true)
 
-    let session = AVAudioSession.sharedInstance()
-    // videoChat keeps duplex mic+speaker but is louder on speakerphone than voiceChat.
-    try session.setCategory(
-      .playAndRecord,
-      mode: .videoChat,
-      options: [.defaultToSpeaker, .allowBluetoothHFP]
-    )
-    try session.setActive(true)
-    try session.overrideOutputAudioPort(.speaker)
+    try activateSession()
+    try applyOutputRoute(preferredRoute)
     sessionReady = true
     beginRouteMonitoring()
 
@@ -146,18 +186,22 @@ private final class PcmEngine {
   func setRoute(_ route: String) throws {
     lock.lock()
     defer { lock.unlock() }
+
+    let normalized = route.uppercased() == "SPEAKER" ? "SPEAKER" : "HEADSET"
+    preferredRoute = normalized
+
+    // Allow setting preferred route before prepare(); apply immediately if live.
     guard sessionReady else { return }
 
-    let session = AVAudioSession.sharedInstance()
-    let useSpeaker = route.uppercased() == "SPEAKER"
-    if useSpeaker {
-      try session.overrideOutputAudioPort(.speaker)
-    } else {
-      try session.overrideOutputAudioPort(.none)
-      if let btInput = session.availableInputs?.first(where: { Self.isBluetoothPort($0.portType) }) {
-        try session.setPreferredInput(btInput)
-      } else if let builtIn = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
-        try session.setPreferredInput(builtIn)
+    // Soft switch only — do not recreate category/mode (breaks live mic → Gemini 1007).
+    try applyOutputRoute(normalized)
+
+    if let engine = engine, let player = player {
+      if !engine.isRunning {
+        try engine.start()
+      }
+      if !player.isPlaying {
+        player.play()
       }
     }
   }
@@ -165,11 +209,13 @@ private final class PcmEngine {
   func stop() {
     lock.lock()
     defer { lock.unlock() }
-    stopLocked()
+    stopLocked(keepRouteMonitor: false)
   }
 
-  private func stopLocked() {
-    endRouteMonitoring()
+  private func stopLocked(keepRouteMonitor: Bool) {
+    if !keepRouteMonitor {
+      endRouteMonitoring()
+    }
     player?.stop()
     engine?.stop()
     player = nil

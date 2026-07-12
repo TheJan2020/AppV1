@@ -1,4 +1,7 @@
 import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, ActivityIndicator } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { GestureDetector } from 'react-native-gesture-handler';
+import useSwipeDismiss from '../../hooks/useSwipeDismiss';
 import { BlurView } from 'expo-blur';
 import { X, Sparkles, Brain, Info, CheckCircle, AlertCircle, Thermometer, Sun, Volume2 } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
@@ -8,6 +11,7 @@ import { authFetch } from '../../utils/authFetch';
 import ModalBackdrop from '../ModalBackdrop';
 
 export default function MyPreferencesModal({ visible, onClose, adminUrl }) {
+    const { sheetAnimStyle, dismissGesture, backdropAnimStyle } = useSwipeDismiss({ visible, onClose });
     const [loading, setLoading] = useState(false);
     const [analyzing, setAnalyzing] = useState(false);
     const [data, setData] = useState([]); // [{ name: "Living Room", entities: [...] }]
@@ -165,10 +169,11 @@ export default function MyPreferencesModal({ visible, onClose, adminUrl }) {
             visible={visible}
             onRequestClose={onClose}
         >
-            <View style={styles.overlay}>
+            <Animated.View style={[styles.overlay, backdropAnimStyle]}>
                 <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
                 <ModalBackdrop onPress={onClose} />
-                <View style={styles.contentContainer}>
+                <GestureDetector gesture={dismissGesture}>
+                <Animated.View style={[styles.contentContainer, sheetAnimStyle]}>
                     <View style={styles.header}>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
                             <X size={24} color={Colors.textDim} />
@@ -281,8 +286,9 @@ export default function MyPreferencesModal({ visible, onClose, adminUrl }) {
                             </ScrollView>
                         </>
                     )}
-                </View>
-            </View>
+                </Animated.View>
+                </GestureDetector>
+            </Animated.View>
 
             {/* Detail Modal */}
             <Modal

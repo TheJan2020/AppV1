@@ -119,6 +119,12 @@ export class ButlerProxyClient {
         this.ws.send(JSON.stringify({ type: 'context', text }));
     }
 
+    setCallLanguage(language) {
+        if (this.ws?.readyState !== WebSocket.OPEN) return;
+        if (language !== 'en' && language !== 'ar') return;
+        this.ws.send(JSON.stringify({ type: 'set_call_language', language }));
+    }
+
     _handleMessage(raw) {
         let msg;
         try {
@@ -134,6 +140,15 @@ export class ButlerProxyClient {
                 break;
             case 'text':
                 if (typeof msg.text === 'string') this.emit('text', msg.text);
+                break;
+            case 'user_transcript':
+                if (typeof msg.text === 'string') this.emit('userTranscript', msg.text);
+                break;
+            case 'user_transcript_final':
+                if (typeof msg.text === 'string') this.emit('userTranscriptFinal', msg.text);
+                break;
+            case 'assistant_transcript':
+                if (typeof msg.text === 'string') this.emit('assistantTranscript', msg.text);
                 break;
             case 'tool_call_started':
                 this.emit('toolCall', String(msg.name ?? '?'), msg.args ?? {});

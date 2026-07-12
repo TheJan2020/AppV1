@@ -1,24 +1,25 @@
-import { View, Text, StyleSheet, TouchableOpacity, Modal, PanResponder, Animated } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, PanResponder, Animated as RNAnimated } from 'react-native';
 import { BlurView } from 'expo-blur';
 import { ArrowLeft, Home, Menu, X, ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '../../constants/Colors';
 import { useRef } from 'react';
+import Animated from 'react-native-reanimated';
+import { GestureDetector } from 'react-native-gesture-handler';
+import useSwipeDismiss from '../../hooks/useSwipeDismiss';
 
 export default function RemoteControlModal({ visible, onClose, player, remoteEntity, onUpdate }) {
     if (!visible || !player) return null;
 
-    // Helper to send commands
+    const { sheetAnimStyle, dismissGesture, backdropAnimStyle } = useSwipeDismiss({ visible, onClose });
+
     const sendCommand = (cmd) => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
         const targetId = (remoteEntity && remoteEntity.entity_id) ? remoteEntity.entity_id : player.entity_id;
         onUpdate(targetId, 'remote', 'send_command', { command: cmd });
     };
 
-    // Trackpad Logic with PanResponder (No External Native Deps)
-    const pan = useRef(new Animated.ValueXY()).current;
-
-    // Thresholds
+    const pan = useRef(new RNAnimated.ValueXY()).current;
     const SWIPE_THRESHOLD = 30;
 
     const panResponder = useRef(
@@ -26,53 +27,32 @@ export default function RemoteControlModal({ visible, onClose, player, remoteEnt
             onStartShouldSetPanResponder: () => true,
             onMoveShouldSetPanResponder: () => true,
             onPanResponderGrant: () => {
-                pan.setOffset({
-                    x: pan.x._value,
-                    y: pan.y._value
-                });
+                pan.setOffset({ x: pan.x._value, y: pan.y._value });
             },
-            onPanResponderMove: Animated.event(
+            onPanResponderMove: RNAnimated.event(
                 [null, { dx: pan.x, dy: pan.y }],
                 { useNativeDriver: false }
             ),
             onPanResponderRelease: (e, gestureState) => {
                 pan.flattenOffset();
-
-                // Snap back
-                Animated.spring(pan, {
-                    toValue: { x: 0, y: 0 },
-                    useNativeDriver: false
-                }).start();
-
+                RNAnimated.spring(pan, { toValue: { x: 0, y: 0 }, useNativeDriver: false }).start();
                 const { dx, dy } = gestureState;
                 const absDx = Math.abs(dx);
                 const absDy = Math.abs(dy);
-
                 if (Math.max(absDx, absDy) > SWIPE_THRESHOLD) {
-                    // Swipe
-                    if (absDx > absDy) {
-                        sendCommand(dx > 0 ? 'right' : 'left');
-                    } else {
-                        sendCommand(dy > 0 ? 'down' : 'up');
-                    }
-                } else {
-                    // Tap
-                    sendCommand('select');
-                }
+                    if (absDx > absDy) { sendCommand(dx > 0 ? 'right' : 'left'); }
+                    else { sendCommand(dy > 0 ? 'down' : 'up'); }
+                } else { sendCommand('select'); }
             }
         })
     ).current;
 
     return (
-        <Modal
-            animationType="slide"
-            transparent={true}
-            visible={visible}
-            onRequestClose={onClose}
-        >
-            <View style={styles.overlay}>
+        <Modal animationType="none" transparent={true} visible={visible} onRequestClose={onClose}>
+            <Animated.View style={[styles.overlay, backdropAnimStyle]}>
                 <TouchableOpacity style={styles.backdrop} onPress={onClose} activeOpacity={1} />
-
+                <GestureDetector gesture={dismissGesture}>
+                <Animated.View style={sheetAnimStyle}>
                 <BlurView intensity={45} tint="dark" style={styles.remoteBody}>
                     <View style={styles.header}>
                         <Text style={styles.title}>{player.displayName} Remote</Text>
@@ -83,18 +63,18 @@ export default function RemoteControlModal({ visible, onClose, player, remoteEnt
 
                     {/* TRACKPAD AREA */}
                     <View style={styles.trackpadContainer} {...panResponder.panHandlers}>
-                        <Animated.View style={[
+                        <RNAnimated.View style={[
                             styles.trackpadSurface,
                             {
                                 transform: [
-                                    { translateX: pan.x.interpolate({ inputRange: [-100, 100], outputRange: [-20, 20] }) }, // Dampened movement
+                                    { translateX: pan.x.interpolate({ inputRange: [-100, 100], outputRange: [-20, 20] }) },
                                     { translateY: pan.y.interpolate({ inputRange: [-100, 100], outputRange: [-20, 20] }) }
                                 ]
                             }
                         ]}>
                             <Text style={styles.trackpadHint}>Swipe to Navigate</Text>
                             <Text style={styles.trackpadHintSub}>Tap to Select</Text>
-                        </Animated.View>
+                        </RNAnimated.View>
                     </View>
 
                     {/* Action Buttons */}
@@ -103,19 +83,19 @@ export default function RemoteControlModal({ visible, onClose, player, remoteEnt
                             <ArrowLeft size={24} color="#fff" />
                             <Text style={styles.btnLabel}>Back</Text>
                         </TouchableOpacity>
-
                         <TouchableOpacity style={styles.actionBtn} onPress={() => sendCommand('home')}>
                             <Home size={24} color="#fff" />
                             <Text style={styles.btnLabel}>Home</Text>
                         </TouchableOpacity>
-
                         <TouchableOpacity style={styles.actionBtn} onPress={() => sendCommand('menu')}>
                             <Menu size={24} color="#fff" />
                             <Text style={styles.btnLabel}>Menu</Text>
                         </TouchableOpacity>
                     </View>
                 </BlurView>
-            </View>
+                </Animated.View>
+                </GestureDetector>
+            </Animated.View>
         </Modal>
     );
 }

@@ -21,6 +21,42 @@ export function isMusicAssistantMediaPlayer(re, stateObj, musicAssistantConfigEn
     return v != null && v !== '';
 }
 
+/** Infer temperature / humidity when admin sensorType is unset ("Auto"). */
+export function inferSensorType(entityId, stateObj, mappedType = null) {
+    if (mappedType) return mappedType;
+
+    const dc = (stateObj?.attributes?.device_class || '').toLowerCase();
+    if (dc === 'temperature') return 'temperature';
+    if (dc === 'humidity') return 'humidity';
+    if (dc === 'door' || dc === 'window' || dc === 'opening' || dc === 'garage_door') return 'door';
+    if (dc === 'motion') return 'motion';
+    if (dc === 'occupancy') return 'occupancy';
+    if (dc === 'battery') return 'battery';
+    if (dc === 'power' || dc === 'energy') return 'power';
+    if (dc === 'smoke' || dc === 'gas' || dc === 'carbon_monoxide') return 'smoke';
+    if (dc === 'moisture') return 'water';
+
+    const id = (entityId || '').toLowerCase();
+    if (id.includes('humidity')) return 'humidity';
+    if (
+        id.includes('temperature') ||
+        id.includes('_temp') ||
+        id.endsWith('.temp') ||
+        id.includes('indoor_temp') ||
+        id.includes('room_temp')
+    ) {
+        return 'temperature';
+    }
+    return null;
+}
+
+/** Temp/humidity sensors are often HA "diagnostic" — still show them in rooms. */
+function isRoomClimateSensor(re, stateObj, mappedType) {
+    if (!re?.entity_id?.startsWith('sensor.')) return false;
+    const type = inferSensorType(re.entity_id, stateObj, mappedType);
+    return type === 'temperature' || type === 'humidity';
+}
+
 export const getRoomEntities = (
     room,
     registryDevices = [],
@@ -58,7 +94,13 @@ export const getRoomEntities = (
         // Filter out disabled, hidden, and non-user-facing entities (matches HA frontend behavior)
         if (re.disabled_by) return false;
         if (re.hidden_by) return false;
-        if (re.entity_category === 'config' || re.entity_category === 'diagnostic') return false;
+        if (re.entity_category === 'config') return false;
+        if (re.entity_category === 'diagnostic') {
+            const stateObj = safeAllEntities.find(e => e.entity_id === re.entity_id);
+            const mapping = safeSensorMappings.find(m => m.entity_id === re.entity_id);
+            // Keep indoor temp/humidity sensors even when HA marks them diagnostic
+            if (!isRoomClimateSensor(re, stateObj, mapping?.sensorType || null)) return false;
+        }
         return true;
     });
 
@@ -117,7 +159,7 @@ export const getRoomEntities = (
             ...reg,
             stateObj: stateObj || { state: 'unavailable', attributes: {} },
             displayName: reg.name || reg.original_name || stateObj?.attributes?.friendly_name || reg.entity_id,
-            sensorType: mapping?.sensorType || null,
+            sensorType: inferSensorType(reg.entity_id, stateObj, mapping?.sensorType || null),
             coverType: coverMapping?.coverType || null,
             coverLayer: inferCoverLayer(reg.entity_id, coverMapping?.coverLayer),
             windowId: coverMapping?.windowId || null,

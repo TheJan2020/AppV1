@@ -54,17 +54,24 @@ export function suggestButlerRoute(info) {
 
 /** Human label for route row subtitle. */
 export function formatAudioRouteLabel(info, selectedRoute) {
+    if (selectedRoute === 'HEADSET') {
+        if (info?.bluetoothConnected) {
+            const name = info.outputName?.trim();
+            return name ? `Bluetooth · ${name}` : 'Bluetooth headset';
+        }
+        if (info?.wiredHeadset) {
+            return 'Wired headset';
+        }
+        return 'Earpiece (connect Bluetooth or plug in headphones)';
+    }
     if (info?.bluetoothConnected) {
         const name = info.outputName?.trim();
-        return name ? `Bluetooth · ${name}` : 'Bluetooth connected';
+        return name ? `Speaker (BT available: ${name})` : 'Speaker (Bluetooth available)';
     }
     if (info?.wiredHeadset) {
-        return 'Wired headset';
+        return 'Speaker (headset plugged in)';
     }
-    if (selectedRoute === 'HEADSET') {
-        return 'Phone earpiece';
-    }
-    return '';
+    return 'Phone speaker';
 }
 
 /**

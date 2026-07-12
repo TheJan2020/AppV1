@@ -5,11 +5,15 @@ import { X, Wifi, Users, Router, Cpu, Activity, Clock, Link, CheckCircle, XCircl
 import { Colors } from '../../constants/Colors';
 import * as Haptics from 'expo-haptics';
 import ModalBackdrop from '../ModalBackdrop';
+import Animated from 'react-native-reanimated';
+import { GestureDetector } from 'react-native-gesture-handler';
+import useSwipeDismiss from '../../hooks/useSwipeDismiss';
 
 export default function NetworkModal({ visible, onClose, config, entities, onToggle }) {
     const [networks, setNetworks] = useState([]);
     const [aps, setAPs] = useState([]);
-    const [activeTab, setActiveTab] = useState('networks'); // 'networks' or 'aps'
+    const [activeTab, setActiveTab] = useState('networks');
+    const { sheetAnimStyle, dismissGesture, backdropAnimStyle } = useSwipeDismiss({ visible, onClose });
 
     useEffect(() => {
         if (!visible) return; // Optimization
@@ -203,12 +207,12 @@ export default function NetworkModal({ visible, onClose, config, entities, onTog
             visible={visible}
             onRequestClose={onClose}
         >
-            <View style={styles.container}>
+            <Animated.View style={[styles.container, backdropAnimStyle]}>
                 <BlurView intensity={20} style={StyleSheet.absoluteFill} tint="dark" />
                 <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.7)' }]} />
                 <ModalBackdrop onPress={onClose} />
-
-                <View style={styles.content}>
+                <GestureDetector gesture={dismissGesture}>
+                <Animated.View style={[styles.content, sheetAnimStyle]}>
                     <View style={styles.header}>
                         <Text style={styles.title}>Network Status</Text>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -239,8 +243,9 @@ export default function NetworkModal({ visible, onClose, config, entities, onTog
                     </View>
 
                     {activeTab === 'networks' ? renderNetworks() : renderAPs()}
-                </View>
-            </View>
+                </Animated.View>
+                </GestureDetector>
+            </Animated.View>
         </Modal>
     );
 }

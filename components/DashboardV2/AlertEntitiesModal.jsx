@@ -6,12 +6,16 @@ import { useState, useEffect } from 'react';
 import { authFetch } from '../../utils/authFetch';
 import ModalBackdrop from '../ModalBackdrop';
 import AddAlertModal from './AddAlertModal';
+import Animated from 'react-native-reanimated';
+import { GestureDetector } from 'react-native-gesture-handler';
+import useSwipeDismiss from '../../hooks/useSwipeDismiss';
 
 export default function AlertEntitiesModal({ visible, onClose, adminUrl }) {
     const [rules, setRules] = useState([]);
     const [loading, setLoading] = useState(true);
     const [addModalVisible, setAddModalVisible] = useState(false);
     const [editingRule, setEditingRule] = useState(null);
+    const { sheetAnimStyle, dismissGesture, backdropAnimStyle } = useSwipeDismiss({ visible, onClose });
 
     useEffect(() => {
         if (visible) {
@@ -71,10 +75,11 @@ export default function AlertEntitiesModal({ visible, onClose, adminUrl }) {
             visible={visible}
             onRequestClose={onClose}
         >
-            <View style={styles.overlay}>
+            <Animated.View style={[styles.overlay, backdropAnimStyle]}>
                 <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
                 <ModalBackdrop onPress={onClose} />
-                <View style={styles.contentContainer}>
+                <GestureDetector gesture={dismissGesture}>
+                <Animated.View style={[styles.contentContainer, sheetAnimStyle]}>
                     <View style={styles.header}>
                         <Text style={styles.title}>Alert Entities</Text>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -126,8 +131,9 @@ export default function AlertEntitiesModal({ visible, onClose, adminUrl }) {
                             </View>
                         ))}
                     </ScrollView>
-                </View>
-            </View>
+                </Animated.View>
+                </GestureDetector>
+            </Animated.View>
 
             <AddAlertModal
                 visible={addModalVisible}

@@ -1,5 +1,5 @@
-import { View, StyleSheet, Modal, TouchableOpacity } from 'react-native';
-import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { View, StyleSheet } from 'react-native';
+import BottomSheetModal from '../BottomSheetModal';
 import RoomDetailView from './RoomDetailView';
 import { useRoomAreaEntities } from '../../hooks/useRoomAreaEntities';
 
@@ -60,16 +60,8 @@ export default function RoomSheet({
     });
 
     return (
-        <Modal
-            animationType="slide"
-            transparent={true}
-            visible={visible}
-            onRequestClose={onClose}
-        >
-            <View style={styles.overlay}>
-                <TouchableOpacity style={styles.backdrop} onPress={onClose} activeOpacity={1} />
-                <GestureHandlerRootView style={styles.sheetContainer}>
-                    <RoomDetailView
+        <BottomSheetModal visible={visible} onClose={onClose} height="85%">
+            <RoomDetailView
                         room={room}
                         areaTabs={areaTabs}
                         activeAreaKey={activeAreaKey}
@@ -105,26 +97,8 @@ export default function RoomSheet({
                         systemHealthBanner={systemHealthBanner}
                         canControlHa={canControlHa}
                     />
-                </GestureHandlerRootView>
-            </View>
-        </Modal>
+        </BottomSheetModal>
     );
 }
 
-const styles = StyleSheet.create({
-    overlay: {
-        flex: 1,
-        justifyContent: 'flex-end',
-    },
-    backdrop: {
-        ...StyleSheet.absoluteFillObject,
-        backgroundColor: 'rgba(0,0,0,0.5)',
-    },
-    sheetContainer: {
-        height: '85%',
-        borderTopLeftRadius: 30,
-        borderTopRightRadius: 30,
-        overflow: 'hidden',
-        backgroundColor: '#09091A', // Rooms modal background (requested)
-    }
-});
+const styles = StyleSheet.create({});

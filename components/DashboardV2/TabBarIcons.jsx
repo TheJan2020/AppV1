@@ -40,8 +40,8 @@ export function ButlerChatIcon({ color, size = TAB_ICON_SIZE }) {
     );
 }
 
-/** Butler voice — white SVG asset */
-export function ButlerIcon({ active = false, size = TAB_ICON_SIZE }) {
+/** Butler voice — white SVG asset; `color` retints the fill when selected */
+export function ButlerIcon({ color = '#FFFFFF', size = TAB_ICON_SIZE }) {
     const [xml, setXml] = useState(cachedButlerXml);
 
     useEffect(() => {
@@ -55,12 +55,17 @@ export function ButlerIcon({ active = false, size = TAB_ICON_SIZE }) {
         return <View style={{ width: size, height: size }} accessibilityLabel="Butler" />;
     }
 
+    const tintedXml =
+        color && color.toLowerCase() !== '#ffffff'
+            ? xml.replace(/fill="#ffffff"/gi, `fill="${color}"`).replace(/fill="#fff"/gi, `fill="${color}"`)
+            : xml;
+
     return (
         <SvgXml
-            xml={xml}
+            xml={tintedXml}
             width={size}
             height={size}
-            opacity={active ? 1 : 0.55}
+            opacity={1}
         />
     );
 }

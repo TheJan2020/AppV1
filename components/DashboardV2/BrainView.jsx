@@ -16,6 +16,16 @@ import Animated, { useAnimatedStyle, useSharedValue, withSpring, runOnJS, withRe
 import { ButlerIcon } from './TabBarIcons';
 import { Lock, X } from 'lucide-react-native';
 
+/** Hide Gemini thinking / tool-planning dumps from the chat bubble. */
+function looksLikeAnalysis(text) {
+    const t = String(text || '').trim();
+    if (!t) return false;
+    if (/^(thinking|analysis|plan|tool)\s*:/i.test(t)) return true;
+    if (/^\s*\{[\s\S]*"?(name|args|function)"?\s*:/.test(t)) return true;
+    if (/function_call|tool_call/i.test(t) && t.length < 240) return true;
+    return false;
+}
+
 function TypingDots() {
     const dot1 = useSharedValue(0.3);
     const dot2 = useSharedValue(0.3);
@@ -130,9 +140,11 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
                     // causing the last chunk(s) to be silently dropped.
                     const currentId = streamingMsgIdRef.current;
                     if (!currentId) return;
+                    // Skip leftover analysis / tool-planning dumps if any slip through
+                    if (looksLikeAnalysis(text)) return;
                     setHistory(prev =>
                         prev.map(m =>
-                            m.id === currentId
+                            m.id === currentId && m.role === 'assistant'
                                 ? { ...m, content: m.content + text }
                                 : m
                         )
@@ -159,7 +171,7 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
                     if (!currentId) return;
                     setHistory(prev =>
                         prev.map(m =>
-                            m.id === currentId
+                            m.id === currentId && m.role === 'assistant'
                                 ? { ...m, toolName: name, toolRunning: true }
                                 : m
                         )
@@ -171,7 +183,7 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
                     if (!currentId) return;
                     setHistory(prev =>
                         prev.map(m =>
-                            m.id === currentId
+                            m.id === currentId && m.role === 'assistant'
                                 ? { ...m, toolRunning: false }
                                 : m
                         )
@@ -367,13 +379,13 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
             return;
         }
 
-        const userMsg = { id: Date.now(), role: 'user', content: msgContent, timestamp: Date.now() };
+        const userMsg = { id: `u-${Date.now()}`, role: 'user', content: msgContent, timestamp: Date.now() };
         setHistory(prev => [...prev, userMsg]);
         setMessage('');
         setLoading(true);
 
         // Create an empty assistant bubble that will be filled by streaming chunks
-        const assistantId = Date.now() + 1;
+        const assistantId = `a-${Date.now()}`;
         streamingMsgIdRef.current = assistantId;
         setHistory(prev => [...prev, {
             id: assistantId,
@@ -458,14 +470,11 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
                                         end={{ x: 1, y: 0 }}
                                         style={[styles.msgBubble, styles.aiBubble]}
                                     >
-                                        {msg.toolRunning && (
-                                            <Text style={styles.toolLabel}>⚙ {msg.toolName}…</Text>
-                                        )}
                                         {msg.content.length > 0
                                             ? <Text style={styles.msgText}>{msg.content}</Text>
                                             : <TypingDots />
                                         }
-                                        {!msg.toolRunning && msg.content.length > 0 && (
+                                        {msg.content.length > 0 && (
                                             <Text style={styles.timeBubble}>{timeStr}</Text>
                                         )}
                                     </LinearGradient>
@@ -628,6 +637,7 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontSize: 16,
         lineHeight: 22,
+        writingDirection: 'auto',
     },
     timeBubble: {
         color: 'rgba(255,255,255,0.5)',

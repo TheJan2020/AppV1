@@ -4,6 +4,8 @@ import { BlurView } from 'expo-blur';
 import { Shield, ShieldAlert, ShieldCheck, Moon, Briefcase, X, Lock, Delete, ChevronDown } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
 import Animated, { FadeInUp, FadeOutDown } from 'react-native-reanimated';
+import { GestureDetector } from 'react-native-gesture-handler';
+import useSwipeDismiss from '../../hooks/useSwipeDismiss';
 
 /**
  * Default zone definitions — shown when the alarm panel has no sub-zone entities.
@@ -34,6 +36,8 @@ export default function SecurityControlModal({ visible, onClose, entity, onCallS
     }, [visible]);
 
     if (!entity) return null;
+
+    const { sheetAnimStyle, dismissGesture, backdropAnimStyle } = useSwipeDismiss({ visible, onClose });
 
     const state = entity.state;
     const supportedFeatures = entity.attributes?.supported_features || 0;
@@ -186,13 +190,14 @@ export default function SecurityControlModal({ visible, onClose, entity, onCallS
             visible={visible}
             onRequestClose={onClose}
         >
-            <View style={styles.container}>
+            <Animated.View style={[styles.container, backdropAnimStyle]}>
                 <TouchableOpacity style={styles.backdrop} onPress={onClose} />
 
+                <GestureDetector gesture={dismissGesture}>
                 <Animated.View
                     entering={FadeInUp.springify()}
                     exiting={FadeOutDown}
-                    style={styles.modalContent}
+                    style={[styles.modalContent, sheetAnimStyle]}
                 >
                     {/* Drag handle */}
                     <View style={styles.dragHandle} />
@@ -274,7 +279,8 @@ export default function SecurityControlModal({ visible, onClose, entity, onCallS
                     )}
 
                 </Animated.View>
-            </View>
+                </GestureDetector>
+            </Animated.View>
         </Modal>
     );
 }

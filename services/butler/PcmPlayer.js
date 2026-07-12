@@ -85,6 +85,14 @@ export class PcmPlayer {
 
         this.preparePromise = (async () => {
             const mod = this._module();
+            // Set preferred route BEFORE prepare so native session is not forced to speaker.
+            if (typeof mod.setRoute === 'function') {
+                try {
+                    await mod.setRoute(this.route);
+                } catch (e) {
+                    console.warn('[PcmPlayer] pre-prepare setRoute', e?.message ?? e);
+                }
+            }
             await mod.prepare(SAMPLE_RATE);
             this.prepared = true;
             await this._applyRoute();

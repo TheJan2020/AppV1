@@ -896,6 +896,7 @@ const s = StyleSheet.create({
         fontFamily: CF.medium,
         color: 'rgba(255,255,255,0.55)',
         marginTop: 8,
+        marginLeft: 4,
     },
     // Mode pills
     modeRow: {

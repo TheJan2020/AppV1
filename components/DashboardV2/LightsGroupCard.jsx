@@ -1127,9 +1127,9 @@ export default function LightsGroupCard({
                             style={styles.restoreBtn}
                             onPress={handleRestoreScene}
                             activeOpacity={0.75}
+                            accessibilityLabel="Restore"
                         >
-                            <Zap size={13} color="#44C8CA" />
-                            <Text style={styles.restoreBtnText}>Restore</Text>
+                            <Zap size={18} color="#44C8CA" />
                         </TouchableOpacity>
                     )}
                     {/* Save scene button */}
@@ -1326,14 +1326,10 @@ const styles = StyleSheet.create({
         borderColor: '#8947ca',
     },
     restoreBtn: {
-        flexDirection: 'row', alignItems: 'center', gap: 5,
-        paddingHorizontal: 11, paddingVertical: 7,
-        borderRadius: 16,
+        width: 36, height: 36, borderRadius: 18,
         backgroundColor: 'rgba(68,200,202,0.12)',
         borderWidth: 1, borderColor: 'rgba(68,200,202,0.3)',
-    },
-    restoreBtnText: {
-        color: '#44C8CA', fontSize: 12, fontWeight: '600',
+        alignItems: 'center', justifyContent: 'center',
     },
 
     // Dots

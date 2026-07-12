@@ -4,6 +4,7 @@ import { Image } from 'expo-image';
 import { Sofa, Bed, Bath, Utensils, Monitor, Lamp, Settings, Lightbulb, Fan, GalleryVerticalEnd, DoorOpen, Thermometer, Droplets, Satellite } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CF } from '../../utils/typography';
+import { inferSensorType } from '../../utils/roomHelpers';
 
 const getIconForRoom = (name) => {
     const lower = (name || '').toLowerCase();
@@ -81,23 +82,39 @@ function RoomsList({
 
         const hasActiveDevices = (room.activeLights > 0 || room.activeAC > 0 || room.activeCovers > 0 || room.activeDoors > 0);
 
-        // Find room sensors
+        // Find room sensors (auto-infer type from device_class / entity_id when unset)
         const roomRegItems = registryEntities.filter(r => r.area_id === room.area_id);
         const roomSensors = roomRegItems
             .filter(r => r.entity_id.startsWith('sensor.'))
             .map(r => {
                 const entity = allEntities.find(e => e.entity_id === r.entity_id);
                 const mapping = safeSensorMappings.find(m => m.entity_id === r.entity_id);
-                return { ...entity, sensorType: mapping?.sensorType };
+                return {
+                    ...entity,
+                    entity_id: r.entity_id,
+                    sensorType: inferSensorType(r.entity_id, entity, mapping?.sensorType || null),
+                };
             })
             .filter(e => e && e.entity_id);
 
-        const temps = roomSensors.filter(s => s.sensorType === 'temperature');
-        const humiditys = roomSensors.filter(s => s.sensorType === 'humidity');
+        const temps = roomSensors.filter(s => s.sensorType === 'temperature' && s.state != null && !isNaN(parseFloat(s.state)));
+        const humiditys = roomSensors.filter(s => s.sensorType === 'humidity' && s.state != null && !isNaN(parseFloat(s.state)));
 
-        const avgTemp = temps.length > 0
+        let avgTemp = temps.length > 0
             ? (temps.reduce((sum, s) => sum + parseFloat(s.state), 0) / temps.length).toFixed(1)
             : null;
+
+        // Fall back to climate current_temperature when no temp sensor is mapped
+        if (avgTemp == null) {
+            const climates = roomRegItems
+                .filter(r => r.entity_id.startsWith('climate.'))
+                .map(r => allEntities.find(e => e.entity_id === r.entity_id))
+                .filter(e => e?.attributes?.current_temperature != null);
+            if (climates.length > 0) {
+                const sum = climates.reduce((s, c) => s + Number(c.attributes.current_temperature), 0);
+                avgTemp = (sum / climates.length).toFixed(1);
+            }
+        }
 
         const avgHum = humiditys.length > 0
             ? (humiditys.reduce((sum, s) => sum + parseFloat(s.state), 0) / humiditys.length).toFixed(0)

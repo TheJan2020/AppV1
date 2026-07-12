@@ -12,8 +12,7 @@ import {
 } from './TabBarIcons';
 
 const TAB_ICON_DEFAULT = '#FFFFFF';
-const TAB_ICON_SELECTED = 'rgba(255, 255, 255, 0.55)';
-const TAB_ICON_ACTIVE = '#c9a8f0';
+const TAB_ICON_SELECTED = '#C9A8F0';
 
 function HomeTabButton({ onPress }) {
     return (
@@ -52,7 +51,7 @@ function TabBar({ activeTab, onTabPress, butlerActive = false }) {
                     const isActive = isButler
                         ? butlerActive
                         : activeTab === tab.id;
-                    const color = isActive ? (isButler ? TAB_ICON_ACTIVE : TAB_ICON_SELECTED) : TAB_ICON_DEFAULT;
+                    const color = isActive ? TAB_ICON_SELECTED : TAB_ICON_DEFAULT;
 
                     if (isHome) {
                         return <View key={tab.id} style={styles.homeSpace} />;
@@ -65,10 +64,11 @@ function TabBar({ activeTab, onTabPress, butlerActive = false }) {
                             onPress={() => onTabPress(tab.id)}
                             activeOpacity={0.7}
                             accessibilityLabel={tab.label}
+                            accessibilityState={{ selected: isActive }}
                         >
                             <View style={styles.iconWrap}>
                                 {isButler ? (
-                                    <ButlerIcon active={isActive} size={TAB_ICON_SIZE} />
+                                    <ButlerIcon color={color} size={TAB_ICON_SIZE} />
                                 ) : (
                                     <tab.IconComp color={color} size={TAB_ICON_SIZE} />
                                 )}

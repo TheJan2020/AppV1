@@ -1,4 +1,7 @@
 import { View, Text, StyleSheet, Modal, TouchableOpacity, ScrollView, TextInput, ActivityIndicator, Switch } from 'react-native';
+import Animated from 'react-native-reanimated';
+import { GestureDetector } from 'react-native-gesture-handler';
+import useSwipeDismiss from '../../hooks/useSwipeDismiss';
 import { BlurView } from 'expo-blur';
 import { X, Search, Heart } from 'lucide-react-native';
 import { Colors } from '../../constants/Colors';
@@ -7,6 +10,7 @@ import { authFetch } from '../../utils/authFetch';
 import ModalBackdrop from '../ModalBackdrop';
 
 export default function PreferencedEntitiesModal({ visible, onClose, adminUrl }) {
+    const { sheetAnimStyle, dismissGesture, backdropAnimStyle } = useSwipeDismiss({ visible, onClose });
     const [entities, setEntities] = useState([]);
     const [filteredEntities, setFilteredEntities] = useState([]);
     const [searchQuery, setSearchQuery] = useState('');
@@ -104,10 +108,11 @@ export default function PreferencedEntitiesModal({ visible, onClose, adminUrl })
             visible={visible}
             onRequestClose={onClose}
         >
-            <View style={styles.overlay}>
+            <Animated.View style={[styles.overlay, backdropAnimStyle]}>
                 <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
                 <ModalBackdrop onPress={onClose} />
-                <View style={styles.contentContainer}>
+                <GestureDetector gesture={dismissGesture}>
+                <Animated.View style={[styles.contentContainer, sheetAnimStyle]}>
                     <View style={styles.header}>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
                             <X size={24} color={Colors.textDim} />
@@ -169,8 +174,9 @@ export default function PreferencedEntitiesModal({ visible, onClose, adminUrl })
                             </View>
                         ))}
                     </ScrollView>
-                </View>
-            </View>
+                </Animated.View>
+                </GestureDetector>
+            </Animated.View>
         </Modal>
     );
 }
