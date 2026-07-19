@@ -1,11 +1,12 @@
 import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing } from 'react-native';
-import { Zap, Moon, Sun, LogOut, Home } from 'lucide-react-native';
+import { Zap, Moon, Sun, LogOut, Home, Clapperboard } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { CF } from '../../utils/typography';
 import React, { useEffect, useRef } from 'react';
 
 function getSceneIcon(name = '') {
     const n = (name || '').toLowerCase();
+    if (n.includes('movie') || n.includes('cinema')) return Clapperboard;
     if (n.includes('night') || n.includes('sleep')) return Moon;
     if (n.includes('morning') || n.includes('wake'))  return Sun;
     if (n.includes('leav') || n.includes('away') || n.includes('out')) return LogOut;
@@ -13,7 +14,7 @@ function getSceneIcon(name = '') {
     return Zap;
 }
 
-export default function SceneCard({ id, label, onPress, style }) {
+export default function SceneCard({ id, label, onPress, style, active = false }) {
     const Icon = getSceneIcon(label || '');
     const glowAnim = useRef(new Animated.Value(0)).current;
     const scaleAnim = useRef(new Animated.Value(1)).current;
@@ -114,7 +115,11 @@ export default function SceneCard({ id, label, onPress, style }) {
             <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
                 <TouchableOpacity
                     key={id}
-                    style={[styles.card, style]}
+                    style={[
+                        styles.card,
+                        active && styles.cardActive,
+                        style,
+                    ]}
                     onPress={handlePress}
                     activeOpacity={0.92}
                 >
@@ -142,6 +147,11 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         gap: 10,
         overflow: 'visible',
+    },
+    cardActive: {
+        borderColor: '#7c3aed',
+        borderWidth: 2,
+        backgroundColor: 'rgba(124,58,237,0.10)',
     },
     glowOverlay: {
         position: 'absolute',

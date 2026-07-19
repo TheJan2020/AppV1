@@ -53,7 +53,7 @@ export class ButlerProxyClient {
                     this.ws?.close();
                 } catch (_) { /* ignore */ }
                 finish(reject, new Error(
-                    `Butler server did not answer in ${timeoutMs / 1000}s. Check URL in Settings (simulator: http://127.0.0.1:8787).`,
+                    `Butler server did not answer in ${timeoutMs / 1000}s. Check the backend is reachable (simulator: http://127.0.0.1:8787).`,
                 ));
             }, timeoutMs);
             ws.onopen = () => {
@@ -140,6 +140,9 @@ export class ButlerProxyClient {
                 break;
             case 'text':
                 if (typeof msg.text === 'string') this.emit('text', msg.text);
+                break;
+            case 'user_turn_started':
+                this.emit('userTurnStarted');
                 break;
             case 'user_transcript':
                 if (typeof msg.text === 'string') this.emit('userTranscript', msg.text);

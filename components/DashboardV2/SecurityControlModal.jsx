@@ -193,14 +193,15 @@ export default function SecurityControlModal({ visible, onClose, entity, onCallS
             <Animated.View style={[styles.container, backdropAnimStyle]}>
                 <TouchableOpacity style={styles.backdrop} onPress={onClose} />
 
-                <GestureDetector gesture={dismissGesture}>
                 <Animated.View
                     entering={FadeInUp.springify()}
                     exiting={FadeOutDown}
                     style={[styles.modalContent, sheetAnimStyle]}
                 >
-                    {/* Drag handle */}
-                    <View style={styles.dragHandle} />
+                    {/* Drag handle — only this triggers sheet dismiss */}
+                    <GestureDetector gesture={dismissGesture}>
+                        <View style={styles.dragHandle} />
+                    </GestureDetector>
 
                     {/* Header */}
                     <View style={styles.header}>
@@ -279,7 +280,6 @@ export default function SecurityControlModal({ visible, onClose, entity, onCallS
                     )}
 
                 </Animated.View>
-                </GestureDetector>
             </Animated.View>
         </Modal>
     );
@@ -316,7 +316,8 @@ const styles = StyleSheet.create({
         borderRadius: 2,
         backgroundColor: 'rgba(255,255,255,0.18)',
         alignSelf: 'center',
-        marginBottom: 16,
+        marginTop: 10,
+        marginBottom: 14,
     },
     header: {
         width: '100%',

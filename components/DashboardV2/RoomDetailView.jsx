@@ -419,7 +419,11 @@ export default function RoomDetailView({
         : showPreferenceButton;
 
     const displayScripts = useMemo(() => {
-        const maxSceneSlots = MAX_QUICK_SCENES - (effectiveShowPreferences ? 1 : 0);
+        // Reserve slots: 1 for preferences button (if shown), 1 for Movie Mode (if exists)
+        // Total visible = MAX_QUICK_SCENES (4)
+        const movieSlot = movieModeEntity ? 1 : 0;
+        const prefsSlot = effectiveShowPreferences ? 1 : 0;
+        const maxSceneSlots = MAX_QUICK_SCENES - prefsSlot - movieSlot;
         let list;
         if (!roomScenesConfigured) {
             list = scripts;
@@ -428,10 +432,24 @@ export default function RoomDetailView({
             list = scripts.filter((s) => allowed.has(s.entity_id));
         }
         return list.slice(0, maxSceneSlots);
-    }, [scripts, roomScenesConfigured, allowedRoomSceneIds, effectiveShowPreferences]);
+    }, [scripts, roomScenesConfigured, allowedRoomSceneIds, effectiveShowPreferences, movieModeEntity]);
 
     const showScenesSection =
-        scripts.length > 0 || effectiveShowPreferences || roomScenesConfigured;
+        scripts.length > 0 || effectiveShowPreferences || roomScenesConfigured || !!movieModeEntity;
+
+    // Dynamically find Movie Mode entity from allEntities
+    // Matches: switch.*movie*, input_boolean.*movie*, switch.*cinema*, input_boolean.*cinema*
+    const movieModeEntity = useMemo(() => {
+        if (!allEntities || allEntities.length === 0) return null;
+        return allEntities.find(e => {
+            const id = (e.entity_id || '').toLowerCase();
+            const name = (e.attributes?.friendly_name || '').toLowerCase();
+            const isToggleable = id.startsWith('switch.') || id.startsWith('input_boolean.');
+            const hasMovieKeyword = id.includes('movie') || id.includes('cinema') ||
+                name.includes('movie') || name.includes('cinema');
+            return isToggleable && hasMovieKeyword;
+        }) || null;
+    }, [allEntities]);
     const [preferences, setPreferences] = useState([]);
     const [showAutomations, setShowAutomations] = useState(false);
     const [sourceOverlay, setSourceOverlay] = useState(null);
@@ -922,7 +940,7 @@ export default function RoomDetailView({
                                     </TouchableOpacity>
                                 )}
                             </View>
-                            {displayScripts.length === 0 && !effectiveShowPreferences ? (
+                            {displayScripts.length === 0 && !effectiveShowPreferences && !movieModeEntity ? (
                                 <View style={styles.scenesEmptyBox}>
                                     <Text style={styles.scenesEmptyText}>
                                         No scenes — tap Edit to add some
@@ -930,6 +948,24 @@ export default function RoomDetailView({
                                 </View>
                             ) : (
                                 <View style={styles.grid}>
+                                    {/* Movie Mode — uses SceneCard with active border */}
+                                    {movieModeEntity && (() => {
+                                        const isOn = movieModeEntity.state === 'on';
+                                        const label = movieModeEntity.attributes?.friendly_name || 'Movie Mode';
+                                        const domain = movieModeEntity.entity_id.startsWith('input_boolean.') ? 'input_boolean' : 'switch';
+                                        return (
+                                            <View key={movieModeEntity.entity_id} style={{ width: cardWidth }}>
+                                                <SceneCard
+                                                    id={movieModeEntity.entity_id}
+                                                    label={label}
+                                                    active={isOn}
+                                                    onPress={() => {
+                                                        guardedToggle(domain, isOn ? 'turn_off' : 'turn_on', { entity_id: movieModeEntity.entity_id });
+                                                    }}
+                                                />
+                                            </View>
+                                        );
+                                    })()}
                                     {displayScripts.map(s => {
                                         const scene = { id: s.entity_id, label: s.displayName };
                                         return (

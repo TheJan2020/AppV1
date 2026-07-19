@@ -51,9 +51,11 @@ export default function RemoteControlModal({ visible, onClose, player, remoteEnt
         <Modal animationType="none" transparent={true} visible={visible} onRequestClose={onClose}>
             <Animated.View style={[styles.overlay, backdropAnimStyle]}>
                 <TouchableOpacity style={styles.backdrop} onPress={onClose} activeOpacity={1} />
-                <GestureDetector gesture={dismissGesture}>
                 <Animated.View style={sheetAnimStyle}>
                 <BlurView intensity={45} tint="dark" style={styles.remoteBody}>
+                    <GestureDetector gesture={dismissGesture}>
+                        <View style={styles.handleZone}><View style={styles.handleBar} /></View>
+                    </GestureDetector>
                     <View style={styles.header}>
                         <Text style={styles.title}>{player.displayName} Remote</Text>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -94,7 +96,6 @@ export default function RemoteControlModal({ visible, onClose, player, remoteEnt
                     </View>
                 </BlurView>
                 </Animated.View>
-                </GestureDetector>
             </Animated.View>
         </Modal>
     );
@@ -115,12 +116,14 @@ const styles = StyleSheet.create({
         borderTopLeftRadius: 30,
         borderTopRightRadius: 30,
         paddingHorizontal: 20,
-        paddingTop: 20,
+        paddingTop: 0,
         paddingBottom: 50,
         alignItems: 'center',
         gap: 30,
         overflow: 'hidden'
     },
+    handleZone: { width: '100%', paddingVertical: 10, alignItems: 'center' },
+    handleBar: { width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.2)' },
     header: {
         flexDirection: 'row',
         width: '100%',

@@ -211,8 +211,10 @@ export default function NetworkModal({ visible, onClose, config, entities, onTog
                 <BlurView intensity={20} style={StyleSheet.absoluteFill} tint="dark" />
                 <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.7)' }]} />
                 <ModalBackdrop onPress={onClose} />
-                <GestureDetector gesture={dismissGesture}>
                 <Animated.View style={[styles.content, sheetAnimStyle]}>
+                    <GestureDetector gesture={dismissGesture}>
+                        <View style={styles.handleZone}><View style={styles.handleBar} /></View>
+                    </GestureDetector>
                     <View style={styles.header}>
                         <Text style={styles.title}>Network Status</Text>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -244,7 +246,6 @@ export default function NetworkModal({ visible, onClose, config, entities, onTog
 
                     {activeTab === 'networks' ? renderNetworks() : renderAPs()}
                 </Animated.View>
-                </GestureDetector>
             </Animated.View>
         </Modal>
     );
@@ -259,9 +260,12 @@ const styles = StyleSheet.create({
         backgroundColor: '#1a1b2e',
         borderTopLeftRadius: 30,
         borderTopRightRadius: 30,
-        height: '70%', // Increased height for more data
-        padding: 20,
+        height: '70%',
+        paddingHorizontal: 20,
+        paddingBottom: 20,
     },
+    handleZone: { width: '100%', paddingVertical: 10, alignItems: 'center' },
+    handleBar: { width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.2)' },
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',

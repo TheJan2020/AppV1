@@ -111,8 +111,10 @@ export default function PreferencedEntitiesModal({ visible, onClose, adminUrl })
             <Animated.View style={[styles.overlay, backdropAnimStyle]}>
                 <BlurView intensity={20} tint="dark" style={StyleSheet.absoluteFill} />
                 <ModalBackdrop onPress={onClose} />
-                <GestureDetector gesture={dismissGesture}>
                 <Animated.View style={[styles.contentContainer, sheetAnimStyle]}>
+                    <GestureDetector gesture={dismissGesture}>
+                        <View style={styles.handleZone}><View style={styles.handleBar} /></View>
+                    </GestureDetector>
                     <View style={styles.header}>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
                             <X size={24} color={Colors.textDim} />
@@ -175,7 +177,6 @@ export default function PreferencedEntitiesModal({ visible, onClose, adminUrl })
                         ))}
                     </ScrollView>
                 </Animated.View>
-                </GestureDetector>
             </Animated.View>
         </Modal>
     );
@@ -192,9 +193,12 @@ const styles = StyleSheet.create({
         backgroundColor: '#1a1b2e',
         borderTopLeftRadius: 20,
         borderTopRightRadius: 20,
-        padding: 20,
+        paddingHorizontal: 20,
+        paddingBottom: 20,
         overflow: 'hidden'
     },
+    handleZone: { width: '100%', paddingVertical: 10, alignItems: 'center' },
+    handleBar: { width: 36, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.2)' },
     header: {
         flexDirection: 'row',
         justifyContent: 'space-between',

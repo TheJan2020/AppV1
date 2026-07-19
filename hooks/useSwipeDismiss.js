@@ -3,14 +3,18 @@
  * ──────────────────────────────────────────────────────────────
  * Adds slide-in animation + swipe-down-to-dismiss to any bottom-sheet modal.
  *
- * Usage:
- *   const { sheetAnimStyle, dismissGesture } = useSwipeDismiss({ visible, onClose });
+ * Usage — attach handleGesture ONLY to the drag handle area, not the whole sheet:
  *
- *   <GestureDetector gesture={dismissGesture}>
+ *   const { sheetAnimStyle, backdropAnimStyle, handleGesture } = useSwipeDismiss({ visible, onClose });
+ *
+ *   <Animated.View style={[styles.overlay, backdropAnimStyle]}>
  *     <Animated.View style={[styles.sheet, sheetAnimStyle]}>
- *       ...content
+ *       <GestureDetector gesture={handleGesture}>
+ *         <View style={styles.handleZone}><View style={styles.handle} /></View>
+ *       </GestureDetector>
+ *       ...scrollable content
  *     </Animated.View>
- *   </GestureDetector>
+ *   </Animated.View>
  */
 
 import { useEffect } from 'react';
@@ -27,7 +31,8 @@ export default function useSwipeDismiss({ visible, onClose, initialY = 900 }) {
         }
     }, [visible]);
 
-    const dismissGesture = Gesture.Pan()
+    // Attach this ONLY to the drag handle — not to the full sheet
+    const handleGesture = Gesture.Pan()
         .activeOffsetY(5)
         .onUpdate(e => {
             if (e.translationY > 0) sheetY.value = e.translationY;
@@ -42,14 +47,16 @@ export default function useSwipeDismiss({ visible, onClose, initialY = 900 }) {
             }
         });
 
+    // Keep dismissGesture as alias for backward compat
+    const dismissGesture = handleGesture;
+
     const sheetAnimStyle = useAnimatedStyle(() => ({
         transform: [{ translateY: sheetY.value }],
     }));
 
-    // Fades the sheet's container (use on the overlay/backdrop wrapper)
     const backdropAnimStyle = useAnimatedStyle(() => ({
         opacity: interpolate(sheetY.value, [0, 300], [1, 0], Extrapolation.CLAMP),
     }));
 
-    return { sheetAnimStyle, dismissGesture, backdropAnimStyle };
+    return { sheetAnimStyle, dismissGesture, handleGesture, backdropAnimStyle };
 }

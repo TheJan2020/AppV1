@@ -172,28 +172,74 @@ function mergeTranscript(prev, role, cumulativeText) {
     return [...prev, { id: nextMsgId(), role, text, final: false }];
 }
 
+const DETECTING_CAPTION = '…';
+
 /**
- * Replace the latest YOU bubble with the backend-polished caption.
+ * Replace / place the YOU bubble with the backend-polished caption.
  *
- * If the live caption got split into several bubbles (e.g. a barge-in that
- * briefly re-triggered `speaking`), collapse the whole trailing run of user
- * bubbles into the single polished one instead of only touching the last —
- * otherwise earlier fragments (like a stray "شيء") are left stranded on
- * screen even after the backend sends the correct, complete text.
+ * Polished finals often arrive AFTER Butler has already started (or finished)
+ * speaking — re-transcription is a separate Gemini round-trip. Appending at
+ * the end makes the answer appear above the question. Instead:
+ *  1) Collapse a trailing run of provisional YOU bubbles (live ASR / "…").
+ *  2) If Butler's reply is already at the end, upgrade the YOU just before
+ *     that trailing assistant block, or insert one there.
  */
 function applyFinalUserCaption(prev, text) {
     const cleaned = normalizeCaption(text);
-    if (!cleaned || isNoiseTranscript(cleaned)) return prev;
+    // Empty final clears a Detecting/placeholder bubble without inventing text.
+    if (!cleaned) {
+        let cutoff = prev.length;
+        for (let i = prev.length - 1; i >= 0; i -= 1) {
+            if (prev[i].role !== 'user') break;
+            cutoff = i;
+        }
+        if (cutoff < prev.length) {
+            const onlyPlaceholder = prev
+                .slice(cutoff)
+                .every((m) => !m.text || m.text === DETECTING_CAPTION);
+            if (onlyPlaceholder) return prev.slice(0, cutoff);
+        }
+        return prev;
+    }
+    if (isNoiseTranscript(cleaned)) return prev;
+
+    // 1) Trailing YOU run still at the end of the list
     let cutoff = prev.length;
     for (let i = prev.length - 1; i >= 0; i -= 1) {
         if (prev[i].role !== 'user') break;
         cutoff = i;
     }
-    if (cutoff === prev.length) {
-        return [...prev, { id: nextMsgId(), role: 'user', text: cleaned, final: true }];
+    if (cutoff < prev.length) {
+        const id = prev[cutoff].id;
+        return [...prev.slice(0, cutoff), { id, role: 'user', text: cleaned, final: true }];
     }
-    const id = prev[cutoff].id;
-    return [...prev.slice(0, cutoff), { id, role: 'user', text: cleaned, final: true }];
+
+    // 2) Late final — trailing messages are Butler's reply. Keep YOU above them.
+    let insertAt = prev.length;
+    for (let i = prev.length - 1; i >= 0; i -= 1) {
+        if (prev[i].role === 'assistant' || prev[i].role === 'status') {
+            insertAt = i;
+            continue;
+        }
+        break;
+    }
+    if (insertAt < prev.length) {
+        if (insertAt > 0 && prev[insertAt - 1].role === 'user') {
+            const i = insertAt - 1;
+            return [
+                ...prev.slice(0, i),
+                { ...prev[i], text: cleaned, final: true },
+                ...prev.slice(i + 1),
+            ];
+        }
+        return [
+            ...prev.slice(0, insertAt),
+            { id: nextMsgId(), role: 'user', text: cleaned, final: true },
+            ...prev.slice(insertAt),
+        ];
+    }
+
+    return [...prev, { id: nextMsgId(), role: 'user', text: cleaned, final: true }];
 }
 
 function finalizeRole(prev, role) {
@@ -226,6 +272,8 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
     const lastAssistantTextRef = useRef('');
     const callLanguageRef = useRef(preferredCallLanguage());
     const languageLockedRef = useRef(false);
+    /** True after server `user_turn_started` until a real YOU caption lands. */
+    const userTurnPendingRef = useRef(false);
     const scrollRef = useRef(null);
     contextRef.current = context;
 
@@ -318,6 +366,7 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
             lastAssistantTextRef.current = '';
             callLanguageRef.current = preferredCallLanguage();
             languageLockedRef.current = false;
+            userTurnPendingRef.current = false;
             return undefined;
         }
 
@@ -328,6 +377,7 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
         lastAssistantTextRef.current = '';
         callLanguageRef.current = preferredCallLanguage();
         languageLockedRef.current = false;
+        userTurnPendingRef.current = false;
         setPhase('ringing');
         setAudioRoute('SPEAKER');
         audioRouteRef.current = 'SPEAKER';
@@ -392,8 +442,28 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
                     setPhase('butler');
                     setStatusHint('');
                     if (!wasSpeaking) {
-                        // Close the user's bubble so butler captions can't attach to it
-                        setMessages((prev) => finalizeRole(prev, 'user'));
+                        // Close the user's bubble so butler captions can't attach to it.
+                        // If the user spoke but the caption is still in flight, reserve
+                        // a YOU slot now so Butler's answer cannot render above it.
+                        setMessages((prev) => {
+                            let next = finalizeRole(prev, 'user');
+                            const last = next[next.length - 1];
+                            if (
+                                userTurnPendingRef.current &&
+                                !(last && last.role === 'user')
+                            ) {
+                                next = [
+                                    ...next,
+                                    {
+                                        id: nextMsgId(),
+                                        role: 'user',
+                                        text: DETECTING_CAPTION,
+                                        final: false,
+                                    },
+                                ];
+                            }
+                            return next;
+                        });
                     }
                 });
                 session.on('listening', () => {
@@ -401,6 +471,31 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
                     butlerSpeakingRef.current = false;
                     setMessages((prev) => finalizeAll(prev.filter((m) => m.role !== 'status' || m.text)));
                     if (butlerSpokeRef.current) setPhase('live');
+                    setStatusHint('');
+                });
+                session.on('userTurnStarted', () => {
+                    if (cancelled) return;
+                    userTurnPendingRef.current = true;
+                    setMessages((prev) => {
+                        const withoutStatus = prev.filter((m) => m.role !== 'status');
+                        const last = withoutStatus[withoutStatus.length - 1];
+                        if (last && last.role === 'user' && !last.final) {
+                            return [
+                                ...withoutStatus.slice(0, -1),
+                                { ...last, text: DETECTING_CAPTION },
+                            ];
+                        }
+                        return [
+                            ...finalizeRole(withoutStatus, 'assistant'),
+                            {
+                                id: nextMsgId(),
+                                role: 'user',
+                                text: DETECTING_CAPTION,
+                                final: false,
+                            },
+                        ];
+                    });
+                    setPhase('live');
                     setStatusHint('');
                 });
                 session.on('userTranscript', (text) => {
@@ -425,6 +520,7 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
                             }
                         }
                         // Provisional live caption — backend will replace with polished final
+                        userTurnPendingRef.current = true;
                         butlerSpeakingRef.current = false;
                         const cleaned = finalizeRole(
                             prev.filter((m) => m.role !== 'status'),
@@ -437,11 +533,17 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
                 });
                 session.on('userTranscriptFinal', (text) => {
                     if (cancelled) return;
-                    if (isNoiseTranscript(text)) return;
-                    if (isWrongScriptForCall(text, callLanguageRef.current)) return;
+                    // Allow empty finals through so Detecting/"…" placeholders clear.
+                    if (text && isNoiseTranscript(text)) return;
+                    if (text && isWrongScriptForCall(text, callLanguageRef.current)) return;
                     const finalText = normalizeCaption(text);
-                    if (!finalText) return;
-                    if (isButlerEchoOrGreeting(finalText, [], lastAssistantTextRef.current)) return;
+                    if (
+                        finalText &&
+                        isButlerEchoOrGreeting(finalText, [], lastAssistantTextRef.current)
+                    ) {
+                        return;
+                    }
+                    if (finalText) userTurnPendingRef.current = false;
                     setMessages((prev) => applyFinalUserCaption(prev, finalText));
                     setPhase('live');
                 });

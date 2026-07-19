@@ -1,12 +1,10 @@
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
-import * as SecureStore from 'expo-secure-store';
 import { getActiveProfileConfig } from '../services/profile';
 
-const STORE_KEY = 'settings_butler_backend_url';
 const BUTLER_API_PREFIX = '/api/butler';
 
-/** Direct Butlerv1 on Mac (local dev override in Settings only). */
+/** Direct Butlerv1 on Mac (local dev fallback only — no in-app UI for this). */
 const DIRECT_DEV_DEFAULT = 'http://127.0.0.1:8787';
 
 function readExtraUrl() {
@@ -49,7 +47,8 @@ export function butlerApiBaseFromAdminUrl(adminUrl) {
 }
 
 /**
- * Local direct Butler only (Settings override). Rewrites 127.0.0.1 → Mac LAN IP on device.
+ * Local direct Butler only (dev fallback via app.json extra.BUTLER_BACKEND_URL,
+ * never the production path). Rewrites 127.0.0.1 → Mac LAN IP on device.
  */
 function resolveDirectButlerUrl(url) {
     let parsed;
@@ -78,24 +77,7 @@ function resolveDirectButlerUrl(url) {
     return parsed.toString().replace(/\/$/, '');
 }
 
-/** Saved Settings override only (empty = use profile HTTPS proxy). */
-export async function getButlerBackendOverride() {
-    try {
-        const stored = await SecureStore.getItemAsync(STORE_KEY);
-        return stored?.trim() ? stored.trim() : '';
-    } catch (_) {
-        return '';
-    }
-}
-
 export async function getButlerBackendUrl() {
-    try {
-        const stored = await SecureStore.getItemAsync(STORE_KEY);
-        if (stored?.trim()) {
-            return resolveDirectButlerUrl(stored.trim());
-        }
-    } catch (_) { /* ignore */ }
-
     const profile = await getActiveProfileConfig();
     if (profile?.adminUrl) {
         const proxied = butlerApiBaseFromAdminUrl(profile.adminUrl);
@@ -112,15 +94,6 @@ export function toButlerWsUrl(httpUrl) {
     const base = httpUrl.replace(/\/$/, '');
     if (/^https:\/\//i.test(base)) return base.replace(/^https/i, 'wss');
     return base.replace(/^http/i, 'ws');
-}
-
-export async function setButlerBackendUrl(url) {
-    const trimmed = (url || '').trim();
-    if (!trimmed) {
-        await SecureStore.deleteItemAsync(STORE_KEY);
-        return;
-    }
-    await SecureStore.setItemAsync(STORE_KEY, resolveDirectButlerUrl(trimmed));
 }
 
 export function normalizeHaBaseUrl(url) {
@@ -159,8 +132,6 @@ function formatProxied502Error(base) {
         '',
         'App Backend cannot reach Butlerv1. On the HABackend container set BUTLER_URL or config.json butler_url to the Butler container IP (e.g. http://192.168.100.52:8787), then restart.',
         '',
-        'Local dev (phone on same Wi‑Fi): Settings → Butler override → http://<butler-ip>:8787',
-        '',
         'Deploy latest AppBackendV1 to app-backend.primewave2.tech after updating env/config.',
     ].join('\n');
 }
@@ -192,8 +163,8 @@ export async function checkButlerBackendHealth() {
                 if (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost') {
                     const hint = getDevMachineHostFromMetro();
                     error = hint
-                        ? `${error}\n\nUse Settings override http://${hint}:8787 or ensure App Backend proxies Butler.`
-                        : `${error}\n\nUse your Mac LAN IP in Settings, or use profile admin URL (HTTPS).`;
+                        ? `${error}\n\nSet app.json extra.BUTLER_BACKEND_URL to http://${hint}:8787 (rebuild required) or ensure App Backend proxies Butler.`
+                        : `${error}\n\nUse your Mac LAN IP via app.json extra.BUTLER_BACKEND_URL, or use profile admin URL (HTTPS).`;
                 }
             } catch (_) { /* ignore */ }
         }

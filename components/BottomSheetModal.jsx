@@ -15,7 +15,7 @@
  *   </BottomSheetModal>
  */
 
-import { Modal, View, StyleSheet } from 'react-native';
+import { Modal, View, StyleSheet, TouchableOpacity } from 'react-native';
 import { GestureDetector, Gesture, GestureHandlerRootView } from 'react-native-gesture-handler';
 import Animated, {
     useSharedValue, useAnimatedStyle, withTiming, withSpring, runOnJS, interpolate, Extrapolation,
@@ -40,7 +40,8 @@ export default function BottomSheetModal({
         }
     }, [visible]);
 
-    const dismissGesture = Gesture.Pan()
+    // Only the drag HANDLE triggers dismiss — not the full sheet content
+    const handleGesture = Gesture.Pan()
         .activeOffsetY(5)
         .onUpdate(e => {
             if (e.translationY > 0) sheetY.value = e.translationY;
@@ -59,7 +60,6 @@ export default function BottomSheetModal({
         transform: [{ translateY: sheetY.value }],
     }));
 
-    // Fade backdrop out as sheet slides down — disappears well before sheet is fully gone
     const backdropAnimStyle = useAnimatedStyle(() => ({
         opacity: interpolate(sheetY.value, [0, 300], [1, 0], Extrapolation.CLAMP),
     }));
@@ -75,18 +75,16 @@ export default function BottomSheetModal({
             <GestureHandlerRootView style={styles.root}>
                 <Animated.View style={[styles.overlay, { backgroundColor: backdropColor }, backdropAnimStyle]}>
                     <ModalBackdrop onPress={onClose} />
-                    <GestureDetector gesture={dismissGesture}>
-                        <Animated.View
-                            style={[
-                                styles.sheet,
-                                { height, backgroundColor },
-                                sheetAnimStyle,
-                            ]}
-                        >
-                            {/* No handle here — each child renders its own if needed */}
-                            {children}
-                        </Animated.View>
-                    </GestureDetector>
+                    <Animated.View style={[styles.sheet, { height, backgroundColor }, sheetAnimStyle]}>
+                        {/* Handle-only drag zone — only this area triggers dismiss */}
+                        <GestureDetector gesture={handleGesture}>
+                            <View style={styles.handleZone}>
+                                <View style={styles.handle} />
+                            </View>
+                        </GestureDetector>
+                        {/* Rest of content — scroll works freely */}
+                        {children}
+                    </Animated.View>
                 </Animated.View>
             </GestureHandlerRootView>
         </Modal>
@@ -106,13 +104,15 @@ const styles = StyleSheet.create({
         borderTopRightRadius: 30,
         overflow: 'hidden',
     },
+    handleZone: {
+        width: '100%',
+        paddingVertical: 12,
+        alignItems: 'center',
+    },
     handle: {
         width: 36,
         height: 4,
         borderRadius: 2,
         backgroundColor: 'rgba(255,255,255,0.25)',
-        alignSelf: 'center',
-        marginTop: 10,
-        marginBottom: 4,
     },
 });
