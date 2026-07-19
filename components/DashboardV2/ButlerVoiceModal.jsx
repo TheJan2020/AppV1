@@ -64,15 +64,14 @@ function normText(s) {
         .trim();
 }
 
-/** Prefer Arabic only when the device locale is Arabic; otherwise English (pins STT). */
+/**
+ * Do NOT pre-lock from phone OS locale.
+ * An Arabic locale was pinning Gemini speech to ar-EG and then flipping the
+ * spoken reply to Arabic even when the user started in English. Language is
+ * locked only from the user's first clear spoken utterance.
+ */
 function preferredCallLanguage() {
-    try {
-        const locale = String(
-            Intl?.DateTimeFormat?.().resolvedOptions?.().locale || '',
-        ).toLowerCase();
-        if (locale.startsWith('ar')) return 'ar';
-    } catch (_) { /* ignore */ }
-    return 'en';
+    return null;
 }
 
 /**
@@ -104,8 +103,9 @@ function detectSpokenLanguage(text) {
     const t = String(text || '');
     const arabic = (t.match(/[\u0600-\u06FF]/g) || []).length;
     const latin = (t.match(/[A-Za-z]/g) || []).length;
-    if (arabic >= 3 && arabic >= latin) return 'ar';
-    if (latin >= 2) return 'en';
+    // Match backend thresholds — short/noisy captions must not flip language.
+    if (latin >= 8 && arabic === 0) return 'en';
+    if (arabic >= 6 && latin === 0) return 'ar';
     return null;
 }
 
@@ -510,7 +510,7 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
                         if (isButlerEchoOrGreeting(live, prev, lastAssistantTextRef.current)) {
                             return prev;
                         }
-                        // Lock call language from the first real Latin/Arabic utterance
+                        // Lock once from the first clear utterance — never flip later.
                         if (!languageLockedRef.current) {
                             const detected = detectSpokenLanguage(live);
                             if (detected) {
@@ -543,6 +543,14 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
                     ) {
                         return;
                     }
+                    if (finalText && !languageLockedRef.current) {
+                        const detected = detectSpokenLanguage(finalText);
+                        if (detected) {
+                            languageLockedRef.current = true;
+                            callLanguageRef.current = detected;
+                            session.lockCallLanguage(detected);
+                        }
+                    }
                     if (finalText) userTurnPendingRef.current = false;
                     setMessages((prev) => applyFinalUserCaption(prev, finalText));
                     setPhase('live');
@@ -550,6 +558,8 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
                 session.on('assistantTranscript', (text) => {
                     if (cancelled) return;
                     if (isNoiseTranscript(text)) return;
+                    // Keep Butler's caption in the locked call script when known.
+                    if (isWrongScriptForCall(text, callLanguageRef.current)) return;
                     const live = normalizeCaption(text);
                     if (!live) return;
                     butlerSpokeRef.current = true;

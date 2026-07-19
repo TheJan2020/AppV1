@@ -47,10 +47,12 @@ export class ButlerVoiceSession {
     }
 
     async start(context, options = {}) {
+        // null until the first clear user utterance locks EN/AR — do not
+        // inherit phone OS locale (that was flipping English calls to Arabic).
         const callLanguage =
             options.callLanguage === 'ar' || options.callLanguage === 'en'
                 ? options.callLanguage
-                : 'en';
+                : null;
         const native = getNativeAudioStatus();
         if (!native.ready) {
             return { ok: false, error: native.message };
@@ -96,6 +98,7 @@ export class ButlerVoiceSession {
             this.emit('interrupted', null);
         });
         this.client.on('text', (t) => this.emit('text', t));
+        this.client.on('userTurnStarted', () => this.emit('userTurnStarted'));
         this.client.on('userTranscript', (t) => this.emit('userTranscript', t));
         this.client.on('userTranscriptFinal', (t) => this.emit('userTranscriptFinal', t));
         this.client.on('assistantTranscript', (t) => this.emit('assistantTranscript', t));
@@ -149,6 +152,8 @@ export class ButlerVoiceSession {
 
     lockCallLanguage(language) {
         if (language !== 'en' && language !== 'ar') return;
+        // Irreversible for this call — ignore attempts to switch mid-call.
+        if (this._callLanguage === 'en' || this._callLanguage === 'ar') return;
         this._callLanguage = language;
         this.client?.setCallLanguage(language);
     }
