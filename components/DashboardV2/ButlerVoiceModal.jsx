@@ -131,8 +131,11 @@ function isButlerEchoOrGreeting(text, messages = [], lastAssistantText = '') {
 
     const assistantCandidates = [];
     if (lastAssistantText) assistantCandidates.push(lastAssistantText);
-    const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant' && m.text);
-    if (lastAssistant?.text) assistantCandidates.push(lastAssistant.text);
+    // Prefer recent assistant lines — echo often lands after Butler's bubble is finalized.
+    for (const m of [...messages].reverse()) {
+        if (m.role === 'assistant' && m.text) assistantCandidates.push(m.text);
+        if (assistantCandidates.length >= 4) break;
+    }
 
     for (const assistant of assistantCandidates) {
         const a = normText(assistant);
@@ -141,12 +144,37 @@ function isButlerEchoOrGreeting(text, messages = [], lastAssistantText = '') {
         // User caption is just a slice of what Butler just said
         if (t.length >= 4 && a.includes(t)) return true;
         if (a.length >= 8 && t.startsWith(a.slice(0, Math.min(18, a.length)))) return true;
+        // Truncated / slightly misheard echo (missing leading "I", "a", word endings)
+        if (t.length >= 12 && a.length >= 12) {
+            const aCore = a.replace(/^(i am|i'm|i)\s+/i, '');
+            const tCore = t.replace(/^(i am|i'm|i)\s+/i, '');
+            if (tCore.length >= 8 && (aCore.includes(tCore) || tCore.includes(aCore.slice(0, Math.min(tCore.length, aCore.length))))) {
+                return true;
+            }
+            // Prefix similarity even when ASR drops articles mid-sentence
+            const prefixLen = Math.min(28, t.length, a.length);
+            if (prefixLen >= 12 && t.slice(0, prefixLen) === a.slice(0, prefixLen)) return true;
+        }
         // High word overlap with Butler's recent line
         const aw = new Set(a.split(' ').filter((w) => w.length > 2));
         const tw = t.split(' ').filter((w) => w.length > 2);
-        if (tw.length >= 2 && aw.size > 0) {
+        if (tw.length >= 3 && aw.size > 0) {
             const overlap = tw.filter((w) => aw.has(w)).length;
-            if (overlap / tw.length >= 0.75) return true;
+            if (overlap / tw.length >= 0.7) return true;
+        }
+        // Shared long token sequence (order-preserving) — catches truncated ASR echo
+        if (tw.length >= 5) {
+            let ai = 0;
+            let matched = 0;
+            const aWords = a.split(' ').filter((w) => w.length > 2);
+            for (const w of tw) {
+                const found = aWords.indexOf(w, ai);
+                if (found >= 0) {
+                    matched += 1;
+                    ai = found + 1;
+                }
+            }
+            if (matched / tw.length >= 0.7) return true;
         }
     }
     return false;
@@ -541,6 +569,21 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
                         finalText &&
                         isButlerEchoOrGreeting(finalText, [], lastAssistantTextRef.current)
                     ) {
+                        // Drop echo YOU bubble if live ASR already painted it
+                        setMessages((prev) => {
+                            const last = prev[prev.length - 1];
+                            if (
+                                last?.role === 'user' &&
+                                isButlerEchoOrGreeting(
+                                    last.text,
+                                    prev,
+                                    lastAssistantTextRef.current,
+                                )
+                            ) {
+                                return prev.slice(0, -1);
+                            }
+                            return prev;
+                        });
                         return;
                     }
                     if (finalText && !languageLockedRef.current) {

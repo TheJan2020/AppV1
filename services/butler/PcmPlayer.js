@@ -1,12 +1,16 @@
-import { Buffer } from 'buffer';
 import { Platform } from 'react-native';
 import { isPcmPlayerAvailable } from './nativeAudio';
 import { amplifyPcm16Base64 } from './pcmGain';
 
 const SAMPLE_RATE = 24000;
 
-/** Gemini Live replies are often quiet on phone speaker — boost playback. */
-const OUTPUT_GAIN = Platform.OS === 'ios' ? 3.0 : 2.5;
+/**
+ * Gemini Live replies are often quiet on phone speaker — boost playback.
+ * Speaker uses a lower boost than headset: loud speakerphone + open mic is the
+ * main echo path that feeds Butler's own voice back into STT.
+ */
+const OUTPUT_GAIN_SPEAKER = Platform.OS === 'ios' ? 2.0 : 1.8;
+const OUTPUT_GAIN_HEADSET = Platform.OS === 'ios' ? 3.0 : 2.5;
 
 function getNativePlayer() {
     if (!isPcmPlayerAvailable()) {
@@ -31,13 +35,30 @@ export class PcmPlayer {
         return this.native;
     }
 
+    _outputGain() {
+        return this.route === 'SPEAKER' ? OUTPUT_GAIN_SPEAKER : OUTPUT_GAIN_HEADSET;
+    }
+
     enqueue(pcmBase64) {
-        const boosted = amplifyPcm16Base64(pcmBase64, OUTPUT_GAIN);
+        const boosted = amplifyPcm16Base64(pcmBase64, this._outputGain());
         void this.ensurePrepared(this.route).then(() => {
             this._module().playPcm(boosted).catch((e) => {
                 console.warn('[PcmPlayer] playPcm', e?.message ?? e);
             });
         });
+    }
+
+    /** Stop queued TTS without tearing down the duplex AVAudioSession. */
+    async clearPlayback() {
+        if (!this.prepared) return;
+        try {
+            const mod = this._module();
+            if (typeof mod.clearPlayback === 'function') {
+                await mod.clearPlayback();
+            }
+        } catch (e) {
+            console.warn('[PcmPlayer] clearPlayback', e?.message ?? e);
+        }
     }
 
     async flush() {

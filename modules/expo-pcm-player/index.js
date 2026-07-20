@@ -26,6 +26,13 @@ export default {
     prepare: (rate) => getNative().prepare(rate),
     playPcm: (b64) => getNative().playPcm(b64),
     stop: () => getNative().stop(),
+    // No-op if the installed binary predates clearPlayback — never fall back
+    // to stop(), which deactivates AVAudioSession and can kill the live mic.
+    clearPlayback: () => {
+        const n = getNative();
+        if (typeof n.clearPlayback === 'function') return n.clearPlayback();
+        return Promise.resolve();
+    },
     setRoute: (route) => getNative().setRoute(route),
     playRing: () => getNative().playRing?.(),
     getAudioRouteInfo: () => getNative().getAudioRouteInfo(),

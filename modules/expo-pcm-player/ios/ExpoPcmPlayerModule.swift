@@ -206,6 +206,19 @@ private final class PcmEngine {
     }
   }
 
+  /// Drop queued TTS without tearing down AVAudioSession / engine.
+  /// Used for barge-in so the mic duplex path stays alive.
+  func clearPlayback() {
+    lock.lock()
+    defer { lock.unlock() }
+    guard let player = player else { return }
+    player.stop()
+    if let engine = engine, !engine.isRunning {
+      try? engine.start()
+    }
+    player.play()
+  }
+
   func stop() {
     lock.lock()
     defer { lock.unlock() }
@@ -258,6 +271,10 @@ public class ExpoPcmPlayerModule: Module {
 
     AsyncFunction("stop") {
       PcmEngine.shared.stop()
+    }
+
+    AsyncFunction("clearPlayback") {
+      PcmEngine.shared.clearPlayback()
     }
 
     AsyncFunction("setRoute") { (route: String) in

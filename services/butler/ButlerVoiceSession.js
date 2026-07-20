@@ -2,6 +2,21 @@ import { Audio } from 'expo-av';
 import { ButlerProxyClient } from './ButlerProxyClient';
 import { createButlerPcmPlayer, createButlerPcmRecorder } from './audioBackend';
 import { getNativeAudioStatus } from './nativeAudio';
+import { pcm16Base64Rms } from './pcmEnergy';
+
+/**
+ * Soft echo gate while Butler is talking (and briefly after).
+ * Mic hardware stays open — we only withhold uplink chunks that look like
+ * speaker echo so barge-in still works when the user speaks over Butler.
+ *
+ * Values are after PcmRecorder INPUT_GAIN (~2.5× on iOS). Chunks are ~128ms.
+ */
+const BARGE_IN_RMS = 2200;
+const LOUD_BARGE_IN_RMS = 4500;
+const BARGE_IN_CHUNKS = 2;
+const LOUD_BARGE_IN_CHUNKS = 1;
+/** Acoustic tail / room reverb after Butler's last audio chunk. */
+const ECHO_HOLDOFF_MS = 450;
 
 export function buildContextMessage(context) {
     if (!context) return '';
@@ -30,8 +45,15 @@ export class ButlerVoiceSession {
         this._audioRoute = 'SPEAKER';
         /** False until Butler finishes the opening greeting (stops hello-echo loops). */
         this._micOpen = false;
-        /** True while Butler audio is playing — mute uplink so VAD doesn't re-trigger. */
+        /** True while Butler audio is playing — soft-gate uplink; barge-in still allowed. */
         this._modelSpeaking = false;
+        /** Brief post-TTS window where speaker echo still leaks into the mic. */
+        this._echoHoldoff = false;
+        this._echoHoldoffTimer = null;
+        this._bargeHits = 0;
+        this._bargeInFlight = false;
+        /** After local barge-in, drop late TTS until the model turn fully ends. */
+        this._suppressModelAudio = false;
     }
 
     setInitialRoute(route) {
@@ -44,6 +66,42 @@ export class ButlerVoiceSession {
 
     emit(event, payload) {
         this.handlers[event]?.(payload);
+    }
+
+    _clearEchoHoldoffTimer() {
+        if (this._echoHoldoffTimer) {
+            clearTimeout(this._echoHoldoffTimer);
+            this._echoHoldoffTimer = null;
+        }
+    }
+
+    _beginEchoHoldoff() {
+        this._clearEchoHoldoffTimer();
+        this._echoHoldoff = true;
+        this._echoHoldoffTimer = setTimeout(() => {
+            this._echoHoldoff = false;
+            this._echoHoldoffTimer = null;
+            this._bargeHits = 0;
+        }, ECHO_HOLDOFF_MS);
+    }
+
+    _shouldSoftGateUplink() {
+        return this._modelSpeaking || this._echoHoldoff;
+    }
+
+    async _onBargeIn() {
+        if (this._bargeInFlight) return;
+        this._bargeInFlight = true;
+        this._modelSpeaking = false;
+        this._echoHoldoff = false;
+        this._suppressModelAudio = true;
+        this._clearEchoHoldoffTimer();
+        this._bargeHits = 0;
+        try {
+            await this.player?.clearPlayback();
+        } catch (_) { /* ignore */ }
+        this.emit('interrupted', null);
+        this._bargeInFlight = false;
     }
 
     async start(context, options = {}) {
@@ -71,15 +129,43 @@ export class ButlerVoiceSession {
         this.client.setAllowInterruption(true);
         this._micOpen = false;
         this._modelSpeaking = false;
+        this._echoHoldoff = false;
+        this._bargeHits = 0;
+        this._bargeInFlight = false;
+        this._suppressModelAudio = false;
+        this._clearEchoHoldoffTimer();
+
         this._sendMic = (chunk) => {
             // Keep mic closed only until the opening greeting finishes.
-            // After that, keep streaming so the user can interrupt mid-reply.
             if (!this._micOpen) return;
+
+            // Soft echo gate: hardware mic stays open; withhold speaker-echo
+            // from Gemini unless energy looks like a real barge-in.
+            if (this._shouldSoftGateUplink()) {
+                const rms = pcm16Base64Rms(chunk);
+                if (rms >= BARGE_IN_RMS) {
+                    this._bargeHits += 1;
+                } else {
+                    this._bargeHits = 0;
+                }
+                const need =
+                    rms >= LOUD_BARGE_IN_RMS ? LOUD_BARGE_IN_CHUNKS : BARGE_IN_CHUNKS;
+                if (this._bargeHits < need) {
+                    return; // drop echo / ambient during Butler speech
+                }
+                void this._onBargeIn();
+            }
+
             this.client?.sendAudioChunk(chunk);
         };
         const sendMic = this._sendMic;
         this.client.on('audio', (b64) => {
+            // Ignore late TTS packets after a local barge-in until turn_end.
+            if (this._suppressModelAudio || this._bargeInFlight) return;
             this._modelSpeaking = true;
+            this._echoHoldoff = false;
+            this._clearEchoHoldoffTimer();
+            this._bargeHits = 0;
             this.emit('speaking', null);
             try {
                 this.player.enqueue(b64);
@@ -90,11 +176,18 @@ export class ButlerVoiceSession {
         this.client.on('turnEnd', () => {
             this._modelSpeaking = false;
             this._micOpen = true;
+            this._bargeHits = 0;
+            this._suppressModelAudio = false;
+            // Keep soft-gating briefly — speaker echo often trails the last chunk.
+            this._beginEchoHoldoff();
             this.emit('listening', null);
         });
         this.client.on('interrupted', () => {
             this._modelSpeaking = false;
             this._micOpen = true;
+            this._bargeHits = 0;
+            this._beginEchoHoldoff();
+            void this.player?.clearPlayback();
             this.emit('interrupted', null);
         });
         this.client.on('text', (t) => this.emit('text', t));
@@ -184,6 +277,10 @@ export class ButlerVoiceSession {
     }
 
     async stop() {
+        this._clearEchoHoldoffTimer();
+        this._micOpen = false;
+        this._modelSpeaking = false;
+        this._echoHoldoff = false;
         try {
             this.recorder?.stop();
         } catch (_) { /* ignore */ }
