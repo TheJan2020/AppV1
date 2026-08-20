@@ -36,6 +36,20 @@ export function coverEntityIdAliases(entityId) {
     if (id.includes('masterbedroom')) {
         aliases.add(id.replace(/masterbedroom/g, 'master_bedroom'));
     }
+    // HA renamed some curtains with _1 / _2 suffixes after admin was configured
+    // e.g. cover.living_room_chiffon → cover.living_room_chiffon_1
+    const bareMatch = id.match(/^(cover\..+?)(?:_(\d+))?$/);
+    if (bareMatch) {
+        const base = bareMatch[1];
+        const suffix = bareMatch[2];
+        aliases.add(base);
+        if (!suffix) {
+            aliases.add(`${base}_1`);
+            aliases.add(`${base}_2`);
+        } else {
+            aliases.add(`${base}_${suffix}`);
+        }
+    }
     return [...aliases];
 }
 
@@ -55,11 +69,74 @@ export const COVER_LAYER_Z_ORDER = ['chiffon', 'blackout', 'shutter'];
 
 const LAYER_DISPLAY_ORDER = COVER_LAYER_Z_ORDER;
 
+/**
+ * Master curtain controller (name / entity_id contains "master_curtain").
+ * Position semantics match normal covers and the UI slider:
+ *   0%   = closed
+ *   100% = open
+ * Always prefer `current_position` over HA state ("open"/"closed") — state can lag.
+ */
+export function isMasterCover(coverOrId) {
+    const id =
+        typeof coverOrId === 'string'
+            ? coverOrId
+            : coverOrId?.entity_id || '';
+    const name =
+        typeof coverOrId === 'string'
+            ? ''
+            : coverOrId?.displayName ||
+              coverOrId?.name ||
+              coverOrId?.stateObj?.attributes?.friendly_name ||
+              '';
+    const hay = `${id} ${name}`.toLowerCase();
+    return hay.includes('master_curtain') || hay.includes('master curtain');
+}
+
+/**
+ * Raw HA `current_position` (0–100), or null when unknown.
+ * Does not invent a value from state — callers decide fallbacks.
+ */
+export function readCoverHaPosition(cover) {
+    const attrs = cover?.stateObj?.attributes || cover?.attributes || {};
+    if (attrs.current_position !== undefined && attrs.current_position !== null) {
+        return Number(attrs.current_position);
+    }
+    return null;
+}
+
+/**
+ * UI open percent: 0 = closed, 100 = open.
+ * Uses position only when available (including master curtains).
+ */
 export function readCoverOpenPercent(cover) {
-    const attrs = cover?.stateObj?.attributes || {};
-    const state = cover?.stateObj?.state || 'closed';
-    if (attrs.current_position !== undefined) return attrs.current_position;
-    return state === 'open' ? 100 : 0;
+    const ha = readCoverHaPosition(cover);
+    if (ha != null && !Number.isNaN(ha)) {
+        return Math.max(0, Math.min(100, ha));
+    }
+    // No position: non-master may fall back to state; master stays closed until position arrives
+    if (isMasterCover(cover)) return 0;
+    const state = cover?.stateObj?.state || cover?.state || 'closed';
+    return state === 'open' || state === 'opening' ? 100 : 0;
+}
+
+/** UI open% (0 closed … 100 open) → value for `cover.set_cover_position`. */
+export function uiOpenPercentToHaPosition(_coverOrId, uiOpenPercent) {
+    return Math.max(0, Math.min(100, Math.round(Number(uiOpenPercent) || 0)));
+}
+
+/** True when the cover is meaningfully open — position-based when possible. */
+export function isCoverUiOpen(cover) {
+    return readCoverOpenPercent(cover) > 5;
+}
+
+/** Status label from position only (ignores HA open/closed state). */
+export function coverOpenStatusLabel(cover, { opening = false, closing = false } = {}) {
+    if (opening) return 'Opening...';
+    if (closing) return 'Closing...';
+    const pct = Math.round(readCoverOpenPercent(cover));
+    if (pct < 5) return 'Closed';
+    if (pct >= 95) return 'Opened 100%';
+    return `Opened ${pct}%`;
 }
 
 /**

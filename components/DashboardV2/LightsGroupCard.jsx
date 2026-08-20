@@ -19,6 +19,7 @@ import {
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { ChevronDown, ChevronUp, Bookmark, BookmarkCheck, Zap } from 'lucide-react-native';
+import { SvgXml } from 'react-native-svg';
 import * as Haptics from 'expo-haptics';
 import * as SecureStore from 'expo-secure-store';
 import { getAdminUrl } from '../../utils/storage';
@@ -27,6 +28,8 @@ import LightControlModal from './LightControlModal';
 import SmoothSlider, { SMOOTH_SLIDER_THUMB as THUMB, SMOOTH_SLIDER_TRACK as TRACK } from './SmoothSlider';
 import RoomGroupIconButton, { ROOM_GROUP_ICON_GLYPH_SIZE } from './RoomGroupIconButton';
 import {
+    countActiveCountableLights,
+    filterCountableLights,
     getLightEffectiveCapability,
     isMasterControllerLight,
     lightSupportsBrightness,
@@ -42,8 +45,32 @@ function entityStateOn(allEntities, entityId) {
     return allEntities.find((e) => e.entity_id === entityId)?.state === 'on';
 }
 
-const LIGHTS_MASTER_ICON = require('../../assets/ligth_new_icon.png');
-const SUN_REFLECTIVE_MODE_ICON = require('../../assets/sun_reflective_mode.png');
+/** Lights header bulb — slightly bolder than source SVG (was 1.31). */
+const LIGHTS_MASTER_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 27.5 27.5" fill="none">
+  <path
+    stroke="#fff"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="1.9"
+    d="M10.35,21.02h6.8M13.75.65v1.45M23.01,4.49l-1.03,1.03M26.84,13.75h-1.45M2.11,13.75H.65M5.52,5.52l-1.03-1.03M8.6,18.89c-1.02-1.02-1.71-2.31-1.99-3.72-.28-1.41-.14-2.87.41-4.2.55-1.33,1.48-2.47,2.68-3.26,1.2-.8,2.6-1.23,4.04-1.23s2.85.43,4.04,1.23c1.2.8,2.13,1.94,2.68,3.26.55,1.33.69,2.79.41,4.2-.28,1.41-.97,2.71-1.99,3.72l-.8.8c-.46.46-.82,1-1.06,1.59-.25.6-.37,1.23-.37,1.88v.77c0,.77-.31,1.51-.85,2.06-.55.55-1.29.85-2.06.85s-1.51-.31-2.06-.85c-.55-.55-.85-1.29-.85-2.06v-.77c0-1.3-.52-2.55-1.44-3.47l-.8-.8Z"
+  />
+</svg>
+`.trim();
+/** Adaptive lighting sun rays — matches assets/adaptive_lighting_new.svg */
+const ADAPTIVE_LIGHTING_SVG = `
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20.2 20.2">
+  <circle fill="#44c8ca" cx="10.1" cy="10.19" r="4"/>
+  <rect fill="#44c8ca" x="15.8" y="9.18" width="4.39" height="2.02" rx="1.01" ry="1.01"/>
+  <rect fill="#44c8ca" x="0" y="9.09" width="4.39" height="2.02" rx="1.01" ry="1.01"/>
+  <rect fill="#44c8ca" x="7.85" y="16.99" width="4.39" height="2.02" rx="1.01" ry="1.01" transform="translate(28.05 7.95) rotate(90)"/>
+  <rect fill="#44c8ca" x="7.95" y="1.18" width="4.39" height="2.02" rx="1.01" ry="1.01" transform="translate(12.34 -7.95) rotate(90)"/>
+  <rect fill="#44c8ca" x="13.57" y="3.53" width="4.39" height="2.02" rx="1.01" ry="1.01" transform="translate(1.41 12.48) rotate(-45)"/>
+  <rect fill="#44c8ca" x="2.33" y="14.64" width="4.39" height="2.02" rx="1.01" ry="1.01" transform="translate(-9.74 7.78) rotate(-45)"/>
+  <rect fill="#44c8ca" x="13.46" y="14.71" width="4.39" height="2.02" rx="1.01" ry="1.01" transform="translate(15.7 -6.46) rotate(45)"/>
+  <rect fill="#44c8ca" x="2.35" y="3.47" width="4.39" height="2.02" rx="1.01" ry="1.01" transform="translate(4.5 -1.9) rotate(45)"/>
+</svg>
+`.trim();
 /** Expanded light row — icon circle + glyph sizes */
 const LIGHT_CARD_ICON_BOX = 44;
 const LIGHT_CARD_ICON_SIZE = 30;
@@ -89,7 +116,7 @@ function liveMatchesSavedScene(savedScene, lights, isMasterController, getCap) {
     if (!Array.isArray(savedScene) || !savedScene.length) return true;
 
     const controllable = lights.filter(l =>
-        isMasterController ? true : !l.entity_id.toLowerCase().includes('master_controller')
+        isMasterController ? true : !isMasterControllerLight(l)
     );
     const savedById = new Map(savedScene.map(e => [e.entity_id, e]));
 
@@ -244,7 +271,7 @@ function AdaptiveLightingPill({ active, onPress }) {
             onPress={onPress}
             activeOpacity={0.75}
         >
-            <Image source={SUN_REFLECTIVE_MODE_ICON} style={styles.sunReflectiveIcon} />
+            <SvgXml xml={ADAPTIVE_LIGHTING_SVG} width={22} height={22} />
             <Text
                 style={[styles.sunReflectiveText, active && styles.sunReflectiveTextActive]}
                 numberOfLines={2}
@@ -275,6 +302,36 @@ function hueToRgb(h) {
     else if (h < 300) { r = x; g = 0; b = c; }
     else              { r = c; g = 0; b = x; }
     return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+}
+
+const RGB_COLOR_MODES = new Set(['rgb', 'rgbw', 'rgbww', 'hs', 'xy']);
+const CCT_COLOR_MODES = new Set(['color_temp', 'white']);
+
+function huePctFromAttrs(attrs = {}) {
+    const rgb = attrs.rgb_color;
+    if (Array.isArray(rgb) && rgb.length >= 3) {
+        const [rv, gv, bv] = [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255];
+        const max = Math.max(rv, gv, bv);
+        const min = Math.min(rv, gv, bv);
+        const d = max - min;
+        let h = 0;
+        if (d > 0) {
+            if (max === rv) h = ((gv - bv) / d + (gv < bv ? 6 : 0)) / 6;
+            else if (max === gv) h = ((bv - rv) / d + 2) / 6;
+            else h = ((rv - gv) / d + 4) / 6;
+        }
+        return h * 100;
+    }
+    const hs = attrs.hs_color;
+    if (Array.isArray(hs) && typeof hs[0] === 'number') {
+        return (((hs[0] % 360) + 360) % 360) / 360 * 100;
+    }
+    return null;
+}
+
+function cctPctFromAttrs(attrs = {}) {
+    const k = readColorTempKelvin(attrs);
+    return k != null ? kelvinToPct(k) : null;
 }
 
 function ExpandedLightCard({
@@ -609,7 +666,7 @@ export default function LightsGroupCard({
         const scene = lights
             .filter(l => isMasterController
                 ? true  // master controller room: include the master entity itself
-                : !l.entity_id.toLowerCase().includes('master_controller')
+                : !isMasterControllerLight(l)
             )
             .filter(l => l.stateObj.state === 'on')
             .map(l => {
@@ -669,7 +726,7 @@ export default function LightsGroupCard({
             const { entity_id, brightness, rgb_color, color_temp_kelvin } = entry;
 
             // In regular rooms skip the master controller entity — it controls all lights at once
-            if (!isMasterController && entity_id.toLowerCase().includes('master_controller')) return;
+            if (!isMasterController && isMasterControllerLight({ entity_id })) return;
 
             const params = {};
             if (brightness != null)        params.brightness = brightness;
@@ -773,14 +830,18 @@ export default function LightsGroupCard({
     // Only non-null while the master slider is being actively dragged
     const [activeMasterBrightness, setActiveMasterBrightness] = useState(null);
 
-    // Block HA re-sync for 2s after user drags master slider (prevents slider snapping back)
-    // Individual light changes are NOT blocked — master slider always reflects live state
+    // Block HA re-sync briefly after the user drags a master slider so a
+    // stale websocket echo cannot snap the thumb back.
     const brightnessBlocked = useRef(false);
     const brightnessBlockTimer = useRef(null);
     const cctBlocked = useRef(false);
     const cctBlockTimer = useRef(null);
     const rgbBlocked = useRef(false);
     const rgbBlockTimer = useRef(null);
+    const pendingCctPct = useRef(null);
+    const pendingRgbPct = useRef(null);
+    const cctPendingTimer = useRef(null);
+    const rgbPendingTimer = useRef(null);
 
     const blockSync = (blockedRef, timerRef, durationMs = 2000) => {
         blockedRef.current = true;
@@ -788,76 +849,85 @@ export default function LightsGroupCard({
         timerRef.current = setTimeout(() => { blockedRef.current = false; }, durationMs);
     };
 
+    const holdPendingPct = (pendingRef, timerRef, pct) => {
+        pendingRef.current = pct;
+        if (timerRef.current) clearTimeout(timerRef.current);
+        timerRef.current = setTimeout(() => { pendingRef.current = null; }, 6000);
+    };
+
     useEffect(() => {
         if (!brightnessBlocked.current) setMasterBrightness(avgBrightness());
     }, [lights]);
 
-    // CCT / RGB slider values — master controller when present, else average of ON room lights
+    // CCT / RGB slider values follow the actual room lights — not the master
+    // controller entity. HA groups/helpers often propagate color to members
+    // without updating their own color_temp / rgb_color, which made the
+    // slider ignore HA changes and snap back after a drag.
+    const lastCctPct = useRef(30);
+    const lastRgbPct = useRef(70);
+
     const cctPctFromRoom = useCallback(() => {
-        if (masterControllerEntity) {
-            const k = readColorTempKelvin(masterControllerEntity.stateObj?.attributes || {});
-            return k ? kelvinToPct(k) : 30;
+        const onLights = controllableLights.filter((l) => l.stateObj?.state === 'on');
+        const pcts = onLights
+            .map((l) => {
+                const attrs = l.stateObj?.attributes || {};
+                const mode = attrs.color_mode;
+                if (mode && RGB_COLOR_MODES.has(mode)) return null;
+                return cctPctFromAttrs(attrs);
+            })
+            .filter((p) => p != null);
+        if (pcts.length) {
+            const avg = pcts.reduce((s, p) => s + p, 0) / pcts.length;
+            lastCctPct.current = avg;
+            return avg;
         }
-        const onColor = controllableLights.filter(
-            (l) => l.stateObj?.state === 'on' && (effectiveCap(l) === 'cct' || effectiveCap(l) === 'rgb'),
-        );
-        const withK = onColor.filter((l) => l.stateObj?.attributes?.color_temp_kelvin != null);
-        if (!withK.length) return 30;
-        const avgK = withK.reduce((s, l) => s + l.stateObj.attributes.color_temp_kelvin, 0) / withK.length;
-        return kelvinToPct(avgK);
-    }, [masterControllerEntity, controllableLights, effectiveCap]);
+        return lastCctPct.current;
+    }, [controllableLights]);
 
     const rgbPctFromRoom = useCallback(() => {
-        if (masterControllerEntity) {
-            const rgb = masterControllerEntity.stateObj?.attributes?.rgb_color;
-            if (!rgb) return 70;
-            const [rv, gv, bv] = [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255];
-            const max = Math.max(rv, gv, bv);
-            const min = Math.min(rv, gv, bv);
-            const d = max - min;
-            let h = 0;
-            if (d > 0) {
-                if (max === rv) h = ((gv - bv) / d + (gv < bv ? 6 : 0)) / 6;
-                else if (max === gv) h = ((bv - rv) / d + 2) / 6;
-                else h = ((rv - gv) / d + 4) / 6;
-            }
-            return h * 100;
+        const onLights = controllableLights.filter((l) => l.stateObj?.state === 'on');
+        const pcts = onLights
+            .map((l) => {
+                const attrs = l.stateObj?.attributes || {};
+                const mode = attrs.color_mode;
+                if (mode && CCT_COLOR_MODES.has(mode)) return null;
+                return huePctFromAttrs(attrs);
+            })
+            .filter((p) => p != null);
+        if (pcts.length) {
+            lastRgbPct.current = pcts[0];
+            return pcts[0];
         }
-        const onRgb = controllableLights.filter(
-            (l) => l.stateObj?.state === 'on' && effectiveCap(l) === 'rgb',
-        );
-        const withRgb = onRgb.filter((l) => Array.isArray(l.stateObj?.attributes?.rgb_color));
-        if (!withRgb.length) return 70;
-        const rgb = withRgb[0].stateObj.attributes.rgb_color;
-        const [rv, gv, bv] = [rgb[0] / 255, rgb[1] / 255, rgb[2] / 255];
-        const max = Math.max(rv, gv, bv);
-        const min = Math.min(rv, gv, bv);
-        const d = max - min;
-        let h = 0;
-        if (d > 0) {
-            if (max === rv) h = ((gv - bv) / d + (gv < bv ? 6 : 0)) / 6;
-            else if (max === gv) h = ((bv - rv) / d + 2) / 6;
-            else h = ((rv - gv) / d + 4) / 6;
-        }
-        return h * 100;
-    }, [masterControllerEntity, controllableLights, effectiveCap]);
+        return lastRgbPct.current;
+    }, [controllableLights]);
 
     const [masterCCTPct, setMasterCCTPct] = useState(() => cctPctFromRoom());
     useEffect(() => {
-        if (!cctBlocked.current) setMasterCCTPct(cctPctFromRoom());
+        if (cctBlocked.current) return;
+        const live = cctPctFromRoom();
+        if (pendingCctPct.current != null && Math.abs(live - pendingCctPct.current) > 8) {
+            return;
+        }
+        pendingCctPct.current = null;
+        setMasterCCTPct(live);
     }, [lights, cctPctFromRoom]);
 
     const [masterRGBPct, setMasterRGBPct] = useState(() => rgbPctFromRoom());
     useEffect(() => {
-        if (!rgbBlocked.current) setMasterRGBPct(rgbPctFromRoom());
+        if (rgbBlocked.current) return;
+        const live = rgbPctFromRoom();
+        if (pendingRgbPct.current != null) {
+            const d = Math.abs(live - pendingRgbPct.current);
+            if (Math.min(d, 100 - d) > 8) return;
+        }
+        pendingRgbPct.current = null;
+        setMasterRGBPct(live);
     }, [lights, rgbPctFromRoom]);
 
     // ── Handlers ──────────────────────────────────────────────────────────
-    const onLightsCount = lights.filter(l =>
-        l.stateObj.state === 'on' &&
-        !l.entity_id.toLowerCase().includes('master_controller') &&
-        !l.displayName?.toLowerCase().includes('master controller')
-    ).length;
+    // Same rule as room card badge / home header: skip Master Controller only;
+    // named groups count as 1; individuals (incl. master members) count each.
+    const onLightsCount = countActiveCountableLights(lights);
 
     const handleBrightnessRelease = useCallback((rounded) => {
         blockSync(brightnessBlocked, brightnessBlockTimer);
@@ -970,7 +1040,11 @@ export default function LightsGroupCard({
         if (adaptiveLinked) {
             onAdaptiveManualColor?.();
         }
-        blockSync(cctBlocked, cctBlockTimer);
+        pendingCctPct.current = pct;
+        setMasterCCTPct(pct);
+        lastCctPct.current = pct;
+        holdPendingPct(pendingCctPct, cctPendingTimer, pct);
+        blockSync(cctBlocked, cctBlockTimer, 3000);
         const kelvin = pctToKelvin(pct);
         resolveCctTargets().forEach((entityId) => onColorTempChange?.(entityId, kelvin));
     }, [onColorTempChange, adaptiveLinked, onAdaptiveManualColor, resolveCctTargets]);
@@ -979,7 +1053,11 @@ export default function LightsGroupCard({
         if (adaptiveLinked) {
             onAdaptiveManualColor?.();
         }
-        blockSync(rgbBlocked, rgbBlockTimer);
+        pendingRgbPct.current = pct;
+        setMasterRGBPct(pct);
+        lastRgbPct.current = pct;
+        holdPendingPct(pendingRgbPct, rgbPendingTimer, pct);
+        blockSync(rgbBlocked, rgbBlockTimer, 3000);
         const hue = (pct / 100) * 360;
         const rgb = hueToRgb(hue);
         resolveRgbTargets().forEach((entityId) => onRgbChange?.(entityId, rgb));
@@ -1029,15 +1107,8 @@ export default function LightsGroupCard({
     };
 
     // ── Find master controller entity ─────────────────────────────────────
-    const masterLight = lights.find(l =>
-        l.entity_id.toLowerCase().includes('master_controller') ||
-        l.displayName?.toLowerCase().includes('master controller')
-    );
-    const masterIsOn = lights.some(l =>
-        l.stateObj?.state === 'on' &&
-        !l.entity_id.toLowerCase().includes('master_controller') &&
-        !l.displayName?.toLowerCase().includes('master controller')
-    );
+    const masterLight = lights.find((l) => isMasterControllerLight(l));
+    const masterIsOn = countActiveCountableLights(lights) > 0;
 
     const handleMasterToggle = () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -1049,10 +1120,8 @@ export default function LightsGroupCard({
         // }
         // ─────────────────────────────────────────────────────────────────
 
-        // Operate on all individual lights (exclude master_controller entities)
-        const controllableLights = lights.filter(
-            l => !l.entity_id.toLowerCase().includes('master_controller')
-        );
+        // Operate on room lights except the Master Controller entity
+        const controllableLights = lights.filter((l) => !isMasterControllerLight(l));
         const anyOn = controllableLights.some(l => l.stateObj?.state === 'on');
 
         if (anyOn) {
@@ -1080,7 +1149,7 @@ export default function LightsGroupCard({
             if (sceneToRestore?.length) {
                 sceneToRestore.forEach(entry => {
                     const { entity_id, brightness, rgb_color, color_temp_kelvin } = entry;
-                    if (entity_id.toLowerCase().includes('master_controller')) return;
+                    if (isMasterControllerLight({ entity_id })) return;
                     const params = {};
                     if (brightness != null)        params.brightness = brightness;
                     if (rgb_color)                 params.rgb_color = rgb_color;
@@ -1111,7 +1180,11 @@ export default function LightsGroupCard({
                     onPress={handleMasterToggle}
                     accessibilityLabel="Toggle all lights"
                 >
-                    <Image source={LIGHTS_MASTER_ICON} style={styles.masterLightIcon} resizeMode="contain" />
+                    <SvgXml
+                        xml={LIGHTS_MASTER_SVG}
+                        width={ROOM_GROUP_ICON_GLYPH_SIZE}
+                        height={ROOM_GROUP_ICON_GLYPH_SIZE}
+                    />
                 </RoomGroupIconButton>
                 <View style={styles.headerTextBlock}>
                     <Text style={styles.headerTitle}>Lights</Text>
@@ -1146,11 +1219,8 @@ export default function LightsGroupCard({
                 </View>
             </View>
 
-            {/* Dots */}
-            <DotsRow lights={lights.filter(l =>
-                !l.entity_id.toLowerCase().includes('master_controller') &&
-                !l.displayName?.toLowerCase().includes('master controller')
-            )} />
+            {/* Dots — same units as grid / badge count */}
+            <DotsRow lights={filterCountableLights(lights)} />
 
             {/* Collapsed — brightness only */}
             {hasDimmableLights && (
@@ -1211,10 +1281,7 @@ export default function LightsGroupCard({
             )}
 
                 <View style={styles.grid}>
-                    {lights
-                        .filter(l => !l.entity_id.toLowerCase().includes('master_controller') &&
-                                     !l.displayName?.toLowerCase().includes('master controller'))
-                        .map(l => (
+                    {filterCountableLights(lights).map(l => (
                         <View key={l.entity_id} style={[styles.cell, lightCellWidth > 0 && { width: lightCellWidth }]}>
                             <ExpandedLightCard
                                 light={l}
@@ -1307,10 +1374,6 @@ const styles = StyleSheet.create({
     },
     headerStatusOn: {
         color: '#44C8CA',
-    },
-    masterLightIcon: {
-        width: ROOM_GROUP_ICON_GLYPH_SIZE,
-        height: ROOM_GROUP_ICON_GLYPH_SIZE,
     },
     sceneButtons: {
         flexDirection: 'row', alignItems: 'center', gap: 8, marginLeft: 8,

@@ -38,6 +38,18 @@ export function canOpenButlerCall() {
     };
 }
 
+/** Ask for mic access before opening the call UI so Android permission dialogs don't hang up the session. */
+export async function requestButlerMicPermission() {
+    try {
+        const { Audio } = require('expo-av');
+        const { status } = await Audio.requestPermissionsAsync();
+        return status === 'granted';
+    } catch (err) {
+        console.warn('[Butler] mic permission:', err?.message ?? err);
+        return false;
+    }
+}
+
 /**
  * Health check + HA sync in background after the modal is already visible.
  */
@@ -65,7 +77,7 @@ export async function prepareButlerCall({ haUrl, haToken } = {}) {
         console.warn('[Butler] preflight failed:', err?.message ?? err);
         Alert.alert(
             'Voice not available',
-            err?.message ?? 'Could not check voice modules. Use a dev build: npx expo run:ios --device',
+            err?.message ?? 'Could not check voice modules. Rebuild: npx expo run:android / npx expo run:ios --device',
         );
         return false;
     }

@@ -17,11 +17,15 @@ export default function Header({ weather, power, lightsOn = 0, climateOn = 0, on
                     text: 'Logout',
                     style: 'destructive',
                     onPress: async () => {
-                        // Clear session so next launch goes to login
+                        // Clear session so next launch goes to login.
+                        // Keep Face ID credentials when Face ID is enabled.
                         await SecureStore.deleteItemAsync('is_logged_in');
                         await SecureStore.deleteItemAsync('logged_in_user');
-                        await SecureStore.deleteItemAsync('saved_password');
-                        await SecureStore.deleteItemAsync('saved_username');
+                        const faceOn = (await SecureStore.getItemAsync('face_id_enabled')) === 'true';
+                        if (!faceOn) {
+                            await SecureStore.deleteItemAsync('saved_password');
+                            await SecureStore.deleteItemAsync('saved_username');
+                        }
                         router.replace('/login');
                     }
                 }

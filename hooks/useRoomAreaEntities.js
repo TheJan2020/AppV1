@@ -14,6 +14,7 @@ export function useRoomAreaEntities({
     sensorMappings = [],
     coverMappings = [],
     mediaMappings = [],
+    climateMappings = [],
     musicAssistantEntryIds = [],
     resolveDisplayName,
     badgeConfig = null,
@@ -44,6 +45,7 @@ export function useRoomAreaEntities({
             coverMappings,
             mediaMappings,
             musicAssistantEntryIds,
+            climateMappings,
         ),
         [
             activeArea,
@@ -54,6 +56,7 @@ export function useRoomAreaEntities({
             coverMappings,
             mediaMappings,
             musicAssistantEntryIds,
+            climateMappings,
         ],
     );
 

@@ -1,7 +1,7 @@
 import { View, Text, StyleSheet, TouchableOpacity, ScrollView, ImageBackground, Image } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import { BlurView } from 'expo-blur';
-import { X, Lightbulb, Fan, ChevronLeft, Droplets, Thermometer, DoorOpen, DoorClosed, Lock, LockOpen, Power, Play, Zap, ChevronDown, ChevronUp, Monitor, Edit2 } from 'lucide-react-native';
+import { X, Fan, ChevronLeft, Droplets, Thermometer, DoorOpen, DoorClosed, Lock, LockOpen, Power, Play, Zap, ChevronDown, ChevronUp, Monitor, Edit2 } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '../../constants/Colors';
 import { CF, Heading } from '../../utils/typography';
@@ -28,24 +28,19 @@ import SceneCard from './SceneCard';
 import { EditScenesModal, MAX_QUICK_SCENES } from './QuickScenes';
 import LightsGroupCard from './LightsGroupCard';
 import CoversGroupCard from './CoversGroupCard';
-import RoomGroupIconButton from './RoomGroupIconButton';
+import RoomGroupIconButton, { ROOM_GROUP_ICON_GLYPH_SIZE } from './RoomGroupIconButton';
 import { LockPill } from './HomeAccess';
 import useDeviceType from '../../hooks/useDeviceType';
 import { lightSupportsBrightness } from '../../utils/lightCapabilities';
 import { findAdaptiveLightingForRoom, isAdaptiveLightingMainEntity } from '../../utils/adaptiveLighting';
 import { buildLightColorTempPayload, buildLightRgbPayload } from '../../utils/lightServicePayload';
 import { getLightMapping } from '../../utils/lightMappingsClient';
+import { formatCameraName, formatDisplayName } from '../../utils/formatDisplayName';
 
 // Convert area_id-style names (e.g. "living_room") to proper display names ("Living Room")
 const roomScenesPrefsKey = (areaId) => `room_scenes_show_prefs_${areaId}`;
 
-const formatRoomName = (name) => {
-    if (!name) return '';
-    if (name.includes(' ')) return name;
-    return name
-        .replace(/_/g, ' ')
-        .replace(/\b\w/g, c => c.toUpperCase());
-};
+const formatRoomName = (name) => formatDisplayName(name);
 
 // Switch Card Component
 function SwitchCard({ switchEntity, onToggle, needsChange: switchCardNeedsChange }) {
@@ -598,6 +593,18 @@ export default function RoomDetailView({
                         service = 'set_hvac_mode';
                         data.hvac_mode = entity.preferred_state;
                     }
+                    {
+                        const climate = (climates || []).find((c) => c.entity_id === entity.entity_id);
+                        const switchId = climate?.powerSwitchEntityId;
+                        if (switchId && onToggle) {
+                            onToggle(
+                                'switch',
+                                entity.preferred_state === 'off' ? 'turn_off' : 'turn_on',
+                                { entity_id: switchId },
+                            );
+                            await new Promise((resolve) => setTimeout(resolve, 200));
+                        }
+                    }
                     break;
                 case 'media_player':
                     service = entity.preferred_state === 'on' || entity.preferred_state === 'playing' ? 'turn_on' : 'turn_off';
@@ -621,6 +628,19 @@ export default function RoomDetailView({
     const hasLightsBlock = actualLightEntities.length > 0 || fans.length > 0;
     const hasCoversBlock = covers.length > 0;
     const useTabletLightsCoversSplit = isTabletModal && hasLightsBlock && hasCoversBlock;
+    const hasAnyRoomDevices =
+        actualLightEntities.length > 0
+        || fans.length > 0
+        || covers.length > 0
+        || climates.length > 0
+        || medias.length > 0
+        || musicMedias.length > 0
+        || cameras.length > 0
+        || lockEntities.length > 0
+        || doorSensors.length > 0
+        || automations.length > 0
+        || displayScripts.length > 0
+        || !!movieModeEntity;
 
     const lightsAndFansSection = (() => {
         if (!hasLightsBlock) return null;
@@ -730,7 +750,6 @@ export default function RoomDetailView({
                 </View>
             ) : isModal ? (
                 <View style={styles.simpleHeader}>
-                    <View style={styles.handle} />
                     <View style={styles.headerTop}>
                         <Text style={styles.title}>{formatRoomName(room.name)}</Text>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -924,7 +943,14 @@ export default function RoomDetailView({
                         />
                     ) : null}
 
-                    {/* ── 1. Scenes + Apply Preferences ── */}
+                    {!hasAnyRoomDevices && (
+                        <View style={styles.emptyState}>
+                            <Text style={styles.emptyText}>No devices in this room.</Text>
+                            <Text style={styles.emptySubText}>
+                                Assign lights, AC, covers, or other devices to this area in Home Assistant.
+                            </Text>
+                        </View>
+                    )}
                     {showScenesSection && (
                         <View>
                             <View style={styles.roomSectionHeaderRow}>
@@ -1063,9 +1089,6 @@ export default function RoomDetailView({
                         </View>
                     )}
 
-                    <View style={styles.divider} />
-
-                    {/* ── Lights + Covers: tablet modal = side-by-side halves ── */}
                     {useTabletLightsCoversSplit ? (
                         <View>
                             <View style={styles.divider} />
@@ -1111,13 +1134,12 @@ export default function RoomDetailView({
                         </View>
                     ) : (
                         <>
-                            {!hasLightsBlock && !hasCoversBlock && (
-                                <View style={styles.emptyState}>
-                                    <Lightbulb size={40} color={Colors.textDim} />
-                                    <Text style={styles.emptyText}>No devices found in this room.</Text>
-                                </View>
+                            {hasLightsBlock && (
+                                <>
+                                    <View style={styles.divider} />
+                                    {lightsAndFansSection}
+                                </>
                             )}
-                            {lightsAndFansSection}
                         </>
                     )}
 
@@ -1130,7 +1152,9 @@ export default function RoomDetailView({
                                 {cameras.map(cam => {
                                     const stateObj = cam.stateObj || {};
                                     const attrs = stateObj.attributes || {};
-                                    const name = attrs.friendly_name || cam.displayName || cam.entity_id;
+                                    const name = formatCameraName(
+                                        attrs.friendly_name || cam.displayName || cam.entity_id,
+                                    );
                                     const pictureUrl = attrs.entity_picture
                                         ? `${(haUrl || '').replace(/\/$/, '')}${attrs.entity_picture}`
                                         : null;
@@ -1198,8 +1222,7 @@ export default function RoomDetailView({
                         </View>
                     )}
 
-                    {/* ── 7. Media — temporarily hidden ── */}
-                    {/*
+                    {/* ── 7. Media ── */}
                     {(medias.length > 0 || musicMedias.length > 0) && (() => {
                         const rootRows = medias
                             .filter(m => {
@@ -1237,10 +1260,13 @@ export default function RoomDetailView({
                                     <View style={styles.mediaSectionWrap}>
                                         <View style={styles.mediaSectionHeader}>
                                             <RoomGroupIconButton
-                                                size={40}
                                                 accessibilityLabel="Media section"
                                             >
-                                                <Monitor size={18} color="#fff" strokeWidth={2.2} />
+                                                <Monitor
+                                                    size={ROOM_GROUP_ICON_GLYPH_SIZE}
+                                                    color="#fff"
+                                                    strokeWidth={1.5}
+                                                />
                                             </RoomGroupIconButton>
                                             <Text style={styles.mediaSectionTitle}>Media</Text>
                                         </View>
@@ -1249,11 +1275,14 @@ export default function RoomDetailView({
                                                 key={row.media.entity_id}
                                                 player={row.media}
                                                 childPlayers={row.children}
+                                                roomPlayers={medias}
                                                 mapping={row.mapping}
                                                 mediaMappings={mediaMappings}
                                                 needsChange={checkNeedsChange(row.media.entity_id)}
                                                 onUpdate={(id, domain, service, data) => {
-                                                    if (onToggle) onToggle(domain, service, { entity_id: id, ...data });
+                                                    if (onToggle) {
+                                                        return onToggle(domain, service, { entity_id: id, ...data });
+                                                    }
                                                 }}
                                                 adminUrl={adminUrl}
                                                 haUrl={haUrl}
@@ -1290,7 +1319,6 @@ export default function RoomDetailView({
                             </View>
                         );
                     })()}
-                    */}
 
                     {/* ── 9. Switches — temporarily hidden ── */}
                     {/*
@@ -1480,14 +1508,6 @@ const styles = StyleSheet.create({
         paddingBottom: 10,
         borderBottomWidth: 1,
         borderBottomColor: 'rgba(255,255,255,0.1)',
-    },
-    handle: {
-        width: 40,
-        height: 4,
-        backgroundColor: 'rgba(255,255,255,0.2)',
-        borderRadius: 2,
-        alignSelf: 'center',
-        marginBottom: 10,
     },
     headerTop: {
         flexDirection: 'row',
@@ -1711,6 +1731,14 @@ const styles = StyleSheet.create({
     emptyText: {
         color: Colors.textDim,
         fontSize: 16,
+        textAlign: 'center',
+    },
+    emptySubText: {
+        color: 'rgba(255,255,255,0.35)',
+        fontSize: 13,
+        textAlign: 'center',
+        paddingHorizontal: 24,
+        lineHeight: 18,
     },
     sectionTitle: {
         ...Heading.section,

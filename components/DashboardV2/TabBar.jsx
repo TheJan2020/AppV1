@@ -49,7 +49,7 @@ function TabBar({ activeTab, onTabPress, butlerActive = false }) {
                     const isHome = tab.id === 'home';
                     const isButler = tab.id === 'butler';
                     const isActive = isButler
-                        ? butlerActive
+                        ? butlerActive || activeTab === 'ai'
                         : activeTab === tab.id;
                     const color = isActive ? TAB_ICON_SELECTED : TAB_ICON_DEFAULT;
 
@@ -93,6 +93,10 @@ const styles = StyleSheet.create({
         left: 34,
         right: 34,
         height: CONTAINER_H,
+        // Must sit above scroll content / cards (RoomsList elevation 18, Settings tabs, etc.)
+        // or Android steals footer taps.
+        zIndex: 10000,
+        elevation: 10000,
     },
     blurContainer: {
         position: 'absolute',
@@ -104,7 +108,7 @@ const styles = StyleSheet.create({
         overflow: 'hidden',
         flexDirection: 'row',
         alignItems: 'center',
-        backgroundColor: 'transparent',
+        backgroundColor: 'rgba(20, 20, 35, 0.92)',
         paddingHorizontal: 16,
         borderWidth: 1,
         borderColor: 'rgba(255, 255, 255, 0.08)',
@@ -112,7 +116,8 @@ const styles = StyleSheet.create({
         shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.45,
         shadowRadius: 18,
-        elevation: 12,
+        elevation: 10001,
+        zIndex: 1,
     },
     tab: {
         flex: 1,
@@ -130,6 +135,8 @@ const styles = StyleSheet.create({
         position: 'absolute',
         top: 0,
         alignSelf: 'center',
+        zIndex: 2,
+        elevation: 10002,
     },
     homePill: {
         width: CIRCLE,
@@ -141,7 +148,7 @@ const styles = StyleSheet.create({
         shadowOffset: { width: 0, height: 0 },
         shadowOpacity: 0.7,
         shadowRadius: 16,
-        elevation: 12,
+        elevation: 10002,
     },
 });
 

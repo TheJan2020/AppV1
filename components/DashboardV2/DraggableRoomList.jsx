@@ -4,6 +4,7 @@ import { View, Text, StyleSheet, TouchableOpacity, ImageBackground } from 'react
 import DraggableFlatList, { ScaleDecorator } from 'react-native-draggable-flatlist';
 import { Sofa, Bed, Bath, Utensils, Monitor, Lamp, Satellite, Thermometer, Droplets, Lightbulb, Fan, DoorOpen, GripVertical } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { formatDisplayName } from '../../utils/formatDisplayName';
 
 // Helper function (same as in RoomsList, should ideally be shared)
 const getIconForRoom = (name) => {
@@ -16,14 +17,7 @@ const getIconForRoom = (name) => {
     return Lamp;
 };
 
-// Convert area_id-style names (e.g. "living_room") to proper display names ("Living Room")
-const formatRoomName = (name) => {
-    if (!name) return '';
-    if (name.includes(' ')) return name;
-    return name
-        .replace(/_/g, ' ')
-        .replace(/\b\w/g, c => c.toUpperCase());
-};
+const formatRoomName = (name) => formatDisplayName(name);
 
 export default function DraggableRoomList({ rooms, onOrderChange, registryEntities = [], allEntities = [] }) {
     const renderItem = ({ item, drag, isActive }) => {

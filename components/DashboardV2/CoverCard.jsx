@@ -17,14 +17,11 @@ import {
     COVER_BORDER_GRADIENT,
 } from '../../utils/coverVisualStyle';
 import { resolveCoverType, getCoverControlIcons, VERTICAL_COVER_TYPES, coverPositionFromTouchX, coverPositionFromPanelTouchX, coverPositionFromPanDelta } from '../../utils/coverControls';
-import { coversInStackOrder, inferCoverLayer, shouldShowLayerInAllTab } from '../../utils/coverWindows';
+import { coversInStackOrder, inferCoverLayer, shouldShowLayerInAllTab, readCoverOpenPercent, uiOpenPercentToHaPosition, coverOpenStatusLabel, isCoverUiOpen } from '../../utils/coverWindows';
 import CoverWindowSky from './CoverWindowSky';
 
 function readCoverPosition(cover) {
-    const attrs = cover.stateObj?.attributes || {};
-    const state = cover.stateObj?.state || 'closed';
-    if (attrs.current_position !== undefined) return attrs.current_position;
-    return state === 'open' ? 100 : 0;
+    return readCoverOpenPercent(cover);
 }
 
 const SLAT_BAR_HEIGHT = PLEAT_BAR_WIDTH;
@@ -587,7 +584,11 @@ export function AllLayersCoverCard({
             setPendingAction(null);
             if (pendingTimeoutRef.current) clearTimeout(pendingTimeoutRef.current);
         }
-        onUpdateAll(null, 'cover', action === 'open' ? 'open_cover' : action === 'close' ? 'close_cover' : action === 'set_cover_position' ? 'set_cover_position' : 'stop_cover', params);
+        onUpdateAll(null, 'cover', action === 'open' ? 'open_cover' : action === 'close' ? 'close_cover' : action === 'set_cover_position' ? 'set_cover_position' : 'stop_cover',
+            action === 'set_cover_position' && params?.position != null
+                ? { ...params, position: uiOpenPercentToHaPosition(covers[0], params.position) }
+                : params
+        );
     }, [onUpdateAll]);
 
     const arrowTranslateX = useSharedValue(0);
@@ -683,7 +684,7 @@ export function AllLayersCoverCard({
     const frameGesture = Gesture.Simultaneous(makePanGesture(false), makeTapGesture(false));
 
     const statusText = isMovingUp ? 'Opening...' : isMovingDown ? 'Closing...' : (
-        groupPosition < 5 ? 'Closed' : groupPosition >= 95 ? 'Opened 100%' : `Opened ${groupPosition}%`
+        coverOpenStatusLabel({ stateObj: { attributes: { current_position: groupPosition }, state: 'unknown' } })
     );
     const displayName = windowName ? `${windowName} · All` : 'All layers';
 
@@ -820,9 +821,7 @@ function HorizontalCurtainCard({ cover, sensor, weather, onUpdate, needsChange, 
         cover.entity_id,
         cover.stateObj?.attributes?.friendly_name,
     ]);
-    const currentPosition = attributes.current_position !== undefined
-        ? attributes.current_position
-        : (state === 'open' ? 100 : 0);
+    const currentPosition = readCoverPosition(cover);
     const friendlyName = cover.displayName || "";
     const coverType = resolveCoverType(cover);
     const isRoll = coverType === 'curtain_roll';
@@ -956,7 +955,11 @@ function HorizontalCurtainCard({ cover, sensor, weather, onUpdate, needsChange, 
             if (pendingTimeoutRef.current) clearTimeout(pendingTimeoutRef.current);
         }
 
-        onUpdate(cover.entity_id, 'cover', service, params);
+        onUpdate(cover.entity_id, 'cover', service,
+            action === 'set_cover_position' && params?.position != null
+                ? { ...params, position: uiOpenPercentToHaPosition(cover, params.position) }
+                : params
+        );
     };
     // right = open, left = close
     // activeOffsetX: only activate after 10px horizontal — lets ScrollView handle vertical scrolls
@@ -1041,11 +1044,8 @@ function HorizontalCurtainCard({ cover, sensor, weather, onUpdate, needsChange, 
     const curtainGesture = Gesture.Simultaneous(curtainPanGesture, curtainTapGesture);
     const rollGesture = Gesture.Simultaneous(rollPanGesture, rollTapGesture);
 
-    const posText = currentPosition < 5
-        ? 'Closed'
-        : currentPosition >= 95
-            ? 'Opened 100%'
-            : `Opened ${Math.round(currentPosition)}%`;
+    const posText = coverOpenStatusLabel(cover);
+    const isOpen = isCoverUiOpen(cover);
 
     // Animated curtain panel widths (for left/right/middle)
     // Min 8% of half-frame so pulled-back curtain is always a thin sliver
@@ -1233,7 +1233,7 @@ function HorizontalCurtainCard({ cover, sensor, weather, onUpdate, needsChange, 
                 name={friendlyName}
                 status={statusText}
                 coverType={coverType}
-                isOpen={currentPosition >= 5}
+                isOpen={isOpen}
                 onClose={() => handleAction('close')}
                 onOpen={() => handleAction('open')}
             />
@@ -1252,7 +1252,7 @@ function VerticalShutterCard({ cover, sensor, weather, onUpdate, needsChange, on
         cover.entity_id,
         cover.stateObj?.attributes?.friendly_name,
     ]);
-    const currentPosition = attributes.current_position !== undefined ? attributes.current_position : (state === 'open' ? 100 : 0);
+    const currentPosition = readCoverPosition(cover);
     const friendlyName = cover.displayName || "";
     const coverType = resolveCoverType(cover);
 
@@ -1276,11 +1276,8 @@ function VerticalShutterCard({ cover, sensor, weather, onUpdate, needsChange, on
     const isMovingDown = sensorState === 'DOWN' || coverState === 'closing' || pendingAction === 'closing';
     const isMoving = isMovingUp || isMovingDown;
 
-    const posText = currentPosition < 5
-        ? 'Closed'
-        : currentPosition >= 95
-            ? 'Opened 100%'
-            : `Opened ${Math.round(currentPosition)}%`;
+    const posText = coverOpenStatusLabel(cover);
+    const isOpen = isCoverUiOpen(cover);
 
     // Shared values — mirrors roll curtain exactly
     const visualPos = useSharedValue(currentPosition);
@@ -1346,7 +1343,11 @@ function VerticalShutterCard({ cover, sensor, weather, onUpdate, needsChange, on
             setPendingAction(null);
             if (pendingTimeoutRef.current) clearTimeout(pendingTimeoutRef.current);
         }
-        onUpdate(cover.entity_id, 'cover', service, params);
+        onUpdate(cover.entity_id, 'cover', service,
+            action === 'set_cover_position' && params?.position != null
+                ? { ...params, position: uiOpenPercentToHaPosition(cover, params.position) }
+                : params
+        );
     };
 
     // Pan gesture — identical to rollPanGesture
@@ -1427,7 +1428,7 @@ function VerticalShutterCard({ cover, sensor, weather, onUpdate, needsChange, on
                 name={friendlyName}
                 status={isMovingUp ? 'Opening...' : isMovingDown ? 'Closing...' : posText}
                 coverType={coverType}
-                isOpen={currentPosition >= 5}
+                isOpen={isOpen}
                 onClose={() => handleAction('close')}
                 onOpen={() => handleAction('open')}
             />

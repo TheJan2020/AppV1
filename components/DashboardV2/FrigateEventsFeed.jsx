@@ -12,6 +12,7 @@ import {
 import { LinearGradient } from 'expo-linear-gradient';
 import { User, Car, Dog, AlertTriangle, Clock } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
+import { formatCameraName } from '../../utils/formatDisplayName';
 import { dedupeEventsById, paginationBeforeCursor } from '../../utils/frigateEvents';
 import FrigateEventImageModal from './FrigateEventImageModal';
 
@@ -93,7 +94,7 @@ const EventCard = memo(function EventCard({ event, adminUrl, authHeaders, onPres
                 </View>
             </View>
             <View style={styles.info}>
-                <Text style={styles.cameraName} numberOfLines={1}>{event.camera}</Text>
+                <Text style={styles.cameraName} numberOfLines={1}>{formatCameraName(event.camera)}</Text>
                 <View style={styles.timeRow}>
                     <Clock size={10} color="rgba(255,255,255,0.4)" />
                     <Text style={styles.timeText}>
@@ -274,7 +275,10 @@ export default function FrigateEventsFeed({ adminUrl, authHeaders = {}, frigateC
 
     const cameraPills = [
         { value: 'all', label: 'All Cameras' },
-        ...frigateCameras.map(c => ({ value: c.name || c.id, label: c.name || c.id })),
+        ...frigateCameras.map(c => ({
+            value: c.name || c.id,
+            label: formatCameraName(c.name || c.id),
+        })),
     ];
 
     const labelPills = [

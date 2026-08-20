@@ -2,6 +2,7 @@ import { memo, useState } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { WebView } from 'react-native-webview';
 import { CF } from '../../utils/typography';
+import { formatCameraName } from '../../utils/formatDisplayName';
 import CameraSensorOverlay, { resolveSensorIds } from './CameraSensorOverlay';
 
 // Injected JS: detects video/stream errors inside the WebView page and posts messages back
@@ -148,7 +149,7 @@ function CamerasList({ frigateCameras, service, onCameraPress, columns = 2, came
                         />
                         <View style={styles.cameraNameContainer}>
                             <Text style={styles.cameraName} numberOfLines={1}>
-                                {cam.name || 'Camera'}
+                                {formatCameraName(cam.name) || 'Camera'}
                             </Text>
                         </View>
                     </TouchableOpacity>

@@ -1,20 +1,29 @@
-import { useState, useRef, useEffect, memo } from 'react';
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, ActivityIndicator, KeyboardAvoidingView, Platform, Keyboard, Image } from 'react-native';
-import { Colors } from '../../constants/Colors';
+import { useState, useRef, useEffect, useCallback, memo } from 'react';
+import {
+    View,
+    Text,
+    StyleSheet,
+    TextInput,
+    TouchableOpacity,
+    FlatList,
+    Platform,
+    Keyboard,
+    Image,
+    Dimensions,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Heading, CF } from '../../utils/typography';
-import { Send, Bot, User as UserIcon, Mic, ChevronLeft } from 'lucide-react-native';
+import { Mic, ChevronLeft, CheckCheck } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
-import { Audio } from 'expo-av';
-import * as Speech from 'expo-speech';
+import Animated, {
+    useAnimatedStyle,
+    useSharedValue,
+    withRepeat,
+    withSequence,
+    withTiming,
+} from 'react-native-reanimated';
 import { ButlerChatClient } from '../../services/butler/ButlerChatClient';
 import { getButlerBackendUrl, toButlerWsUrl } from '../../utils/butlerBackend';
-import { AIService } from '../../services/ai';
-
-const AI_AVATAR = require('../../assets/ai.png');
-import { GestureDetector, Gesture } from 'react-native-gesture-handler';
-import Animated, { useAnimatedStyle, useSharedValue, withSpring, runOnJS, withRepeat, withSequence, withTiming } from 'react-native-reanimated';
-import { ButlerIcon } from './TabBarIcons';
-import { Lock, X } from 'lucide-react-native';
 
 /** Hide Gemini thinking / tool-planning dumps from the chat bubble. */
 function looksLikeAnalysis(text) {
@@ -30,82 +39,141 @@ function TypingDots() {
     const dot1 = useSharedValue(0.3);
     const dot2 = useSharedValue(0.3);
     const dot3 = useSharedValue(0.3);
+
     useEffect(() => {
-        const anim = (v, delay) => {
+        const pulse = (v) => {
             v.value = withRepeat(
                 withSequence(
                     withTiming(1, { duration: 300 }),
-                    withTiming(0.3, { duration: 300 })
+                    withTiming(0.3, { duration: 300 }),
                 ),
-                -1
+                -1,
             );
         };
-        anim(dot1, 0);
-        setTimeout(() => anim(dot2, 0), 150);
-        setTimeout(() => anim(dot3, 0), 300);
-    }, []);
+        pulse(dot1);
+        const t2 = setTimeout(() => pulse(dot2), 150);
+        const t3 = setTimeout(() => pulse(dot3), 300);
+        return () => {
+            clearTimeout(t2);
+            clearTimeout(t3);
+        };
+    }, [dot1, dot2, dot3]);
+
     const s1 = useAnimatedStyle(() => ({ opacity: dot1.value }));
     const s2 = useAnimatedStyle(() => ({ opacity: dot2.value }));
     const s3 = useAnimatedStyle(() => ({ opacity: dot3.value }));
+
     return (
-        <View style={{ flexDirection: 'row', gap: 5, alignItems: 'center', paddingVertical: 2 }}>
-            <Animated.View style={[{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#fff' }, s1]} />
-            <Animated.View style={[{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#fff' }, s2]} />
-            <Animated.View style={[{ width: 7, height: 7, borderRadius: 4, backgroundColor: '#fff' }, s3]} />
+        <View style={styles.typingRow}>
+            <Animated.View style={[styles.typingDot, s1]} />
+            <Animated.View style={[styles.typingDot, s2]} />
+            <Animated.View style={[styles.typingDot, s3]} />
         </View>
     );
 }
 
-async function fetchCameraSnapshot(entityId, haUrl, haToken) {
-    if (!haUrl || !haToken) {
-        console.error('[BrainView] Missing HA URL or Token');
-        return null;
-    }
-    try {
-        const url = `${haUrl}/api/camera_proxy/${entityId}`;
-        console.log('[BrainView] Fetching from:', url);
-        const response = await fetch(url, {
-            headers: {
-                'Authorization': `Bearer ${haToken}`
-            }
-        });
-        if (!response.ok) {
-            console.error('[BrainView] Snapshot fetch failed:', response.status);
-            return null;
-        }
-        const blob = await response.blob();
-        console.log('[BrainView] Snapshot blob size:', blob.size);
-
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const base64data = reader.result.split(',')[1];
-                resolve(base64data);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
-        });
-    } catch (error) {
-        console.error('Failed to fetch snapshot:', error);
-        return null;
-    }
+function formatTime(ts) {
+    return new Date(ts || Date.now()).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+    });
 }
 
-function BrainView({ entities = [], callService, registryDevices = [], registryEntities = [], registryAreas = [], onExit, onStartVoiceCall, haUrl, haToken }) {
-    const [message, setMessage] = useState('');
+function MessageBubble({ msg }) {
+    const isUser = msg.role === 'user';
+    const timeStr = formatTime(msg.timestamp);
+    const isStreaming = !isUser && !msg.content && !msg.isError;
+
+    return (
+        <View style={[styles.msgContainer, isUser ? styles.userMsgContainer : styles.aiMsgContainer]}>
+            <View style={styles.bubbleWrapper}>
+                <LinearGradient
+                    colors={
+                        isUser
+                            ? ['#245072', '#187FB2']
+                            : msg.isError
+                                ? ['#5c1a1a', '#7a2020']
+                                : ['#602FBE', '#7B2FBE']
+                    }
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={[styles.msgBubble, isUser ? styles.userBubble : styles.aiBubble]}
+                >
+                    {msg.toolRunning ? (
+                        <Text style={styles.toolLabel}>
+                            {msg.toolName ? `Working: ${msg.toolName}…` : 'Working…'}
+                        </Text>
+                    ) : null}
+
+                    {isStreaming ? (
+                        <TypingDots />
+                    ) : (
+                        <Text style={styles.msgText}>{msg.content}</Text>
+                    )}
+
+                    {!isStreaming ? (
+                        <View style={styles.metaRow}>
+                            <Text style={styles.timeBubble}>{timeStr}</Text>
+                            {isUser ? (
+                                <CheckCheck size={12} color="rgba(255,255,255,0.75)" />
+                            ) : null}
+                        </View>
+                    ) : null}
+                </LinearGradient>
+            </View>
+        </View>
+    );
+}
+
+function BrainView({
+    onExit,
+    onStartVoiceCall,
+}) {
     const [history, setHistory] = useState([]);
     const [loading, setLoading] = useState(false);
-    const [audioMode, setAudioMode] = useState(false);
-    const [recording, setRecording] = useState(null);
-    const [lockedRecording, setLockedRecording] = useState(false);
-    const [permissionResponse, requestPermission] = Audio.usePermissions();
-    const [isRecordingState, setIsRecordingState] = useState(false);
-    const [isKeyboardVisible, setKeyboardVisible] = useState(false);
-    const [chatStatus, setChatStatus] = useState('connecting'); // 'connecting' | 'ready' | 'error'
-    const scrollViewRef = useRef();
+    const [keyboardHeight, setKeyboardHeight] = useState(0);
+    const [chatStatus, setChatStatus] = useState('connecting');
+    // Android IME breaks controlled TextInput — track draft in a ref + hasText only.
+    const [hasText, setHasText] = useState(false);
+
+    const insets = useSafeAreaInsets();
+    const listRef = useRef(null);
+    const inputRef = useRef(null);
+    const draftRef = useRef('');
     const chatClientRef = useRef(null);
-    const streamingMsgIdRef = useRef(null); // id of the assistant bubble currently streaming
-    const audioModeRef = useRef(false);     // always-current audioMode for WS callbacks
+    const streamingMsgIdRef = useRef(null);
+    const sendingRef = useRef(false);
+    const keyboardHeightRef = useRef(0);
+    const pendingScrollRef = useRef(false);
+
+    const syncDraft = useCallback((text) => {
+        const next = typeof text === 'string' ? text : '';
+        draftRef.current = next;
+        setHasText(next.length > 0);
+    }, []);
+
+    const keepComposerFocused = useCallback(() => {
+        inputRef.current?.focus?.();
+    }, []);
+
+    const clearDraft = useCallback(() => {
+        draftRef.current = '';
+        setHasText(false);
+        // Clear in-place — remounting TextInput (via key) dismisses/reopens the keyboard.
+        const input = inputRef.current;
+        if (input) {
+            input.clear?.();
+            input.setNativeProps?.({ text: '' });
+        }
+        keepComposerFocused();
+    }, [keepComposerFocused]);
+
+    const scrollToLatest = useCallback((animated = true) => {
+        // Inverted FlatList: offset 0 is the newest message.
+        requestAnimationFrame(() => {
+            listRef.current?.scrollToOffset({ offset: 0, animated });
+        });
+    }, []);
 
     // ── Butler chat WS session ──────────────────────────────────────────────
     useEffect(() => {
@@ -126,87 +194,85 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
                 });
 
                 await client.connect(15000);
-                if (cancelled) { client.close(); return; }
+                if (cancelled) {
+                    client.close();
+                    return;
+                }
 
                 chatClientRef.current = client;
                 setChatStatus('ready');
 
-                // Streaming text — append chunks to the current assistant bubble
                 client.on('text', ({ text }) => {
-                    // Capture the ID immediately (synchronously) when the WS frame
-                    // arrives — NOT inside the setHistory updater. React schedules
-                    // state updaters asynchronously, so by the time the updater runs
-                    // 'turn_end' may have already nulled streamingMsgIdRef.current,
-                    // causing the last chunk(s) to be silently dropped.
                     const currentId = streamingMsgIdRef.current;
                     if (!currentId) return;
-                    // Skip leftover analysis / tool-planning dumps if any slip through
                     if (looksLikeAnalysis(text)) return;
-                    setHistory(prev =>
-                        prev.map(m =>
+                    setHistory((prev) =>
+                        prev.map((m) =>
                             m.id === currentId && m.role === 'assistant'
                                 ? { ...m, content: m.content + text }
-                                : m
-                        )
+                                : m,
+                        ),
                     );
                 });
 
                 client.on('turn_end', () => {
                     setLoading(false);
+                    sendingRef.current = false;
                     streamingMsgIdRef.current = null;
-                    // Read last assistant message aloud if audio mode is on.
-                    // Use audioModeRef to avoid stale closure (this handler is
-                    // created once at mount, so `audioMode` state would be stale).
-                    if (audioModeRef.current) {
-                        setHistory(prev => {
-                            const last = [...prev].reverse().find(m => m.role === 'assistant');
-                            if (last?.content) Speech.speak(last.content, { language: 'en' });
-                            return prev;
-                        });
-                    }
+                    setHistory((prev) =>
+                        prev.map((m) =>
+                            m.role === 'user' && m.status === 'sending'
+                                ? { ...m, status: 'sent' }
+                                : m,
+                        ),
+                    );
                 });
 
                 client.on('tool_call_started', ({ name }) => {
                     const currentId = streamingMsgIdRef.current;
                     if (!currentId) return;
-                    setHistory(prev =>
-                        prev.map(m =>
+                    setHistory((prev) =>
+                        prev.map((m) =>
                             m.id === currentId && m.role === 'assistant'
                                 ? { ...m, toolName: name, toolRunning: true }
-                                : m
-                        )
+                                : m,
+                        ),
                     );
                 });
 
                 client.on('tool_call_result', () => {
                     const currentId = streamingMsgIdRef.current;
                     if (!currentId) return;
-                    setHistory(prev =>
-                        prev.map(m =>
+                    setHistory((prev) =>
+                        prev.map((m) =>
                             m.id === currentId && m.role === 'assistant'
                                 ? { ...m, toolRunning: false }
-                                : m
-                        )
+                                : m,
+                        ),
                     );
                 });
 
                 client.on('error', ({ message: errMsg }) => {
-                    // Capture the ID before nullifying it, otherwise setHistory
-                    // will see null and skip updating the bubble.
                     const bubbleId = streamingMsgIdRef.current;
                     setLoading(false);
+                    sendingRef.current = false;
                     streamingMsgIdRef.current = null;
-                    if (bubbleId) {
-                        setHistory(prev =>
-                            prev.map(m =>
-                                m.id === bubbleId
-                                    ? { ...m, content: `Error: ${errMsg}`, isError: true }
-                                    : m
-                            )
-                        );
-                    }
+                    setHistory((prev) =>
+                        prev.map((m) => {
+                            if (m.role === 'user' && m.status === 'sending') {
+                                return { ...m, status: 'sent' };
+                            }
+                            if (bubbleId && m.id === bubbleId) {
+                                return {
+                                    ...m,
+                                    content: `Error: ${errMsg}`,
+                                    isError: true,
+                                };
+                            }
+                            return m;
+                        }),
+                    );
                 });
-
             } catch (e) {
                 if (!cancelled) setChatStatus('error');
                 console.error('[BrainView] Butler chat connect failed:', e.message);
@@ -220,189 +286,141 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
             chatClientRef.current?.close();
             chatClientRef.current = null;
         };
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
-
-    useEffect(() => {
-        const keyboardDidShowListener = Keyboard.addListener(
-            'keyboardDidShow',
-            () => {
-                setKeyboardVisible(true);
-            }
-        );
-        const keyboardDidHideListener = Keyboard.addListener(
-            'keyboardDidHide',
-            () => {
-                setKeyboardVisible(false);
-            }
-        );
-
-        return () => {
-            keyboardDidHideListener.remove();
-            keyboardDidShowListener.remove();
-        };
     }, []);
 
-    // Animation values
-    const micScale = useSharedValue(1);
-    const lockOpacity = useSharedValue(0);
-    const lockTranslateY = useSharedValue(0);
+    // Lift composer by the real keyboard overlap (edge-to-edge Android is unreliable on height alone).
+    useEffect(() => {
+        const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+        const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
 
-    async function startRecording() {
-        try {
-            // Ensure no existing recording
-            if (recording) {
-                console.warn('Stopping previous recording before starting new one');
-                await recording.stopAndUnloadAsync();
-                setRecording(null);
+        const measureLift = (e) => {
+            const coords = e?.endCoordinates;
+            if (!coords) return 0;
+            const screenH = Dimensions.get('screen').height;
+            const fromScreen = Math.max(0, Math.ceil(screenH - (coords.screenY ?? screenH)));
+            const reported = Math.ceil(coords.height ?? 0);
+            // Prefer reported IME height; screenY math can under-report on Samsung/edge-to-edge.
+            return Math.max(reported, fromScreen);
+        };
+
+        const applyHeight = (next) => {
+            const h = Math.max(0, next);
+            if (Math.abs(h - keyboardHeightRef.current) < 6) return;
+            keyboardHeightRef.current = h;
+            setKeyboardHeight(h);
+            if (h > 0) {
+                pendingScrollRef.current = true;
+                scrollToLatest(false);
             }
+        };
 
-            if (permissionResponse.status !== 'granted') {
-                console.log('Requesting permission..');
-                await requestPermission();
-            }
-            await Audio.setAudioModeAsync({
-                allowsRecordingIOS: true,
-                playsInSilentModeIOS: true,
-            });
+        const onShow = (e) => applyHeight(measureLift(e));
+        const onHide = () => applyHeight(0);
+        const onChange = (e) => {
+            const h = measureLift(e);
+            if (h > 60) applyHeight(h);
+            else if (h <= 0) applyHeight(0);
+        };
 
-            console.log('Starting recording..');
-            const { recording: newRecording } = await Audio.Recording.createAsync(
-                Audio.RecordingOptionsPresets.HIGH_QUALITY
-            );
-            setRecording(newRecording);
-            setIsRecordingState(true);
-        } catch (err) {
-            console.error('Failed to start recording', err);
-            setIsRecordingState(false);
-        }
-    }
+        const showSub = Keyboard.addListener(showEvent, onShow);
+        const hideSub = Keyboard.addListener(hideEvent, onHide);
+        const changeSub =
+            Platform.OS === 'android'
+                ? Keyboard.addListener('keyboardDidChangeFrame', onChange)
+                : null;
 
-    async function stopRecording(shouldSend = true) {
-        console.log('Stopping recording.., Send:', shouldSend);
-        if (!recording) return;
+        return () => {
+            showSub.remove();
+            hideSub.remove();
+            changeSub?.remove();
+        };
+    }, [scrollToLatest]);
 
-        setIsRecordingState(false);
-        setLockedRecording(false);
-        setRecording(undefined); // Clear state immediately
-
-        try {
-            await recording.stopAndUnloadAsync();
-            await Audio.setAudioModeAsync({
-                allowsRecordingIOS: false,
-            });
-            const uri = recording.getURI();
-            console.log('Recording stopped and stored at', uri);
-
-            if (shouldSend && uri) {
-                setLoading(true);
-                try {
-                    const text = await AIService.transcribeAudio(uri);
-                    if (text) {
-                        setMessage(text);
-                        handleSend(text);
-                    }
-                } catch (error) {
-                    console.error('Transcription failed:', error);
-                    setHistory(prev => [...prev, { role: 'assistant', content: "Sorry, I couldn't hear that clearly." }]);
-                    setLoading(false);
-                }
-            }
-        } catch (error) {
-            console.error('Error stopping recording', error);
-        }
-    }
-
-    const cancelRecording = async () => {
-        await stopRecording(false);
-    };
-
-    // Gesture Handling
-    const panGesture = Gesture.Pan()
-        .onBegin(() => {
-            runOnJS(startRecording)();
-            micScale.value = withSpring(1.2);
-            lockOpacity.value = withSpring(1);
-            lockTranslateY.value = 0;
-        })
-        .onUpdate((e) => {
-            // Slide up logic
-            lockTranslateY.value = e.translationY;
-            if (e.translationY < -50) {
-                runOnJS(setLockedRecording)(true);
-                lockOpacity.value = withSpring(0); // Hide lock icon when locked
-            }
-        })
-        .onEnd(() => {
-            micScale.value = withSpring(1);
-            lockOpacity.value = withSpring(0);
-            lockTranslateY.value = withSpring(0);
-
-            // If not locked, stop and send. If locked, do nothing (wait for manual stop)
-            if (!lockedRecording) {
-                // Must check current state ref or just rely on the fact that lockedRecording state update might be slightly delayed in JS thread logic
-                // But since we set it in onUpdate via runOnJS, we need to be careful.
-                // Simpler: pass the check to JS
-                runOnJS(handleGestureEnd)();
-            }
-        });
-
-    function handleGestureEnd() {
-        setLockedRecording(current => {
-            if (!current) {
-                stopRecording(true);
-            }
-            return current;
-        });
-    }
-
-    const micAnimatedStyle = useAnimatedStyle(() => ({
-        transform: [{ scale: micScale.value }]
-    }));
-
-    const lockAnimatedStyle = useAnimatedStyle(() => ({
-        opacity: lockOpacity.value,
-        transform: [{ translateY: lockTranslateY.value }]
-    }));
-
-    const handleSend = async (textOverride = null) => {
-        const msgContent = typeof textOverride === 'string' ? textOverride : message;
-        if (!msgContent.trim() || loading) return;
+    const handleSend = useCallback(() => {
+        const msgContent = draftRef.current.trim();
+        if (!msgContent || sendingRef.current || loading) return;
 
         const client = chatClientRef.current;
         if (!client?.isConnected) {
-            setHistory(prev => [...prev, {
-                id: Date.now(),
-                role: 'assistant',
-                content: 'Butler is not connected. Please wait a moment and try again.',
-                timestamp: Date.now(),
-            }]);
+            setHistory((prev) => [
+                {
+                    id: `err-${Date.now()}`,
+                    role: 'assistant',
+                    content: 'Butler is not connected. Please wait a moment and try again.',
+                    timestamp: Date.now(),
+                    isError: true,
+                },
+                ...prev,
+            ]);
             return;
         }
 
-        const userMsg = { id: `u-${Date.now()}`, role: 'user', content: msgContent, timestamp: Date.now() };
-        setHistory(prev => [...prev, userMsg]);
-        setMessage('');
+        sendingRef.current = true;
+        const now = Date.now();
+        const userId = `u-${now}`;
+        const assistantId = `a-${now}`;
+        streamingMsgIdRef.current = assistantId;
+
+        // Clear composer immediately (local) — do not wait on Butler.
+        clearDraft();
+
+        setHistory((prev) => [
+            {
+                id: assistantId,
+                role: 'assistant',
+                content: '',
+                timestamp: now,
+            },
+            {
+                id: userId,
+                role: 'user',
+                content: msgContent,
+                timestamp: now,
+                status: 'sent',
+            },
+            ...prev,
+        ]);
         setLoading(true);
 
-        // Create an empty assistant bubble that will be filled by streaming chunks
-        const assistantId = `a-${Date.now()}`;
-        streamingMsgIdRef.current = assistantId;
-        setHistory(prev => [...prev, {
-            id: assistantId,
-            role: 'assistant',
-            content: '',
-            timestamp: Date.now(),
-        }]);
+        try {
+            client.sendMessage(msgContent);
+        } catch (e) {
+            sendingRef.current = false;
+            setLoading(false);
+            streamingMsgIdRef.current = null;
+            setHistory((prev) =>
+                prev.map((m) => {
+                    if (m.id === assistantId) {
+                        return {
+                            ...m,
+                            content: 'Could not send. Please try again.',
+                            isError: true,
+                        };
+                    }
+                    return m;
+                }),
+            );
+            return;
+        }
 
-        client.sendMessage(msgContent);
-    };
+        scrollToLatest(true);
+    }, [loading, scrollToLatest, clearDraft]);
+
+    const composerBottomGap = keyboardHeight > 0 ? 10 : Math.max(insets.bottom, 12) + 10;
+
+    const renderItem = useCallback(({ item }) => <MessageBubble msg={item} />, []);
+    const keyExtractor = useCallback((item) => String(item.id), []);
+
+    const onActionPress = useCallback(() => {
+        if (draftRef.current.trim().length > 0) {
+            handleSend();
+            return;
+        }
+        onStartVoiceCall?.();
+    }, [handleSend, onStartVoiceCall]);
 
     return (
-        <KeyboardAvoidingView
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={styles.container}
-            keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0} // Reduced from 100 since no TabBar
-        >
+        <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
             <View style={styles.header}>
                 <TouchableOpacity
                     onPress={onExit}
@@ -411,131 +429,149 @@ function BrainView({ entities = [], callService, registryDevices = [], registryE
                 >
                     <ChevronLeft size={26} color="#fff" />
                 </TouchableOpacity>
-                <View style={{ alignItems: 'center' }}>
+                <View style={styles.headerCenter}>
                     <Text style={styles.title}>Butler</Text>
                     {chatStatus === 'connecting' && (
                         <Text style={styles.statusText}>Connecting…</Text>
                     )}
+                    {chatStatus === 'ready' && (
+                        <Text style={[styles.statusText, styles.statusReady]}>Online</Text>
+                    )}
                     {chatStatus === 'error' && (
-                        <Text style={[styles.statusText, { color: '#ff6b6b' }]}>Disconnected</Text>
+                        <Text style={[styles.statusText, styles.statusError]}>Disconnected</Text>
                     )}
                 </View>
-                {onStartVoiceCall ? (
-                    <TouchableOpacity
-                        onPress={onStartVoiceCall}
-                        style={styles.backBtn}
-                        activeOpacity={0.85}
-                        accessibilityLabel="Butler voice"
-                    >
-                        <ButlerIcon active size={22} />
-                    </TouchableOpacity>
-                ) : (
-                    <View style={{ width: 36 }} />
-                )}
+                <View style={styles.headerSpacer} />
             </View>
 
-            <ScrollView
-                ref={scrollViewRef}
-                contentContainerStyle={styles.chatContent}
-                onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
-            >
-                {history.length === 0 && (
-                    <View style={styles.emptyState}>
-                        <Text style={styles.emptyText}>How can I help you with your home today?</Text>
+            <View style={[styles.chatPane, { marginBottom: 68 + keyboardHeight }]}>
+                {history.length === 0 ? (
+                    <View style={styles.emptyOverlay} pointerEvents="none">
+                        <Text style={styles.emptyText}>
+                            How can I help you with your home today?
+                        </Text>
                     </View>
-                )}
+                ) : null}
 
-                {history.map((msg, index) => {
-                    const isUser = msg.role === 'user';
-                    const timeStr = msg.timestamp
-                        ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-                        : new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                    return (
-                        <View key={msg.id ?? index} style={[styles.msgContainer, isUser ? styles.userMsgContainer : styles.aiMsgContainer]}>
-                            <View style={styles.bubbleWrapper}>
-                                {isUser ? (
-                                    <LinearGradient
-                                        colors={['#245072', '#187FB2']}
-                                        start={{ x: 0, y: 0 }}
-                                        end={{ x: 1, y: 0 }}
-                                        style={[styles.msgBubble, styles.userBubble]}
-                                    >
-                                        <Text style={styles.msgText}>{msg.content}</Text>
-                                        <Text style={styles.timeBubble}>{timeStr}</Text>
-                                    </LinearGradient>
-                                ) : (
-                                    <LinearGradient
-                                        colors={msg.isError ? ['#5c1a1a', '#7a2020'] : ['#602FBE', '#7B2FBE']}
-                                        start={{ x: 0, y: 0 }}
-                                        end={{ x: 1, y: 0 }}
-                                        style={[styles.msgBubble, styles.aiBubble]}
-                                    >
-                                        {msg.content.length > 0
-                                            ? <Text style={styles.msgText}>{msg.content}</Text>
-                                            : <TypingDots />
-                                        }
-                                        {msg.content.length > 0 && (
-                                            <Text style={styles.timeBubble}>{timeStr}</Text>
-                                        )}
-                                    </LinearGradient>
-                                )}
-                            </View>
-                        </View>
-                    );
-                })}
-            </ScrollView>
+                <FlatList
+                    ref={listRef}
+                    style={styles.chatScroll}
+                    data={history}
+                    keyExtractor={keyExtractor}
+                    renderItem={renderItem}
+                    inverted
+                    keyboardShouldPersistTaps="always"
+                    keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
+                    contentContainerStyle={[
+                        styles.chatContent,
+                        { paddingTop: 12 + (keyboardHeight > 0 ? 8 : composerBottomGap) },
+                    ]}
+                    maintainVisibleContentPosition={{
+                        minIndexForVisible: 0,
+                        autoscrollToTopThreshold: 40,
+                    }}
+                    onContentSizeChange={() => {
+                        if (pendingScrollRef.current) {
+                            pendingScrollRef.current = false;
+                            scrollToLatest(false);
+                        }
+                    }}
+                />
+            </View>
 
-            <View style={[styles.inputContainer, { paddingBottom: isKeyboardVisible ? 16 : 40 }]}>
-                <View style={styles.inputPill}>
-                    <TextInput
-                        style={styles.input}
-                        placeholder="Ask anything..."
-                        placeholderTextColor="rgba(255,255,255,0.35)"
-                        value={message}
-                        onChangeText={setMessage}
-                        onSubmitEditing={handleSend}
-                        multiline
-                        maxLength={500}
-                    />
-                    {!isRecordingState && !lockedRecording && (
-                        <TouchableOpacity
-                            onPress={() => handleSend()}
-                            disabled={!message.trim() || loading}
-                            activeOpacity={0.8}
+            <View
+                style={[
+                    styles.inputContainer,
+                    {
+                        bottom: keyboardHeight,
+                        paddingBottom: composerBottomGap,
+                    },
+                ]}
+            >
+                <View style={styles.inputRow}>
+                    <View style={styles.inputPill}>
+                        <TextInput
+                            ref={inputRef}
+                            style={styles.input}
+                            placeholder="Ask anything..."
+                            placeholderTextColor="rgba(255,255,255,0.35)"
+                            // Uncontrolled: Android Samsung/Gboard IME desyncs controlled `value`.
+                            defaultValue=""
+                            onChangeText={syncDraft}
+                            onChange={(e) => {
+                                // Extra path for Android composition / autocorrect frames.
+                                syncDraft(e?.nativeEvent?.text ?? '');
+                            }}
+                            onSubmitEditing={() => {
+                                if (draftRef.current.trim()) handleSend();
+                            }}
+                            returnKeyType="send"
+                            enablesReturnKeyAutomatically
+                            submitBehavior="submit"
+                            blurOnSubmit={false}
+                            multiline
+                            textAlignVertical="center"
+                            maxLength={500}
+                            editable={chatStatus !== 'connecting'}
+                            underlineColorAndroid="transparent"
+                            autoCorrect
+                            autoCapitalize="sentences"
+                        />
+                    </View>
+
+                    <TouchableOpacity
+                        onPressIn={() => {
+                            // Send sits outside FlatList — keep focus so the IME doesn't bounce.
+                            if (draftRef.current.trim().length > 0) keepComposerFocused();
+                        }}
+                        onPress={onActionPress}
+                        disabled={hasText ? false : !onStartVoiceCall}
+                        activeOpacity={0.85}
+                        accessibilityLabel={hasText ? 'Send message' : 'Call Butler'}
+                    >
+                        <LinearGradient
+                            colors={['#602FBE', '#7B2FBE']}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 0, y: 1 }}
+                            style={[
+                                styles.actionBtn,
+                                !hasText && !onStartVoiceCall && styles.disabledBtn,
+                            ]}
                         >
-                            <LinearGradient
-                                colors={['#602FBE', '#7B2FBE']}
-                                start={{ x: 0, y: 0 }}
-                                end={{ x: 0, y: 1 }}
-                                style={[styles.sendBtn, !message.trim() && styles.disabledBtn]}
-                            >
+                            {hasText ? (
                                 <Image
                                     source={require('../../assets/ai_msg.png')}
-                                    style={{ width: 20, height: 20 }}
+                                    style={styles.actionIcon}
                                     resizeMode="contain"
                                 />
-                            </LinearGradient>
-                        </TouchableOpacity>
-                    )}
+                            ) : (
+                                <Mic size={22} color="#fff" />
+                            )}
+                        </LinearGradient>
+                    </TouchableOpacity>
                 </View>
             </View>
-
-        </KeyboardAvoidingView>
+        </View>
     );
 }
 
 const styles = StyleSheet.create({
     container: {
         flex: 1,
-        paddingTop: 60,
         backgroundColor: '#09091A',
     },
     header: {
         paddingHorizontal: 16,
-        marginBottom: 10,
+        marginBottom: 8,
         flexDirection: 'row',
         justifyContent: 'space-between',
-        alignItems: 'center'
+        alignItems: 'center',
+    },
+    headerCenter: {
+        alignItems: 'center',
+    },
+    headerSpacer: {
+        width: 36,
     },
     backBtn: {
         width: 36,
@@ -554,33 +590,47 @@ const styles = StyleSheet.create({
         color: 'rgba(255,255,255,0.4)',
         marginTop: 2,
     },
+    statusReady: {
+        color: 'rgba(120, 220, 160, 0.85)',
+    },
+    statusError: {
+        color: '#ff6b6b',
+    },
     toolLabel: {
         color: 'rgba(255,255,255,0.55)',
         fontSize: 12,
         marginBottom: 6,
         fontStyle: 'italic',
     },
+    chatScroll: {
+        flex: 1,
+    },
+    chatPane: {
+        flex: 1,
+        position: 'relative',
+    },
     chatContent: {
-        paddingHorizontal: 20,
-        paddingBottom: 20,
+        paddingHorizontal: 16,
+        paddingBottom: 8,
         flexGrow: 1,
     },
-    emptyState: {
-        flex: 1,
+    emptyOverlay: {
+        ...StyleSheet.absoluteFillObject,
         justifyContent: 'center',
         alignItems: 'center',
-        marginTop: 100,
-        gap: 20
+        paddingHorizontal: 28,
+        zIndex: 1,
     },
     emptyText: {
-        color: 'rgba(255,255,255,0.3)',
+        color: 'rgba(255,255,255,0.35)',
         fontSize: 16,
-        textAlign: 'center'
+        textAlign: 'center',
+        lineHeight: 24,
+        fontFamily: CF.medium,
     },
     msgContainer: {
         flexDirection: 'row',
-        marginBottom: 20,
-        gap: 10,
+        marginBottom: 12,
         alignItems: 'flex-end',
     },
     userMsgContainer: {
@@ -589,169 +639,107 @@ const styles = StyleSheet.create({
     aiMsgContainer: {
         justifyContent: 'flex-start',
     },
-    avatar: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
-        backgroundColor: 'rgba(255,255,255,0.1)',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    avatarImg: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
-    },
-    aiAvatar: {
-        width: 32,
-        height: 32,
-        borderRadius: 16,
-        backgroundColor: '#602FBE',
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    aiAvatarText: {
-        color: '#fff',
-        fontSize: 11,
-        fontFamily: CF.bold,
-        letterSpacing: 0.5,
-    },
     bubbleWrapper: {
-        maxWidth: '80%',
+        maxWidth: '82%',
     },
     msgBubble: {
-        padding: 12,
-        borderRadius: 20,
+        paddingHorizontal: 14,
+        paddingTop: 10,
+        paddingBottom: 8,
+        borderRadius: 18,
     },
     userBubble: {
-        borderBottomRightRadius: 4,
+        borderBottomRightRadius: 6,
     },
     aiBubble: {
-        borderBottomLeftRadius: 4,
-    },
-    typingBubble: {
-        paddingVertical: 14,
-        paddingHorizontal: 16,
+        borderBottomLeftRadius: 6,
     },
     msgText: {
         color: '#fff',
-        fontSize: 16,
-        lineHeight: 22,
-        writingDirection: 'auto',
+        fontSize: 15,
+        lineHeight: 21,
+        fontFamily: CF.regular,
+    },
+    metaRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'flex-end',
+        gap: 4,
+        marginTop: 4,
     },
     timeBubble: {
-        color: 'rgba(255,255,255,0.5)',
-        fontSize: 11,
-        marginTop: 6,
-        textAlign: 'right',
+        color: 'rgba(255,255,255,0.55)',
+        fontSize: 10,
+        fontFamily: CF.regular,
     },
-    timeText: {
-        fontSize: 11,
-        color: 'rgba(255,255,255,0.35)',
-        marginTop: 4,
-    },
-    timeRight: {
-        textAlign: 'right',
-    },
-    timeLeft: {
-        textAlign: 'left',
-    },
-    dateSeparator: {
+    typingRow: {
+        flexDirection: 'row',
+        gap: 5,
         alignItems: 'center',
-        marginBottom: 16,
-        marginTop: 4,
+        paddingVertical: 4,
+        minWidth: 36,
     },
-    dateText: {
-        fontSize: 12,
-        color: 'rgba(255,255,255,0.3)',
-    },
-    loadingContainer: {
-        padding: 10,
-        alignItems: 'flex-start',
-        paddingLeft: 42
+    typingDot: {
+        width: 7,
+        height: 7,
+        borderRadius: 4,
+        backgroundColor: '#fff',
     },
     inputContainer: {
-        paddingHorizontal: 16,
-        paddingTop: 12,
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        paddingHorizontal: 14,
+        paddingTop: 10,
         backgroundColor: '#09091A',
-        borderTopWidth: 1,
-        borderTopColor: 'rgba(255,255,255,0.06)',
+        borderTopWidth: StyleSheet.hairlineWidth,
+        borderTopColor: 'rgba(255,255,255,0.08)',
+        zIndex: 5,
+    },
+    inputRow: {
+        flexDirection: 'row',
+        alignItems: 'flex-end',
+        gap: 10,
     },
     inputPill: {
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         backgroundColor: '#21213F',
-        borderRadius: 28,
+        borderRadius: 26,
         paddingHorizontal: 16,
-        paddingVertical: 8,
-        gap: 8,
+        paddingVertical: 6,
+        minHeight: 50,
     },
     input: {
         flex: 1,
         color: '#fff',
         fontSize: 15,
-        maxHeight: 100,
-        paddingVertical: 4,
+        maxHeight: 110,
+        minHeight: 38,
+        paddingTop: Platform.OS === 'ios' ? 8 : 7,
+        paddingBottom: Platform.OS === 'ios' ? 8 : 7,
+        paddingVertical: 0,
+        fontFamily: CF.regular,
     },
-    sendBtn: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
+    actionBtn: {
+        width: 48,
+        height: 48,
+        borderRadius: 24,
         justifyContent: 'center',
         alignItems: 'center',
         overflow: 'hidden',
+        marginBottom: 1,
     },
-    micBtn: {
-        width: 44,
-        height: 44,
-        borderRadius: 22,
-        backgroundColor: 'rgba(255,255,255,0.1)',
-        justifyContent: 'center',
-        alignItems: 'center',
+    micActionBtn: {
+        backgroundColor: '#602FBE',
     },
-    recordingBtn: {
-        backgroundColor: '#ff4444', // Red when recording
-        width: 60,
-        height: 60,
-        borderRadius: 30,
-    },
-    lockIndicator: {
-        position: 'absolute',
-        bottom: 80,
-        right: 20,
-        alignItems: 'center',
-        gap: 4
-    },
-    lockText: {
-        color: 'rgba(255,255,255,0.5)',
-        fontSize: 12
-    },
-    cancelBtn: {
-        marginRight: 10,
-        padding: 10
-    },
-    cancelText: {
-        color: '#ff4444',
-        fontFamily: CF.bold,
-    },
-    audioToggle: {
-        padding: 8
+    actionIcon: {
+        width: 22,
+        height: 22,
     },
     disabledBtn: {
-        backgroundColor: 'rgba(255,255,255,0.1)',
-        opacity: 0.5
-    },
-    exitBtn: {
-        alignSelf: 'center',
-        marginBottom: 30, // Safe Area bottom
-        marginTop: 10,
-        paddingVertical: 10,
-        paddingHorizontal: 20
-    },
-    exitText: {
-        color: 'rgba(255,255,255,0.5)',
-        fontSize: 14,
-        fontFamily: CF.medium,
+        opacity: 0.45,
     },
 });
 

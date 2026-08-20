@@ -3,6 +3,7 @@ import * as SecureStore from 'expo-secure-store';
 import { View, ScrollView, StyleSheet, ActivityIndicator } from 'react-native';
 import { Colors } from '../constants/Colors';
 import { HAService } from '../services/ha';
+import { filterPoweredOnClimates } from '../utils/acPowerSwitch';
 import Header from '../components/Dashboard/Header';
 import FloorTabs from '../components/Dashboard/FloorTabs';
 import QuickActions from '../components/Dashboard/QuickActions';
@@ -166,8 +167,13 @@ export default function Dashboard() {
     };
 
     const getRoomClimateState = (roomKeyword) => {
-        const clim = getRoomClimate(roomKeyword, entities).find(e => e.state !== 'off');
-        return clim ? clim.state : null;
+        const roomClimates = getRoomClimate(roomKeyword, entities);
+        const roomIds = new Set(roomClimates.map((c) => c.entity_id));
+        const powered = filterPoweredOnClimates(
+            entities.filter((e) => roomIds.has(e.entity_id) || e.entity_id.startsWith('switch.')),
+            entities,
+        );
+        return powered[0] ? (powered[0].state || 'on') : null;
     };
 
     // Derived State for Modal
@@ -200,7 +206,7 @@ export default function Dashboard() {
 
     const weather = entities.find(e => e.entity_id.startsWith('weather.'));
     const activeLights = entities.filter(e => e.entity_id.startsWith('light.') && e.state === 'on');
-    const activeClimate = entities.filter(e => e.entity_id.startsWith('climate.') && e.state !== 'off');
+    const activeClimate = filterPoweredOnClimates(entities, entities);
     const power = entities.find(e => e.entity_id.includes('power'))?.state;
 
     const showLights = () => {

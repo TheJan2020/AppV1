@@ -1,4 +1,10 @@
-// Clash Display font family shorthand
+/**
+ * App font: Clash Display (loaded in app/_layout.jsx).
+ * This is the font used on the main dashboard — use CF / Heading everywhere.
+ * Metro also wraps Text/TextInput so unset styles still get Clash Display.
+ *
+ * Do not combine Clash faces with `fontWeight` — weight comes from the face name.
+ */
 export const CF = {
   extralight: 'ClashDisplay-Extralight',
   light:      'ClashDisplay-Light',
@@ -10,7 +16,6 @@ export const CF = {
 
 /**
  * Primary app headings (Clash Display). Spread then override color / margins.
- * Do not combine with `fontWeight` — weight comes from the face name.
  */
 export const Heading = {
   /** Room hero, Settings “Settings” */

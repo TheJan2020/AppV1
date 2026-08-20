@@ -18,7 +18,8 @@
  * Individual cards remain fully independent (toggle / position via their own CoverCard UI).
  *
  * Cover state:  'open' | 'opening' | 'closing' | 'closed'
- * Position:     attrs.current_position  0–100  (0 = closed, 100 = open)
+ * Position:     always 0 = closed, 100 = open (UI + HA set_cover_position).
+ * Master:       ignore HA state string — slider / open-closed from current_position only.
  */
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -31,7 +32,7 @@ import * as Haptics from 'expo-haptics';
 import CoverCard, { AllLayersCoverCard } from './CoverCard';
 import CoverLayerFilter from './CoverLayerFilter';
 import { Heading, CF, RoomDeviceStatus } from '../../utils/typography';
-import { groupCoversByWindow, layersForWindow, defaultLayerTab, ALL_LAYERS_ID } from '../../utils/coverWindows';
+import { groupCoversByWindow, layersForWindow, defaultLayerTab, ALL_LAYERS_ID, isMasterCover, readCoverOpenPercent, uiOpenPercentToHaPosition, isCoverUiOpen } from '../../utils/coverWindows';
 import { toggleCoverWindow, toggleCoverEntities } from '../../utils/coverWindowControl';
 import SmoothSlider, { SMOOTH_SLIDER_THUMB as THUMB, SMOOTH_SLIDER_TRACK as TRACK } from './SmoothSlider';
 import RoomGroupIconButton, { ROOM_GROUP_ICON_GLYPH_SIZE } from './RoomGroupIconButton';
@@ -46,25 +47,11 @@ const COVERS_GRID_GAP = 10;
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 function getPosition(cover) {
-    const attrs = cover.stateObj?.attributes || {};
-    const state = cover.stateObj?.state || 'closed';
-    if (attrs.current_position !== undefined) return attrs.current_position;
-    return state === 'open' ? 100 : 0;
+    return readCoverOpenPercent(cover);
 }
 
 function isActive(cover) {
-    const attrs = cover.stateObj?.attributes || {};
-    const state = cover.stateObj?.state || 'closed';
-    if (attrs.current_position !== undefined) return attrs.current_position > 5;
-    return state === 'open' || state === 'opening';
-}
-
-/** Returns true if this entity is the master curtain controller */
-function isMasterCover(cover) {
-    const id   = (cover.entity_id   || '').toLowerCase();
-    const name = (cover.displayName || '').toLowerCase();
-    return id.includes('master_curtain') || id.includes('master curtain') ||
-           name.includes('master curtain') || name.includes('master_curtain');
+    return isCoverUiOpen(cover);
 }
 
 /** Returns true for any curtain cover type (treated as window when ungrouped) */
@@ -208,7 +195,7 @@ function WindowCoverSection({
                     disabled={toggling}
                     accessibilityLabel={`Toggle ${window.name}`}
                 >
-                    <LayoutGrid size={ROOM_GROUP_ICON_GLYPH_SIZE} color="#fff" />
+                    <LayoutGrid size={ROOM_GROUP_ICON_GLYPH_SIZE} color="#fff" strokeWidth={1.2} />
                 </RoomGroupIconButton>
                 <Text style={styles.windowTitle}>{window.name}</Text>
             </View>
@@ -278,7 +265,10 @@ export default function CoversGroupCard({
     // ── Master curtain detection ──────────────────────────────────────────
     const masterCover      = covers.find(isMasterCover);
     const individualCovers = covers.filter(c => !isMasterCover(c));
-    const groupIsOpen = individualCovers.some(isActive);
+    // Master: open/closed from its position only. Else: any individual cover open.
+    const groupIsOpen = masterCover
+        ? isCoverUiOpen(masterCover)
+        : individualCovers.some(isActive);
     const masterPos        = masterCover ? getPosition(masterCover) : 50;
 
     const openCount = individualCovers.filter(c => isActive(c)).length;
@@ -296,11 +286,11 @@ export default function CoversGroupCard({
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
         if (masterCover) {
-            onUpdate?.(
-                masterCover.entity_id, 'cover',
-                groupIsOpen ? 'close_cover' : 'open_cover',
-                {},
-            );
+            // Position-only: don't trust HA open/closed state or open_cover/close_cover.
+            const currentlyOpen = isCoverUiOpen(masterCover);
+            const targetUi = currentlyOpen ? 0 : 100;
+            const haPosition = uiOpenPercentToHaPosition(masterCover, targetUi);
+            onUpdate?.(masterCover.entity_id, 'cover', 'set_cover_position', { position: haPosition });
             return;
         }
 
@@ -321,7 +311,8 @@ export default function CoversGroupCard({
     // ── Slider release → one call to master, HA propagates to all curtains ─
     const handlePositionRelease = useCallback((rounded) => {
         if (!masterCover) return;
-        onUpdate?.(masterCover.entity_id, 'cover', 'set_cover_position', { position: rounded });
+        const haPosition = uiOpenPercentToHaPosition(masterCover, rounded);
+        onUpdate?.(masterCover.entity_id, 'cover', 'set_cover_position', { position: haPosition });
     }, [masterCover, onUpdate]);
 
     const toggle = () => {
@@ -339,7 +330,7 @@ export default function CoversGroupCard({
                     disabled={groupToggling || !(masterCover || individualCovers.length)}
                     accessibilityLabel="Toggle all covers"
                 >
-                    <LayoutGrid size={ROOM_GROUP_ICON_GLYPH_SIZE} color="#fff" />
+                    <LayoutGrid size={ROOM_GROUP_ICON_GLYPH_SIZE} color="#fff" strokeWidth={1.2} />
                 </RoomGroupIconButton>
                 <View style={styles.headerTextBlock}>
                     <Text style={styles.headerTitle}>Covers</Text>

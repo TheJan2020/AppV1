@@ -3,14 +3,15 @@ import { StatusBar } from 'expo-status-bar';
 import { Colors } from '../constants/Colors';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import ErrorBoundary from '../components/ErrorBoundary';
-import { useEffect, useState } from 'react';
-import { LogBox, Dimensions, Image, StyleSheet } from 'react-native';
+import { useEffect, useState, useCallback } from 'react';
+import { LogBox, Dimensions, Image, StyleSheet, View, Platform } from 'react-native';
 import { useFonts } from 'expo-font';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import * as Notifications from 'expo-notifications';
 import { registerForPushNotificationsAsync } from '../services/notifications';
 import { NotifContext } from '../services/NotifContext';
 import { preloadLocalLightIcons } from '../utils/lightTypeAssets';
+import { CF } from '../utils/typography';
 import * as SplashScreen from 'expo-splash-screen';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -69,6 +70,12 @@ export default function RootLayout() {
         };
     };
 
+    const onLayoutRootView = useCallback(async () => {
+        if (fontsLoaded) {
+            await SplashScreen.hideAsync().catch(() => {});
+        }
+    }, [fontsLoaded]);
+
     useEffect(() => {
         preloadLocalLightIcons().catch(() => {});
     }, []);
@@ -117,10 +124,14 @@ export default function RootLayout() {
         };
     }, []);
 
+    if (!fontsLoaded) {
+        return null;
+    }
+
     return (
         <NotifContext.Provider value={{ pendingNotif, clearNotif: () => setPendingNotif(null) }}>
             <ErrorBoundary>
-                <GestureHandlerRootView style={{ flex: 1 }}>
+                <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayoutRootView}>
                     <StatusBar style="light" />
                     <Stack
                         screenOptions={{
@@ -129,7 +140,7 @@ export default function RootLayout() {
                             },
                             headerTintColor: Colors.text,
                             headerTitleStyle: {
-                                fontWeight: 'bold',
+                                fontFamily: CF.bold,
                             },
                             contentStyle: {
                                 backgroundColor: '#09091A',
@@ -146,13 +157,23 @@ export default function RootLayout() {
                         <Stack.Screen name="tv-lab" options={{ headerShown: false }} />
                         <Stack.Screen name="dashboard-v3" options={{ headerShown: false }} />
                     </Stack>
-                    {/* Global top-center purple glow — rendered OVER screens, touches pass through */}
-                    <Image
-                        source={require('../assets/shadow.png')}
-                        style={layoutStyles.topShadow}
-                        resizeMode="contain"
-                        pointerEvents="none"
-                    />
+                    {/* Purple glow over screens.
+                        On Android/Samsung, an Image overlay above the navigator often still
+                        intercepts taps even with pointerEvents="none" (blocks Settings tabs).
+                        Skip the overlay on Android; keep it on iOS where pointerEvents works. */}
+                    {Platform.OS !== 'android' ? (
+                        <View
+                            pointerEvents="none"
+                            collapsable={false}
+                            style={layoutStyles.topShadowWrap}
+                        >
+                            <Image
+                                source={require('../assets/shadow.png')}
+                                style={layoutStyles.topShadow}
+                                resizeMode="contain"
+                            />
+                        </View>
+                    ) : null}
                 </GestureHandlerRootView>
             </ErrorBoundary>
         </NotifContext.Provider>
@@ -160,12 +181,19 @@ export default function RootLayout() {
 }
 
 const layoutStyles = StyleSheet.create({
-    topShadow: {
+    topShadowWrap: {
         position: 'absolute',
         top: 0,
-        alignSelf: 'center',
+        left: 0,
+        right: 0,
+        height: 462.37,
+        alignItems: 'center',
+        // Keep visual stacking without Android elevation touch bugs
+        zIndex: 1,
+        elevation: 0,
+    },
+    topShadow: {
         width: 521.82,
         height: 462.37,
-        zIndex: 9999,
     },
 });

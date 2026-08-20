@@ -21,6 +21,7 @@ export default function RoomSheet({
     sensorMappings = [],
     coverMappings = [],
     coverWindows = [],
+    climateMappings = [],
     musicAssistantEntryIds = [],
     browseMedia,
     callServiceWithResponse,
@@ -55,6 +56,7 @@ export default function RoomSheet({
         sensorMappings,
         coverMappings,
         mediaMappings,
+        climateMappings,
         musicAssistantEntryIds,
         badgeConfig,
     });

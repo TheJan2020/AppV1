@@ -296,7 +296,7 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
     const audioRouteRef = useRef('SPEAKER');
     const contextRef = useRef(context);
     const butlerSpokeRef = useRef(false);
-    const butlerSpeakingRef = useRef(false); // UI phase only — barge-in still shows YOU text
+    const butlerSpeakingRef = useRef(false); // UI phase — uplink muted while Butler speaks
     const lastAssistantTextRef = useRef('');
     const callLanguageRef = useRef(preferredCallLanguage());
     const languageLockedRef = useRef(false);
@@ -319,6 +319,11 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
         await stopSession();
         onClose?.();
     }, [stopSession, onClose]);
+
+    const stopSessionRef = useRef(stopSession);
+    const endSessionRef = useRef(endSession);
+    stopSessionRef.current = stopSession;
+    endSessionRef.current = endSession;
 
     const switchToChat = useCallback(async () => {
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -382,7 +387,7 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
     useEffect(() => {
         if (!visible) {
             void deactivateKeepAwake(KEEP_AWAKE_TAG);
-            void stopSession();
+            void stopSessionRef.current();
             setPhase('ringing');
             setAudioRoute('SPEAKER');
             setRouteHint('');
@@ -399,6 +404,8 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
         }
 
         let cancelled = false;
+        let sessionLive = false;
+        let ignoreBackgroundUntil = Date.now() + 8000;
         let hadExternalAudio = false;
         butlerSpokeRef.current = false;
         butlerSpeakingRef.current = false;
@@ -534,7 +541,7 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
                     const live = normalizeCaption(text);
                     if (!live) return;
                     setMessages((prev) => {
-                        // Drop speaker-echo of Butler; keep real barge-in speech
+                        // Drop speaker-echo of Butler (half-duplex safety net)
                         if (isButlerEchoOrGreeting(live, prev, lastAssistantTextRef.current)) {
                             return prev;
                         }
@@ -667,7 +674,10 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
                 }
                 if (!result.ok) {
                     setPhase('error');
-                    setErrorHint(result.error?.slice(0, 80) ?? 'Connection failed');
+                    setErrorHint(result.error?.slice(0, 80) ?? 'Could not start call');
+                } else {
+                    sessionLive = true;
+                    ignoreBackgroundUntil = Date.now() + 3000;
                 }
             } catch (err) {
                 if (!cancelled) {
@@ -703,12 +713,15 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
             }
         });
 
-        // Leaving the app ends the call (avoids runaway greetings in background).
+        // Hang up only after the call is live and the user actually leaves the
+        // app. Android mic-permission / audio-route dialogs briefly set
+        // background/inactive and must not close the modal.
         const onAppState = (next) => {
-            if (next === 'background') {
-                cancelled = true;
-                void endSession();
-            }
+            if (next !== 'background') return;
+            if (!sessionLive) return;
+            if (Date.now() < ignoreBackgroundUntil) return;
+            cancelled = true;
+            void endSessionRef.current();
         };
         const appSub = AppState.addEventListener('change', onAppState);
 
@@ -740,9 +753,9 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
             livePulse.setValue(1);
             ringScale.setValue(1);
             void deactivateKeepAwake(KEEP_AWAKE_TAG);
-            void stopSession();
+            void stopSessionRef.current();
         };
-    }, [visible, stopSession, endSession, runRingPulse, livePulse]);
+    }, [visible, runRingPulse, livePulse]);
 
     useEffect(() => {
         if (!messages.length) return;
@@ -770,7 +783,12 @@ function ButlerVoiceModal({ visible, onClose, onSwitchToChat, context }) {
                 style={styles.screen}
             >
                 <View style={styles.content}>
-                    <Text style={styles.callerName}>Butler</Text>
+                    <View style={styles.callerRow}>
+                        <Text style={styles.callerName}>Butler</Text>
+                        <View style={styles.betaBadge}>
+                            <Text style={styles.betaBadgeText}>BETA</Text>
+                        </View>
+                    </View>
 
                     <View style={styles.avatarWrap}>
                         {showRingRipple ? (
@@ -932,11 +950,30 @@ const styles = StyleSheet.create({
         alignItems: 'center',
         paddingHorizontal: 24,
     },
+    callerRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: 20,
+    },
     callerName: {
         ...Heading.lg24,
         color: '#ededf5',
         letterSpacing: -0.5,
-        marginBottom: 20,
+    },
+    betaBadge: {
+        paddingHorizontal: 7,
+        paddingVertical: 3,
+        borderRadius: 6,
+        backgroundColor: 'rgba(201, 168, 240, 0.22)',
+        borderWidth: StyleSheet.hairlineWidth,
+        borderColor: 'rgba(201, 168, 240, 0.55)',
+    },
+    betaBadgeText: {
+        fontSize: 10,
+        fontFamily: CF.bold,
+        color: '#c9a8f0',
+        letterSpacing: 0.8,
     },
     avatarWrap: {
         width: 120,

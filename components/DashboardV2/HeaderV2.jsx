@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Cloud, CloudRain, Sun, CloudSnow, CloudLightning, Bell } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
 
-function HeaderV2({ weather, cityName, userName, entities = [], config = {}, humidity, indoorTemp, onRoomPress, onBellPress, unreadCount = 0 }) {
+function HeaderV2({ weather, cityName, userName, entities = [], config = {}, humidity, indoorTemp, onRoomPress, onBellPress, unreadCount = 0, onUserPress }) {
 
     const capitalizeWords = (str) => {
         if (!str) return str;
@@ -57,10 +57,21 @@ function HeaderV2({ weather, cityName, userName, entities = [], config = {}, hum
     return (
         <View style={styles.header}>
             <View style={styles.topRow}>
-                <View style={styles.greetingBlock}>
+                <TouchableOpacity
+                    style={styles.greetingBlock}
+                    onPress={onUserPress}
+                    disabled={!onUserPress}
+                    activeOpacity={onUserPress ? 0.7 : 1}
+                    hitSlop={{ top: 12, bottom: 12, left: 8, right: 8 }}
+                    accessibilityRole={onUserPress ? 'button' : undefined}
+                    accessibilityLabel={onUserPress ? `Switch account, ${displayName}` : undefined}
+                >
                     <Text style={styles.greeting}>{getGreeting()}</Text>
                     <Text style={styles.name}>{displayName}</Text>
-                </View>
+                    {!!onUserPress && (
+                        <Text style={styles.switchHint}>Tap to switch account</Text>
+                    )}
+                </TouchableOpacity>
                 <View style={styles.headerActions}>
                     <TouchableOpacity
                         style={styles.headerIconBtn}
@@ -123,6 +134,12 @@ const styles = StyleSheet.create({
         letterSpacing: -1.5,
         marginTop: -2,
         lineHeight: 42,
+    },
+    switchHint: {
+        marginTop: 2,
+        fontSize: 11,
+        fontFamily: CF.regular,
+        color: 'rgba(237,237,245,0.35)',
     },
     headerActions: {
         flexDirection: 'row',

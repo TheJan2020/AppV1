@@ -64,12 +64,13 @@ export default function YouTubeLauncherModal({ visible, onClose, mediaPlayers, c
             }
 
             // Determine which script to call based on selected player
-            let scriptEntityId;
-            if (selectedPlayer.entity_id === 'media_player.living_room_tv') {
+            const playerType = detectPlayerType(selectedPlayer.entity_id);
+            let scriptEntityId = null;
+            if (selectedPlayer.entity_id === 'media_player.living_room_tv' || playerType === 'lgtv') {
                 scriptEntityId = 'script.play_youtube_on_lg';
-            } else if (selectedPlayer.entity_id === 'media_player.living_room') {
+            } else if (selectedPlayer.entity_id === 'media_player.living_room' || playerType === 'appletv') {
                 scriptEntityId = 'script.play_youtube_on_apple_tv';
-            } else {
+            } else if (playerType !== 'samsung') {
                 setError('Unknown TV selected');
                 setLoading(false);
                 return;
@@ -79,21 +80,25 @@ export default function YouTubeLauncherModal({ visible, onClose, mediaPlayers, c
             console.log('[YouTube Launcher] Video ID:', videoId);
             console.log('[YouTube Launcher] Selected TV:', selectedPlayer.attributes?.friendly_name);
             console.log('[YouTube Launcher] Entity ID:', selectedPlayer.entity_id);
-            console.log('[YouTube Launcher] Calling script:', scriptEntityId);
-            console.log('[YouTube Launcher] Script data:', {
-                entity_id: scriptEntityId,
-                variables: { video_id: videoId }
-            });
+            console.log('[YouTube Launcher] Player type:', playerType);
 
-            // Call Home Assistant script using script.turn_on service
-            const result = await callService('script', 'turn_on', {
-                entity_id: scriptEntityId,
-                variables: {
-                    video_id: videoId
-                }
-            });
+            if (playerType === 'samsung') {
+                console.log('[YouTube Launcher] Samsung play_media');
+                await callService('media_player', 'play_media', {
+                    entity_id: selectedPlayer.entity_id,
+                    media_content_id: `https://www.youtube.com/watch?v=${videoId}`,
+                    media_content_type: 'url',
+                });
+            } else {
+                console.log('[YouTube Launcher] Calling script:', scriptEntityId);
+                await callService('script', 'turn_on', {
+                    entity_id: scriptEntityId,
+                    variables: {
+                        video_id: videoId
+                    }
+                });
+            }
 
-            console.log('[YouTube Launcher] Script call result:', result);
             console.log('=== End Debug ===');
 
             setSuccess(true);

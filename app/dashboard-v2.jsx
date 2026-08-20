@@ -3,9 +3,10 @@ import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
 import NotificationModal from '../components/DashboardV2/NotificationModal';
 import ButlerVoiceModal from '../components/DashboardV2/ButlerVoiceModal';
-import { canOpenButlerCall, runButlerBackgroundSetup } from '../services/butler/openButlerCall';
+import { canOpenButlerCall, requestButlerMicPermission, runButlerBackgroundSetup } from '../services/butler/openButlerCall';
 import { getButlerBackendUrl } from '../utils/butlerBackend';
 import { fetchEnrichedLightMappings } from '../utils/lightMappingsClient';
+import { CF } from '../utils/typography';
 import AlertNotificationModal from '../components/DashboardV2/AlertNotificationModal';
 import SecurityAlertModal from '../components/DashboardV2/SecurityAlertModal';
 
@@ -19,6 +20,7 @@ import StatusBadges from '../components/DashboardV2/StatusBadges';
 import PersonBadges from '../components/DashboardV2/PersonBadges';
 import ActiveDevicesModal from '../components/DashboardV2/ActiveDevicesModal';
 import LocksModal from '../components/DashboardV2/LocksModal';
+import DevicesToggleModal from '../components/DashboardV2/DevicesToggleModal';
 import SettingsView from '../components/DashboardV2/SettingsView';
 import { HAService } from '../services/ha';
 import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
@@ -51,7 +53,13 @@ import DashboardSkeleton, {
 import { FrigateService } from '../services/frigate';
 import * as SecureStore from 'expo-secure-store';
 import { startHeartbeat, stopHeartbeat, updateAppState } from '../services/heartbeat';
-import { getRoomEntities } from '../utils/roomHelpers';
+import { getRoomEntities, getEntityIdsForAreaIds } from '../utils/roomHelpers';
+import { filterPoweredOnClimates, isClimatePoweredOn } from '../utils/acPowerSwitch';
+import { isCoverUiOpen } from '../utils/coverWindows';
+import {
+    collectGroupedLightMemberIds,
+    isLightCountableUnit,
+} from '../utils/lightCapabilities';
 import {
     filterParentRoomsForDashboard,
     getRoomAreaGroup,
@@ -225,6 +233,7 @@ export default function DashboardV2() {
     const [sensorMappings, setSensorMappings] = useState([]);
     const [coverMappings, setCoverMappings] = useState([]);
     const [coverWindows, setCoverWindows] = useState([]);
+    const [climateMappings, setClimateMappings] = useState([]);
     /** `entry_id`s from HA config_entries where domain is music_assistant — ties entities → MA without relying on state attrs */
     const [musicAssistantEntryIds, setMusicAssistantEntryIds] = useState([]);
     // null = never configured (show all), [] = none selected, [...] = selected ids
@@ -327,6 +336,15 @@ export default function DashboardV2() {
                 if (data.success && Array.isArray(data.covers)) setCoverMappings(data.covers);
             })
             .catch(e => { if (e.name !== 'AbortError') logOperationalIssue('Mappings Cover', e); });
+
+        // 6. Climate damper mappings
+        const climateUrl = `${baseUrl}api/climate-mappings?t=${Date.now()}`;
+        fetch(climateUrl, { signal: controller.signal, headers: authHeaders })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success && Array.isArray(data.climates)) setClimateMappings(data.climates);
+            })
+            .catch(e => { if (e.name !== 'AbortError') logOperationalIssue('Mappings Climate', e); });
 
         // 6. Home Access — selected locks + covers
         const haUrl2 = `${baseUrl}api/home-access?t=${Date.now()}`;
@@ -855,6 +873,8 @@ export default function DashboardV2() {
     const [modalVisible, setModalVisible] = useState(false);
     const [securityModalVisible, setSecurityModalVisible] = useState(false);
     const [locksModalVisible, setLocksModalVisible] = useState(false);
+    const [devicesToggleVisible, setDevicesToggleVisible] = useState(false);
+    const [devicesToggleKind, setDevicesToggleKind] = useState('lights'); // 'lights' | 'ac'
 
     const [activeBadgeType, setActiveBadgeType] = useState(null); // 'lights', 'ac', 'doors'
 
@@ -950,32 +970,63 @@ export default function DashboardV2() {
             .catch(e => console.warn('[Notifications] refreshEntityRefs error:', e));
     }, [connectionConfig.adminUrl, connectionConfig.token]);
 
-    // Derived Logic for Badges
+    // Derived Logic for Badges — same room scope as room cards (selected parents only)
+    const dashboardParentAreaIds = useMemo(() => {
+        const selected = getSelectedAreasForDashboard(registryAreas, badgeConfig);
+        const parents = filterParentRoomsForDashboard(selected, registryAreas, badgeConfig);
+        return new Set(parents.map((p) => p.area_id).filter(Boolean));
+    }, [registryAreas, badgeConfig]);
+
+    const dashboardEntityIds = useMemo(
+        () => getEntityIdsForAreaIds(dashboardParentAreaIds, registryDevices, registryEntities),
+        [dashboardParentAreaIds, registryDevices, registryEntities],
+    );
+
+    const groupedLightMemberIds = useMemo(
+        () => collectGroupedLightMemberIds(
+            entities.filter((e) => e?.entity_id?.startsWith('light.')),
+        ),
+        [entities],
+    );
+
     const getAllActiveDevices = useCallback((type) => {
-        if (!registryAreas.length) return [];
+        if (!dashboardParentAreaIds.size) return [];
 
         const grouped = [];
+        const parentAreas = registryAreas.filter((a) => dashboardParentAreaIds.has(a.area_id));
 
-        registryAreas.forEach(area => {
+        parentAreas.forEach(area => {
             const areaDevices = registryDevices.filter(d => d.area_id === area.area_id);
             const areaDeviceIds = areaDevices.map(d => d.id);
 
-            const activeInRoom = registryEntities.filter(re => {
+            const roomEntities = registryEntities.filter(re => {
                 const directMatch = re.area_id === area.area_id;
                 const deviceMatch = re.device_id && areaDeviceIds.includes(re.device_id);
                 return directMatch || deviceMatch;
-            }).map(re => entities.find(e => e.entity_id === re.entity_id))
-                .filter(e => {
-                    if (!e) return false;
-                    if (type === 'lights') return e.entity_id.startsWith('light.') && e.state === 'on';
-                    if (type === 'ac') return e.entity_id.startsWith('climate.') && e.state !== 'off' && e.state !== 'unavailable';
+            }).map(re => {
+                const e = entities.find(e => e.entity_id === re.entity_id);
+                return e ? { ...e, device_id: re.device_id } : null;
+            }).filter(Boolean);
+
+            let activeInRoom;
+            if (type === 'ac') {
+                activeInRoom = filterPoweredOnClimates(roomEntities, entities);
+            } else {
+                activeInRoom = roomEntities.filter(e => {
+                    if (type === 'lights') {
+                        return (
+                            e.entity_id.startsWith('light.') &&
+                            e.state === 'on' &&
+                            isLightCountableUnit(e, groupedLightMemberIds)
+                        );
+                    }
                     if (type === 'doors') {
                         const mapping = sensorMappings.find(m => m.entity_id === e.entity_id);
-                        if (mapping && mapping.sensorType === 'door') return true;
-                        return false;
+                        return !!(mapping && mapping.sensorType === 'door');
                     }
                     return false;
                 });
+            }
 
             if (activeInRoom.length > 0) {
                 grouped.push({ title: area.name, data: activeInRoom });
@@ -983,7 +1034,7 @@ export default function DashboardV2() {
         });
 
         return grouped;
-    }, [registryAreas, registryDevices, registryEntities, entities, sensorMappings]);
+    }, [registryAreas, registryDevices, registryEntities, entities, sensorMappings, groupedLightMemberIds, dashboardParentAreaIds]);
 
     const { title: modalTitle, devices: modalDevices } = useMemo(() => {
         if (!activeBadgeType) return { title: '', devices: [] };
@@ -999,6 +1050,9 @@ export default function DashboardV2() {
             setSecurityModalVisible(true);
         } else if (type === 'locks') {
             setLocksModalVisible(true);
+        } else if (type === 'lights' || type === 'ac') {
+            setDevicesToggleKind(type);
+            setDevicesToggleVisible(true);
         } else {
             setActiveBadgeType(type);
             setModalVisible(true);
@@ -1023,10 +1077,6 @@ export default function DashboardV2() {
             console.warn('[LockArm] Failed to save to backend:', e.message);
         }
     }, [badgeConfig, connectionConfig]);
-
-    // Calculate Counts from Grouped Data (memoized — these are O(n*m) operations)
-    const activeLightsGrouped = useMemo(() => getAllActiveDevices('lights'), [getAllActiveDevices]);
-    const lightsOn = activeLightsGrouped.reduce((sum, group) => sum + group.data.length, 0);
 
     const activeACGrouped = useMemo(() => getAllActiveDevices('ac'), [getAllActiveDevices]);
     const acOn = activeACGrouped.reduce((sum, group) => sum + group.data.length, 0);
@@ -1087,10 +1137,15 @@ export default function DashboardV2() {
         // the device — once from the server push and once from this local call.
     }, [addNotification]);
 
-    const handleVoiceAssistantPress = useCallback(() => {
+    const handleVoiceAssistantPress = useCallback(async () => {
         const gate = canOpenButlerCall();
         if (!gate.ok) {
             Alert.alert('Voice not available', gate.error ?? 'Butler voice is not supported.');
+            return;
+        }
+        const micOk = await requestButlerMicPermission();
+        if (!micOk) {
+            Alert.alert('Microphone needed', 'Allow microphone access to talk to Butler.');
             return;
         }
         setShowButlerCall(true);
@@ -1267,22 +1322,32 @@ export default function DashboardV2() {
                         ),
                     );
                 } else {
-                    const optimisticState =
-                        serviceName === 'turn_on'  ? 'on'  :
-                        serviceName === 'turn_off' ? 'off' :
-                        serviceName === 'toggle'   ? null  :
-                        serviceName === 'media_pause' ? 'paused' :
-                        serviceName === 'media_play' ? 'playing' :
-                        null;
-
+                    // Only optimistically change state for services that actually mean a new entity state.
+                    // volume_*/remote.send_command/etc. must NOT fall through to on↔off toggle —
+                    // that was flipping Samsung TV "on"→"off" when adjusting volume and breaking play/pause.
                     setEntities((prev) => {
                         const index = prev.findIndex((e) => e.entity_id === entityId);
                         if (index === -1) return prev;
 
                         const current = prev[index];
-                        const nextState =
-                            optimisticState !== null ? optimisticState :
-                            (current.state === 'on' ? 'off' : 'on');
+                        let nextState = null;
+
+                        if (serviceName === 'turn_on') nextState = 'on';
+                        else if (serviceName === 'turn_off') nextState = 'off';
+                        else if (serviceName === 'toggle') {
+                            nextState = current.state === 'on' ? 'off' : 'on';
+                        } else if (serviceName === 'media_pause') {
+                            // Samsung often stays "on" — don't fake "paused" or the UI gets stuck.
+                            if (current.state === 'playing' || current.state === 'buffering') {
+                                nextState = 'paused';
+                            }
+                        } else if (serviceName === 'media_play') {
+                            if (current.state === 'paused' || current.state === 'idle') {
+                                nextState = 'playing';
+                            }
+                        }
+
+                        if (nextState == null || nextState === current.state) return prev;
 
                         const next = [...prev];
                         next[index] = { ...current, state: nextState };
@@ -1293,6 +1358,10 @@ export default function DashboardV2() {
             // ────────────────────────────────────────────────────────────────
 
             return service.current.callService(domain, serviceName, serviceData)
+                .then((result) => {
+                    console.log('[callService] OK', domain, serviceName, serviceData, result ?? null);
+                    return result;
+                })
                 .catch((err) => {
                     console.warn('[callService] Failed:', domain, serviceName, err?.message ?? err);
                     // Revert optimistic update on failure by re-fetching states
@@ -1330,6 +1399,7 @@ export default function DashboardV2() {
                 coverMappings,
                 coverWindows,
                 mediaMappings,
+                climateMappings,
                 haUrl: connectionConfig.url,
                 haToken: connectionConfig.token,
                 adminUrl: connectionConfig.adminUrl,
@@ -1393,11 +1463,12 @@ export default function DashboardV2() {
         if (tabId === 'tablet') {
             router.push('/dashboard-v2-tablet');
         } else if (tabId === 'butler') {
-            void handleVoiceAssistantPress();
+            setAiTabVisited(true);
+            setActiveTab('ai');
         } else {
             setActiveTab(tabId);
         }
-    }, [handleVoiceAssistantPress]);
+    }, []);
 
     const handleSettingChange = useCallback((key, val) => {
         if (key === 'showFamily') setShowFamily(val);
@@ -1461,18 +1532,13 @@ export default function DashboardV2() {
                 musicAssistantEntryIds,
             );
 
-            const activeLights = roomEntities.lights.filter(l => l.stateObj.state === 'on').length;
+            const activeLights = roomEntities.lights.filter(
+                (l) => l.stateObj?.state === 'on' && isLightCountableUnit(l, groupedLightMemberIds)
+            ).length;
 
-            const activeAC = roomEntities.climates.filter(c => {
-                const s = c.stateObj?.state;
-                return s && s !== 'off' && s !== 'unavailable';
-            }).length;
+            const activeAC = roomEntities.climates.filter(isClimatePoweredOn).length;
 
-            const activeCovers = roomEntities.covers.filter(c => {
-                const s = c.stateObj?.state;
-                const pos = c.stateObj?.attributes?.current_position;
-                return s && (s === 'open' || (pos && pos > 0));
-            }).length;
+            const activeCovers = roomEntities.covers.filter(c => isCoverUiOpen(c)).length;
 
             const activeDoors = roomEntities.doors.filter(d => {
                 const s = d.stateObj?.state?.toLowerCase();
@@ -1516,7 +1582,10 @@ export default function DashboardV2() {
                     ? room
                     : computeRoomStats(area);
                 merged.deviceCount += stats.deviceCount || 0;
-                merged.activeLights += stats.activeLights || 0;
+                // Lights badge = parent area only (sub-rooms like Toilet keep their own tab counts).
+                if (area.area_id === room.area_id) {
+                    merged.activeLights += stats.activeLights || 0;
+                }
                 merged.activeAC += stats.activeAC || 0;
                 merged.activeCovers += stats.activeCovers || 0;
                 merged.activeDoors += stats.activeDoors || 0;
@@ -1551,8 +1620,44 @@ export default function DashboardV2() {
         coverMappings,
         mediaMappings,
         musicAssistantEntryIds,
-        savedRoomOrder
+        savedRoomOrder,
+        groupedLightMemberIds,
     ]);
+
+    /**
+     * Lights for the modal — exact same entities each room card uses for badges.
+     * (Avoids registry/area mismatches that made the header count disagree with rooms.)
+     */
+    const roomLightsForModal = useMemo(() => {
+        const byId = new Map();
+        for (const room of roomsWithCounts) {
+            const lights = room._entities?.lights || [];
+            for (const l of lights) {
+                if (!isLightCountableUnit(l, groupedLightMemberIds)) continue;
+                if (byId.has(l.entity_id)) continue;
+                const stateObj = l.stateObj || entities.find((e) => e.entity_id === l.entity_id);
+                if (!stateObj || stateObj.state === 'unavailable') continue;
+                byId.set(l.entity_id, {
+                    entity_id: l.entity_id,
+                    state: stateObj.state,
+                    attributes: {
+                        ...(stateObj.attributes || {}),
+                        friendly_name: l.displayName
+                            || stateObj.attributes?.friendly_name
+                            || l.entity_id,
+                    },
+                    area_id: room.area_id,
+                });
+            }
+        }
+        return [...byId.values()];
+    }, [roomsWithCounts, groupedLightMemberIds, entities]);
+
+    // Header quantity = sum of room card badges (always matches rooms)
+    const lightsOn = useMemo(
+        () => roomsWithCounts.reduce((sum, r) => sum + (r.activeLights || 0), 0),
+        [roomsWithCounts],
+    );
 
     const butlerVoiceContext = useMemo(() => ({
         userName,
@@ -1761,6 +1866,26 @@ export default function DashboardV2() {
                     onArmToggle={handleLockArmToggle}
                     adminUrl={connectionConfig.adminUrl}
                     haToken={connectionConfig.token}
+                />
+            )}
+
+            {devicesToggleVisible && (
+                <DevicesToggleModal
+                    visible={devicesToggleVisible}
+                    kind={devicesToggleKind}
+                    devices={
+                        devicesToggleKind === 'lights'
+                            ? roomLightsForModal
+                            : entities.filter(
+                                (e) => e.entity_id.startsWith('climate.') && dashboardEntityIds.has(e.entity_id),
+                            )
+                    }
+                    rooms={roomsWithCounts}
+                    registryAreas={registryAreas}
+                    registryDevices={registryDevices}
+                    registryEntities={registryEntities}
+                    onClose={() => setDevicesToggleVisible(false)}
+                    onToggle={callService}
                 />
             )}
 
@@ -2007,11 +2132,21 @@ export default function DashboardV2() {
             {/* ===== CCTV TAB — WebViews only rendered when active (too heavy to keep in background) ===== */}
             <View style={[{ flex: 1 }, activeTab !== 'cctv' && { display: 'none' }]}>
                 {activeTab === 'cctv' ? (
-                    frigateCameras.length === 0 ? <DashboardSkeleton /> : (
+                    !frigateConfigResolved ? (
+                        <DashboardSkeleton />
+                    ) : frigateCameras.length === 0 ? (
+                        <View style={{ flex: 1, marginTop: 60, paddingHorizontal: 20 }}>
+                            <Text style={styles.sectionTitle}>Surveillance</Text>
+                            <Text style={styles.cctvEmptyText}>No cameras yet</Text>
+                            <Text style={styles.cctvEmptyHint}>
+                                Cameras are optional. Add Frigate or Home Assistant cameras when you have them.
+                            </Text>
+                        </View>
+                    ) : (
                         <View style={{ flex: 1, marginTop: 60 }}>
                             {/* Cameras / Events toggle */}
                             <View style={styles.cctvToggleRow}>
-                                <Text style={styles.sectionTitle}>Security Cameras</Text>
+                                <Text style={styles.sectionTitle}>Surveillance</Text>
                                 <View style={styles.cctvToggle}>
                                     <TouchableOpacity
                                         style={[styles.cctvToggleBtn, cctvView === 'cameras' && styles.cctvToggleBtnActive]}
@@ -2188,7 +2323,7 @@ const styles = StyleSheet.create({
     sectionTitle: {
         color: 'white',
         fontSize: 24,
-        fontWeight: 'bold',
+        fontFamily: CF.bold,
         marginBottom: 20,
     },
     cctvToggleRow: {
@@ -2221,6 +2356,18 @@ const styles = StyleSheet.create({
     },
     cctvToggleTextActive: {
         color: '#c49ef0',
+    },
+    cctvEmptyText: {
+        color: 'rgba(255,255,255,0.7)',
+        fontSize: 16,
+        fontFamily: CF.medium,
+        marginTop: 8,
+    },
+    cctvEmptyHint: {
+        color: 'rgba(255,255,255,0.4)',
+        fontSize: 13,
+        marginTop: 6,
+        lineHeight: 18,
     },
     centerContent: {
         alignItems: 'center',

@@ -2,18 +2,21 @@ import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
 import ButlerVoiceModal from '../components/DashboardV2/ButlerVoiceModal';
-import { canOpenButlerCall, runButlerBackgroundSetup } from '../services/butler/openButlerCall';
+import { canOpenButlerCall, requestButlerMicPermission, runButlerBackgroundSetup } from '../services/butler/openButlerCall';
 import { getButlerBackendUrl } from '../utils/butlerBackend';
 import { fetchEnrichedLightMappings } from '../utils/lightMappingsClient';
+import { CF } from '../utils/typography';
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator, InteractionManager, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import HeaderV2 from '../components/DashboardV2/HeaderV2';
+import AccountSwitcherModal from '../components/DashboardV2/AccountSwitcherModal';
 import StatusBadges from '../components/DashboardV2/StatusBadges';
 import PersonBadges from '../components/DashboardV2/PersonBadges';
 import ActiveDevicesModal from '../components/DashboardV2/ActiveDevicesModal';
+import DevicesToggleModal from '../components/DashboardV2/DevicesToggleModal';
 import SettingsView from '../components/DashboardV2/SettingsView';
 import { HAService } from '../services/ha';
 import { applyHaStateChangedEvent, applyClimateServiceToEntity } from '../utils/haEntityMerge';
@@ -40,7 +43,14 @@ import { LockOpen } from 'lucide-react-native';
 import { FrigateService } from '../services/frigate';
 import * as SecureStore from 'expo-secure-store';
 import { startHeartbeat, stopHeartbeat, updateAppState } from '../services/heartbeat';
-import { getRoomEntities } from '../utils/roomHelpers';
+import { getRoomEntities, getEntityIdsForAreaIds } from '../utils/roomHelpers';
+import { filterPoweredOnClimates, isClimatePoweredOn } from '../utils/acPowerSwitch';
+import { isCoverUiOpen } from '../utils/coverWindows';
+import {
+    collectGroupedLightMemberIds,
+    isLightCountableUnit,
+    countActiveCountableLights,
+} from '../utils/lightCapabilities';
 import {
     filterParentRoomsForDashboard,
     getRoomAreaGroup,
@@ -50,7 +60,9 @@ import { setRoomPageBootstrap } from '../utils/roomPageBootstrap';
 
 export default function DashboardV2Tablet() {
     const router = useRouter();
-    const { userName, userId } = useLocalSearchParams();
+    const { userName: userNameParam, userId: userIdParam } = useLocalSearchParams();
+    const userName = Array.isArray(userNameParam) ? userNameParam[0] : userNameParam;
+    const userId = Array.isArray(userIdParam) ? userIdParam[0] : userIdParam;
     const { isTablet, isLandscape, columns } = useDeviceType();
     const homeColumns = 4;
     const homeRoomColumns = 6;
@@ -62,6 +74,7 @@ export default function DashboardV2Tablet() {
         adminUrl: '',
         loaded: false
     });
+    const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
 
     const service = useRef(null);
     const frigateService = useRef(null); // Frigate Service Ref
@@ -173,6 +186,26 @@ export default function DashboardV2Tablet() {
         setShowFrigateModal(true);
     };
 
+    const handleAccountSwitched = useCallback(async (account) => {
+        setConnectionConfig({ url: '', token: '', adminUrl: '', loaded: false });
+        setEntities([]);
+        setActiveTab('tablet');
+        setRoomSheetVisible(false);
+        setSelectedRoom(null);
+        router.setParams({
+            userName: account?.name || '',
+            userId: account?.userId || '',
+            switchKey: String(Date.now()),
+        });
+        setTimeout(() => {
+            loadConnectionConfig();
+        }, 0);
+    }, [router]);
+
+    const handleAddAccount = useCallback(() => {
+        router.push({ pathname: '/login', params: { mode: 'addAccount' } });
+    }, [router]);
+
     // Registry Data
     const [registryDevices, setRegistryDevices] = useState([]);
     const [registryEntities, setRegistryEntities] = useState([]);
@@ -187,6 +220,7 @@ export default function DashboardV2Tablet() {
     const [sensorMappings, setSensorMappings] = useState([]);
     const [coverMappings, setCoverMappings] = useState([]);
     const [coverWindows, setCoverWindows] = useState([]);
+    const [climateMappings, setClimateMappings] = useState([]);
     const [musicAssistantEntryIds, setMusicAssistantEntryIds] = useState([]);
 
     const mappingsAbortRef = useRef(null);
@@ -261,7 +295,7 @@ export default function DashboardV2Tablet() {
         // 5. Covers
         const coverUrl = `${baseUrl}api/covers?t=${Date.now()}`;
         console.log('[Dashboard] Fetching cover mappings...');
-        fetch(coverUrl, { signal: controller.signal })
+        fetch(coverUrl, { signal: controller.signal, headers: authHeaders })
             .then(res => res.json())
             .then(data => {
                 if (data.success && Array.isArray(data.covers)) {
@@ -271,6 +305,19 @@ export default function DashboardV2Tablet() {
                 }
             })
             .catch(e => { if (e.name !== 'AbortError') console.log("Cover Mappings Error", e); });
+
+        // 6. Climate damper mappings
+        const climateUrl = `${baseUrl}api/climate-mappings?t=${Date.now()}`;
+        fetch(climateUrl, { signal: controller.signal, headers: authHeaders })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success && Array.isArray(data.climates)) {
+                    const withDamper = data.climates.filter(c => c.damperEntityId);
+                    console.log(`[Climate Mappings] Loaded: ${data.climates.length} (${withDamper.length} with damper)`, withDamper);
+                    setClimateMappings(data.climates);
+                }
+            })
+            .catch(e => { if (e.name !== 'AbortError') console.log('Climate Mappings Error', e); });
     };
 
     // ... (rest of useEffects)
@@ -372,6 +419,17 @@ export default function DashboardV2Tablet() {
                 })
                 .catch(e => { if (e.name !== 'AbortError') console.log("Cover Mappings Error", e); });
 
+            // Fetch Climate damper mappings
+            const climateUrl = (adminUrl.endsWith('/') ? `${adminUrl}api/climate-mappings` : `${adminUrl}/api/climate-mappings`);
+            fetch(climateUrl, { signal: configAbort.signal })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.success && Array.isArray(data.climates)) {
+                        setClimateMappings(data.climates);
+                    }
+                })
+                .catch(e => { if (e.name !== 'AbortError') console.log('Climate Mappings Error', e); });
+
         }
 
         // 2. Connect to Home Assistant
@@ -471,6 +529,8 @@ export default function DashboardV2Tablet() {
 
     // Active Devices Modal State
     const [modalVisible, setModalVisible] = useState(false);
+    const [devicesToggleVisible, setDevicesToggleVisible] = useState(false);
+    const [devicesToggleKind, setDevicesToggleKind] = useState('lights');
     const [securityModalVisible, setSecurityModalVisible] = useState(false);
 
     const [activeBadgeType, setActiveBadgeType] = useState(null); // 'lights', 'ac', 'doors'
@@ -484,37 +544,66 @@ export default function DashboardV2Tablet() {
     const [cardColor, setCardColor] = useState('#000000');
     const [settingsModalVisible, setSettingsModalVisible] = useState(false);
 
+    const dashboardParentAreaIds = useMemo(() => {
+        const selected = getSelectedAreasForDashboard(registryAreas, badgeConfig);
+        const parents = filterParentRoomsForDashboard(selected, registryAreas, badgeConfig);
+        return new Set(parents.map((p) => p.area_id).filter(Boolean));
+    }, [registryAreas, badgeConfig]);
+
+    const dashboardEntityIds = useMemo(
+        () => getEntityIdsForAreaIds(dashboardParentAreaIds, registryDevices, registryEntities),
+        [dashboardParentAreaIds, registryDevices, registryEntities],
+    );
+
     // Derived Logic for Badges
     const getAllActiveDevices = (type) => {
-        if (!registryAreas.length) return [];
+        if (!dashboardParentAreaIds.size) return [];
 
         const grouped = [];
+        const parentAreas = registryAreas.filter((a) => dashboardParentAreaIds.has(a.area_id));
 
-        registryAreas.forEach(area => {
+        parentAreas.forEach(area => {
             // Find all entities associated with this area (directly or via device)
             const areaDevices = registryDevices.filter(d => d.area_id === area.area_id);
             const areaDeviceIds = areaDevices.map(d => d.id);
 
-            const activeInRoom = registryEntities.filter(re => {
+            const roomLightEntities = registryEntities.filter(re => {
+                if (!re.entity_id?.startsWith('light.')) return false;
                 const directMatch = re.area_id === area.area_id;
                 const deviceMatch = re.device_id && areaDeviceIds.includes(re.device_id);
                 return directMatch || deviceMatch;
-            }).map(re => entities.find(e => e.entity_id === re.entity_id))
-                .filter(e => {
-                    if (!e) return false;
-                    if (type === 'lights') return e.entity_id.startsWith('light.') && e.state === 'on';
-                    if (type === 'ac') return e.entity_id.startsWith('climate.') && e.state !== 'off' && e.state !== 'unavailable';
+            }).map(re => entities.find(e => e.entity_id === re.entity_id)).filter(Boolean);
+
+            const roomGroupedMemberIds = collectGroupedLightMemberIds(roomLightEntities);
+
+            const roomEntities = registryEntities.filter(re => {
+                const directMatch = re.area_id === area.area_id;
+                const deviceMatch = re.device_id && areaDeviceIds.includes(re.device_id);
+                return directMatch || deviceMatch;
+            }).map(re => {
+                const e = entities.find(e => e.entity_id === re.entity_id);
+                return e ? { ...e, device_id: re.device_id } : null;
+            }).filter(Boolean);
+
+            let activeInRoom;
+            if (type === 'ac') {
+                activeInRoom = filterPoweredOnClimates(roomEntities, entities);
+            } else {
+                activeInRoom = roomEntities.filter(e => {
+                    if (type === 'lights') {
+                        return (
+                            e.entity_id.startsWith('light.') &&
+                            e.state === 'on' &&
+                            isLightCountableUnit(e, roomGroupedMemberIds)
+                        );
+                    }
                     if (type === 'doors') {
-                        // Use explicit mapping only
                         const mapping = sensorMappings.find(m => m.entity_id === e.entity_id);
-                        if (mapping && mapping.sensorType === 'door') {
-                            // in the modal, we want ALL doors, not just open ones
-                            return true;
-                        }
-                        return false;
+                        return !!(mapping && mapping.sensorType === 'door');
                     }
                     return false;
                 });
+            }
 
             if (activeInRoom.length > 0) {
                 grouped.push({
@@ -546,18 +635,18 @@ export default function DashboardV2Tablet() {
     const handleBadgePress = (type) => {
         if (type === 'security') {
             setSecurityModalVisible(true);
+        } else if (type === 'lights' || type === 'ac') {
+            setDevicesToggleKind(type);
+            setDevicesToggleVisible(true);
+        } else if (type === 'locks') {
+            setActiveBadgeType(type);
+            setModalVisible(true);
         } else {
             setActiveBadgeType(type);
             setModalVisible(true);
         }
     };
 
-    // Calculate Counts from Grouped Data
-    const activeLightsGrouped = getAllActiveDevices('lights');
-    const lightsOn = activeLightsGrouped.reduce((sum, group) => sum + group.data.length, 0);
-
-    const activeACGrouped = getAllActiveDevices('ac');
-    const acOn = activeACGrouped.reduce((sum, group) => sum + group.data.length, 0);
 
     // Count OPEN doors specifically for the badge number
     const doorsOpen = entities.filter(e => {
@@ -753,7 +842,12 @@ export default function DashboardV2Tablet() {
                     ),
                 );
             }
-            return service.current.callService(domain, serviceName, serviceData).catch(err => {
+            return service.current.callService(domain, serviceName, serviceData)
+                .then(result => {
+                    console.log('[callService] OK', domain, serviceName, serviceData, result ?? null);
+                    return result;
+                })
+                .catch(err => {
                 console.warn('[callService] Failed:', domain, serviceName, err?.message ?? err);
                 return Promise.reject(err);
             });
@@ -792,6 +886,7 @@ export default function DashboardV2Tablet() {
                 coverMappings,
                 coverWindows,
                 mediaMappings,
+                climateMappings,
                 haUrl: connectionConfig.url,
                 haToken: connectionConfig.token,
                 adminUrl: connectionConfig.adminUrl,
@@ -844,7 +939,7 @@ export default function DashboardV2Tablet() {
         if (tabId === 'home') {
             router.push('/dashboard-v2');
         } else if (tabId === 'butler') {
-            void handleVoiceAssistantPress();
+            setActiveTab('ai');
         } else {
             setActiveTab(tabId);
         }
@@ -897,18 +992,11 @@ export default function DashboardV2Tablet() {
                 musicAssistantEntryIds,
             );
 
-            const activeLights = roomEntities.lights.filter(l => l.stateObj.state === 'on').length;
+            const activeLights = countActiveCountableLights(roomEntities.lights);
 
-            const activeAC = roomEntities.climates.filter(c => {
-                const s = c.stateObj?.state;
-                return s && s !== 'off' && s !== 'unavailable';
-            }).length;
+            const activeAC = roomEntities.climates.filter(isClimatePoweredOn).length;
 
-            const activeCovers = roomEntities.covers.filter(c => {
-                const s = c.stateObj?.state;
-                const pos = c.stateObj?.attributes?.current_position;
-                return s && (s === 'open' || (pos && pos > 0));
-            }).length;
+            const activeCovers = roomEntities.covers.filter(c => isCoverUiOpen(c)).length;
 
             const activeDoors = roomEntities.doors.filter(d => {
                 const s = d.stateObj?.state?.toLowerCase();
@@ -952,7 +1040,10 @@ export default function DashboardV2Tablet() {
                     ? room
                     : computeRoomStats(area);
                 merged.deviceCount += stats.deviceCount || 0;
-                merged.activeLights += stats.activeLights || 0;
+                // Lights badge = parent area only (sub-rooms like Toilet keep their own tab counts).
+                if (area.area_id === room.area_id) {
+                    merged.activeLights += stats.activeLights || 0;
+                }
                 merged.activeAC += stats.activeAC || 0;
                 merged.activeCovers += stats.activeCovers || 0;
                 merged.activeDoors += stats.activeDoors || 0;
@@ -987,8 +1078,43 @@ export default function DashboardV2Tablet() {
         coverMappings,
         mediaMappings,
         musicAssistantEntryIds,
-        savedRoomOrder
+        savedRoomOrder,
     ]);
+
+    const roomLightsForModal = useMemo(() => {
+        const byId = new Map();
+        for (const room of roomsWithCounts) {
+            const lights = room._entities?.lights || [];
+            const roomGroupedMemberIds = collectGroupedLightMemberIds(lights);
+            for (const l of lights) {
+                if (!isLightCountableUnit(l, roomGroupedMemberIds)) continue;
+                if (byId.has(l.entity_id)) continue;
+                const stateObj = l.stateObj || entities.find((e) => e.entity_id === l.entity_id);
+                if (!stateObj || stateObj.state === 'unavailable') continue;
+                byId.set(l.entity_id, {
+                    entity_id: l.entity_id,
+                    state: stateObj.state,
+                    attributes: {
+                        ...(stateObj.attributes || {}),
+                        friendly_name: l.displayName
+                            || stateObj.attributes?.friendly_name
+                            || l.entity_id,
+                    },
+                    area_id: room.area_id,
+                });
+            }
+        }
+        return [...byId.values()];
+    }, [roomsWithCounts, entities]);
+
+    const lightsOn = useMemo(
+        () => roomsWithCounts.reduce((sum, r) => sum + (r.activeLights || 0), 0),
+        [roomsWithCounts],
+    );
+    const acOn = useMemo(
+        () => roomsWithCounts.reduce((sum, r) => sum + (r.activeAC || 0), 0),
+        [roomsWithCounts],
+    );
 
     const butlerVoiceContext = useMemo(() => ({
         userName,
@@ -999,10 +1125,15 @@ export default function DashboardV2Tablet() {
         })),
     }), [userName, roomsWithCounts]);
 
-    const handleVoiceAssistantPress = useCallback(() => {
+    const handleVoiceAssistantPress = useCallback(async () => {
         const gate = canOpenButlerCall();
         if (!gate.ok) {
             Alert.alert('Voice not available', gate.error ?? 'Butler voice is not supported.');
+            return;
+        }
+        const micOk = await requestButlerMicPermission();
+        if (!micOk) {
+            Alert.alert('Microphone needed', 'Allow microphone access to talk to Butler.');
             return;
         }
         setShowButlerCall(true);
@@ -1061,7 +1192,8 @@ export default function DashboardV2Tablet() {
         });
     };
 
-    const sidebarPadding = isLandscape ? { paddingLeft: 80 } : {};
+    // Sidebar is 80px wide — add a gutter so content isn't flush against it
+    const sidebarPadding = isLandscape ? { paddingLeft: 108 } : {};
 
     const renderContent = () => {
         if (activeTab === 'home' || activeTab === 'tablet') {
@@ -1074,6 +1206,7 @@ export default function DashboardV2Tablet() {
                         entities={entities}
                         config={badgeConfig}
                         onRoomPress={handleHeaderRoomPress}
+                        onUserPress={() => setShowAccountSwitcher(true)}
                     />
                     <StatusBadges
                         securityState={securityState}
@@ -1407,13 +1540,24 @@ export default function DashboardV2Tablet() {
             return (
                 <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
                     <View style={{ marginTop: 60 }}>
-                        <Text style={styles.sectionTitle}>Security Cameras</Text>
-                        <CamerasList
-                            frigateCameras={frigateCameras}
-                            service={frigateService.current}
-                            onCameraPress={handleFrigateCameraPress}
-                            columns={columns}
-                        />
+                        <Text style={styles.sectionTitle}>Surveillance</Text>
+                        {frigateCameras.length === 0 ? (
+                            <>
+                                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 16, marginTop: 8 }}>
+                                    No cameras yet
+                                </Text>
+                                <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, marginTop: 6, lineHeight: 18 }}>
+                                    Cameras are optional. Add Frigate or Home Assistant cameras when you have them.
+                                </Text>
+                            </>
+                        ) : (
+                            <CamerasList
+                                frigateCameras={frigateCameras}
+                                service={frigateService.current}
+                                onCameraPress={handleFrigateCameraPress}
+                                columns={columns}
+                            />
+                        )}
                     </View>
                 </ScrollView>
             );
@@ -1492,6 +1636,13 @@ export default function DashboardV2Tablet() {
             />
             <StatusBar style="light" />
 
+            <AccountSwitcherModal
+                visible={showAccountSwitcher}
+                onClose={() => setShowAccountSwitcher(false)}
+                onSwitched={handleAccountSwitched}
+                onAddAccount={handleAddAccount}
+            />
+
             {securityModalVisible && (
                 <SecurityControlModal
                     visible={securityModalVisible}
@@ -1510,6 +1661,26 @@ export default function DashboardV2Tablet() {
                         setModalVisible(false);
                         setActiveBadgeType(null);
                     }}
+                    onToggle={callService}
+                />
+            )}
+
+            {devicesToggleVisible && (
+                <DevicesToggleModal
+                    visible={devicesToggleVisible}
+                    kind={devicesToggleKind}
+                    devices={
+                        devicesToggleKind === 'lights'
+                            ? roomLightsForModal
+                            : entities.filter(
+                                (e) => e.entity_id.startsWith('climate.') && dashboardEntityIds.has(e.entity_id),
+                            )
+                    }
+                    rooms={roomsWithCounts}
+                    registryAreas={registryAreas}
+                    registryDevices={registryDevices}
+                    registryEntities={registryEntities}
+                    onClose={() => setDevicesToggleVisible(false)}
                     onToggle={callService}
                 />
             )}
@@ -1558,11 +1729,13 @@ export default function DashboardV2Tablet() {
                 <TabletSidebar activeTab={activeTab} onTabPress={handleTabPress} />
             ) : (
                 activeTab !== 'ai' && (
-                    <TabBar
-                        activeTab={activeTab}
-                        onTabPress={handleTabPress}
-                        butlerActive={showButlerCall}
-                    />
+                    <View style={{ ...StyleSheet.absoluteFillObject, zIndex: 10000, elevation: 10000 }} pointerEvents="box-none">
+                        <TabBar
+                            activeTab={activeTab}
+                            onTabPress={handleTabPress}
+                            butlerActive={showButlerCall}
+                        />
+                    </View>
                 )
             )}
 
@@ -1588,6 +1761,7 @@ export default function DashboardV2Tablet() {
                     sensorMappings={sensorMappings}
                     coverMappings={coverMappings}
                     coverWindows={coverWindows}
+                    climateMappings={climateMappings}
                     musicAssistantEntryIds={musicAssistantEntryIds}
                     browseMedia={(entityId, mediaContentType, mediaContentId) =>
                         service.current?.browseMedia?.(entityId, mediaContentType, mediaContentId)
@@ -1639,7 +1813,7 @@ const styles = StyleSheet.create({
     sectionTitle: {
         color: 'white',
         fontSize: 24,
-        fontWeight: 'bold',
+        fontFamily: CF.bold,
         marginBottom: 20,
     },
     centerContent: {
@@ -1674,7 +1848,7 @@ const styles = StyleSheet.create({
     },
     statusText: {
         color: '#fff',
-        fontWeight: 'bold',
+        fontFamily: CF.bold,
         fontSize: 16
     }
 });

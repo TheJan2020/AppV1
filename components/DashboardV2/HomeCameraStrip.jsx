@@ -7,6 +7,7 @@ import { WebView } from 'react-native-webview';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Edit2, Check, X, Search } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
+import { formatCameraName } from '../../utils/formatDisplayName';
 import { authFetch } from '../../utils/authFetch';
 import ModalBackdrop from '../ModalBackdrop';
 import CameraSensorOverlay, { buildEntityMap, resolveSensorIds } from './CameraSensorOverlay';
@@ -109,7 +110,7 @@ const CameraCard = ({ cam, frigateService, onPress, isOnline = true, sensorIds =
 
             <View style={styles.textContainer}>
                 <Text style={styles.cameraName} numberOfLines={1}>
-                    {cam.name || cam.id}
+                    {formatCameraName(cam.name || cam.id)}
                 </Text>
             </View>
             <CameraSensorOverlay sensorIds={sensorIds} entityMap={entityMap} position="tl" />
@@ -182,8 +183,7 @@ function EditCamerasModal({ visible, onClose, adminUrl, onSave }) {
                 setSelected(new Set(savedSet));
             })
             .catch(e => {
-                console.warn('[HomeCameraStrip] fetch cameras error:', e);
-                Alert.alert('Error', 'Could not load cameras from server.');
+                console.warn('[HomeCameraStrip] fetch cameras skipped:', e?.message || e);
             })
             .finally(() => setLoading(false));
     }, [visible, adminUrl]);
@@ -287,7 +287,7 @@ function EditCamerasModal({ visible, onClose, adminUrl, onSave }) {
                                         activeOpacity={0.7}
                                     >
                                         <Text style={modal.rowLabel} numberOfLines={1}>
-                                            {item.friendly_name}
+                                            {formatCameraName(item.friendly_name || item.entity_id)}
                                         </Text>
                                         <View style={[modal.checkCircle, isSelected && modal.checkCircleOn]}>
                                             {isSelected && <Check size={12} color="#fff" strokeWidth={3} />}

@@ -1,38 +1,15 @@
-import { useEffect, useState } from 'react';
-import { View } from 'react-native';
-import Svg, { Path, SvgXml } from 'react-native-svg';
-import { Asset } from 'expo-asset';
-import * as FileSystem from 'expo-file-system/legacy';
+import Svg, { Path } from 'react-native-svg';
 
 export const TAB_ICON_SIZE = 24;
 
-const BUTLER_SVG = require('../../assets/butler-white.svg');
-
-let cachedButlerXml = null;
-let butlerXmlPromise = null;
-
-function loadButlerSvgXml() {
-    if (cachedButlerXml) return Promise.resolve(cachedButlerXml);
-    if (!butlerXmlPromise) {
-        butlerXmlPromise = (async () => {
-            const asset = Asset.fromModule(BUTLER_SVG);
-            await asset.downloadAsync();
-            const uri = asset.localUri ?? asset.uri;
-            cachedButlerXml = await FileSystem.readAsStringAsync(uri);
-            return cachedButlerXml;
-        })();
-    }
-    return butlerXmlPromise;
-}
-
-/** Butler text chat — speech bubble */
+/** Butler / AI chat — from assets/new_ai.svg */
 export function ButlerChatIcon({ color, size = TAB_ICON_SIZE }) {
     return (
         <Svg width={size} height={size} viewBox="0 0 26.59 21.42" fill="none">
             <Path
                 d="M24.68,14.75c.92-1.35,1.45-2.88,1.45-4.51C26.13,4.84,20.38.46,13.29.46S.46,4.84.46,10.25s5.75,9.79,12.84,9.79c2.4,0,4.64-.51,6.57-1.39l5.4,2.08-.57-5.97Z"
                 stroke={color}
-                strokeWidth={1}
+                strokeWidth={0.91}
                 strokeMiterlimit={10}
                 fill="none"
             />
@@ -40,34 +17,9 @@ export function ButlerChatIcon({ color, size = TAB_ICON_SIZE }) {
     );
 }
 
-/** Butler voice — white SVG asset; `color` retints the fill when selected */
+/** Footer Butler tab icon (new_ai.svg chat bubble) */
 export function ButlerIcon({ color = '#FFFFFF', size = TAB_ICON_SIZE }) {
-    const [xml, setXml] = useState(cachedButlerXml);
-
-    useEffect(() => {
-        if (cachedButlerXml) return;
-        loadButlerSvgXml()
-            .then(setXml)
-            .catch((err) => console.warn('[ButlerIcon] failed to load SVG', err?.message ?? err));
-    }, []);
-
-    if (!xml) {
-        return <View style={{ width: size, height: size }} accessibilityLabel="Butler" />;
-    }
-
-    const tintedXml =
-        color && color.toLowerCase() !== '#ffffff'
-            ? xml.replace(/fill="#ffffff"/gi, `fill="${color}"`).replace(/fill="#fff"/gi, `fill="${color}"`)
-            : xml;
-
-    return (
-        <SvgXml
-            xml={tintedXml}
-            width={size}
-            height={size}
-            opacity={1}
-        />
-    );
+    return <ButlerChatIcon color={color} size={size} />;
 }
 
 export function CameraIcon({ color, size = TAB_ICON_SIZE }) {

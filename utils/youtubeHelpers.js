@@ -41,30 +41,33 @@ export function isValidYouTubeUrl(url) {
 /**
  * Format YouTube URL for specific media player type
  * @param {string} videoId - YouTube video ID
- * @param {string} playerType - 'appletv' or 'lgtv' or 'default'
+ * @param {string} playerType - 'appletv' | 'lgtv' | 'samsung' | 'default'
  * @returns {string} - Formatted URL
  */
 export function formatYouTubeUrl(videoId, playerType = 'default') {
     if (playerType === 'appletv') {
         // Apple TV uses youtube:// protocol
         return `youtube://www.youtube.com/watch?v=${videoId}`;
-    } else {
-        // LG TV and others use standard HTTPS URL
-        return `https://www.youtube.com/watch?v=${videoId}`;
     }
+    // LG, Samsung, and others use standard HTTPS URL
+    return `https://www.youtube.com/watch?v=${videoId}`;
 }
 
 /**
  * Detect media player type from entity_id
  * @param {string} entityId - Media player entity ID
- * @returns {string} - Player type: 'appletv', 'lgtv', or 'default'
+ * @returns {string} - Player type: 'appletv' | 'lgtv' | 'samsung' | 'default'
  */
 export function detectPlayerType(entityId) {
-    const id = entityId.toLowerCase();
+    const id = String(entityId || '').toLowerCase();
 
     if (id.includes('apple_tv') || id.includes('appletv')) {
         return 'appletv';
-    } else if (id.includes('lg') || id.includes('webos')) {
+    }
+    if (id.includes('samsung') || id.includes('smartthings_tv')) {
+        return 'samsung';
+    }
+    if (id.includes('webos') || id.includes('lg_tv') || /(?:^|\.|_)lg(?:_|\.|$)/.test(id)) {
         return 'lgtv';
     }
 

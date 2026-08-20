@@ -31,7 +31,10 @@ function TabletSidebar({ activeTab, onTabPress }) {
                             activeOpacity={0.7}
                         >
                             {tab.id === 'butler' ? (
-                                <ButlerIcon active={isActive} size={TAB_ICON_SIZE} />
+                                <ButlerIcon
+                                    color={isActive ? '#fff' : 'rgba(255, 255, 255, 0.4)'}
+                                    size={TAB_ICON_SIZE}
+                                />
                             ) : (
                                 <Icon
                                     size={24}
@@ -57,7 +60,8 @@ const styles = StyleSheet.create({
         left: 0,
         top: 0,
         bottom: 0,
-        zIndex: 10,
+        zIndex: 10000,
+        elevation: 10000,
         borderRightWidth: 1,
         borderRightColor: 'rgba(255,255,255,0.05)',
     },

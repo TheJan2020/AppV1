@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Modal, FlatList, KeyboardAvoidingView, Platform, ScrollView, Keyboard, TouchableWithoutFeedback, Linking } from 'react-native';
-import { useRouter } from 'expo-router';
+import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Modal, FlatList, KeyboardAvoidingView, Platform, ScrollView, Keyboard, TouchableWithoutFeedback, Linking, Dimensions } from 'react-native';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import { Colors } from '../constants/Colors';
@@ -9,6 +9,7 @@ import { scanNetwork } from '../utils/discovery';
 import { HAService } from '../services/ha';
 import { validateCredentials } from '../services/auth';
 import { registerForPushNotificationsAsync } from '../services/notifications';
+import { upsertAccountAndActivate } from '../services/accounts';
 import ModalBackdrop from '../components/ModalBackdrop';
 
 const SETTINGS_KEY_PROFILES = 'ha_profiles';
@@ -20,6 +21,9 @@ const generateId = () => Math.random().toString(36).substring(2, 15) + Math.rand
 
 export default function Login() {
     const router = useRouter();
+    const params = useLocalSearchParams();
+    const modeParam = Array.isArray(params?.mode) ? params.mode[0] : params?.mode;
+    const isAddAccount = modeParam === 'addAccount';
     const service = useRef(null);
     const passwordInputRef = useRef(null);
     const scrollViewRef = useRef(null);
@@ -53,6 +57,8 @@ export default function Login() {
     const [isLoggingIn, setIsLoggingIn] = useState(false);
     const [isBiometricSupported, setIsBiometricSupported] = useState(false);
     const [faceIdEnabled, setFaceIdEnabled] = useState(false);
+    const [faceIdReady, setFaceIdReady] = useState(false); // don't persist until loaded
+    const [hasSavedBiometricCreds, setHasSavedBiometricCreds] = useState(false);
     const [isReturningUser, setIsReturningUser] = useState(false);
 
     // Profile Management State
@@ -87,15 +93,27 @@ export default function Login() {
 
     // Auto-connect when connection details change
     useEffect(() => {
-        if (haUrl && haToken && users.length === 0) {
-            connectAndFetchUsers();
-        } else if (haUrl && !haToken && users.length === 0) {
-            // No token in profile — we can still allow login with username/password
-            // Set a placeholder user so the username input is shown and Login button is enabled
+        if (haUrl && haToken) {
+            // Always (re)fetch when URL/token are ready — don't rely on users.length,
+            // which can get stuck after a failed/partial load or add-account push.
+            fetchUsersFromHa();
+        } else if (haUrl && !haToken) {
+            // No token in profile — username/password login only
             setUsers([{ id: 'manual', name: 'Manual Login' }]);
             setSelectedUser({ id: 'manual', name: 'Manual Login' });
+            setLoadingUsers(false);
         }
-    }, [haUrl, haToken, users.length]);
+    }, [haUrl, haToken]);
+
+    // Add-account opens login while dashboard still holds a WebSocket — force a fresh fetch.
+    useEffect(() => {
+        if (!isAddAccount) return;
+        if (haUrl && haToken) {
+            setUsers([]);
+            setSelectedUser(null);
+            fetchUsersFromHa();
+        }
+    }, [isAddAccount]);
 
     const checkBiometrics = async () => {
         const compatible = await LocalAuthentication.hasHardwareAsync();
@@ -105,9 +123,18 @@ export default function Login() {
 
     const loadSettings = async () => {
         try {
-            // Load FaceID setting
+            // Load FaceID setting BEFORE any write — mount must not overwrite with false
             const savedFaceId = await SecureStore.getItemAsync('face_id_enabled');
-            if (savedFaceId === 'true') setFaceIdEnabled(true);
+            const enabled = savedFaceId === 'true';
+            setFaceIdEnabled(enabled);
+            setFaceIdReady(true);
+
+            const savedPass = await SecureStore.getItemAsync('saved_password');
+            const savedUser = await SecureStore.getItemAsync('saved_username');
+            setHasSavedBiometricCreds(!!(savedPass && savedUser));
+
+            // Prefill username for returning Face ID users (button no longer requires typing)
+            if (savedUser) setUsername(savedUser);
 
             // Check if returning user
             const hasLoggedInBefore = await SecureStore.getItemAsync('has_logged_in_before');
@@ -178,6 +205,7 @@ export default function Login() {
 
         } catch (e) {
             console.log('Error loading settings:', e);
+            setFaceIdReady(true);
         }
     };
 
@@ -283,27 +311,94 @@ export default function Login() {
         setUsername('');
     };
 
-    const handleSaveFaceId = async () => {
+    const handleSaveFaceId = async (enabled) => {
         try {
-            await SecureStore.setItemAsync('face_id_enabled', faceIdEnabled.toString());
-            // We don't close the modal here, it's just a toggle
+            await SecureStore.setItemAsync('face_id_enabled', enabled ? 'true' : 'false');
+            if (!enabled) {
+                // Turning off Face ID clears stored credentials
+                await SecureStore.deleteItemAsync('saved_password');
+                await SecureStore.deleteItemAsync('saved_username');
+                setHasSavedBiometricCreds(false);
+            }
         } catch (e) {
             console.log('Error saving FaceID setting:', e);
         }
     };
 
-    // Monitor FaceID toggle to save immediately (optional UX choice)
-    useEffect(() => {
-        handleSaveFaceId();
-    }, [faceIdEnabled]);
+    const onToggleFaceId = (next) => {
+        setFaceIdEnabled(next);
+        if (faceIdReady) handleSaveFaceId(next);
+    };
 
-
-    const connectAndFetchUsers = () => {
+    const fetchUsersFromHa = async () => {
         if (!haUrl || !haToken) return;
         setLoadingUsers(true);
 
+        const baseUrl = String(haUrl)
+            .replace(/^wss:\/\//i, 'https://')
+            .replace(/^ws:\/\//i, 'http://')
+            .replace(/\/$/, '');
+
         try {
-            // Close existing connection if any
+            // Prefer REST — works even when dashboard already has a WebSocket open
+            // (add-account pushes login on top of dashboard-v2).
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 15000);
+            const res = await fetch(`${baseUrl}/api/states`, {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bearer ${haToken}`,
+                    'Content-Type': 'application/json',
+                },
+                signal: controller.signal,
+            });
+            clearTimeout(timeout);
+
+            if (!res.ok) {
+                throw new Error(`HA states HTTP ${res.status}`);
+            }
+
+            const states = await res.json();
+            const personEntities = (Array.isArray(states) ? states : []).filter((e) =>
+                e.entity_id?.startsWith('person.'),
+            );
+
+            console.log('[Login] REST persons:', personEntities.length);
+
+            const mappedUsers = personEntities.map((p) => ({
+                id: p.entity_id,
+                name: p.attributes?.friendly_name || p.entity_id,
+                user_id: p.attributes?.user_id,
+                picture: p.attributes?.entity_picture,
+            }));
+
+            if (mappedUsers.length > 0) {
+                setUsers(mappedUsers);
+                setSelectedUser(mappedUsers[0]);
+                setUsername(mappedUsers[0].id.replace('person.', ''));
+            } else {
+                setUsers([{ id: 'manual', name: 'Manual Login' }]);
+                setSelectedUser({ id: 'manual', name: 'Manual Login' });
+            }
+            setLoadingUsers(false);
+            return;
+        } catch (restErr) {
+            console.log('[Login] REST user fetch failed, trying WebSocket:', restErr?.message || restErr);
+        }
+
+        // Fallback: WebSocket (original path)
+        connectAndFetchUsers();
+    };
+
+    const connectAndFetchUsers = () => {
+        if (!haUrl || !haToken) {
+            setLoadingUsers(false);
+            return;
+        }
+        setLoadingUsers(true);
+
+        try {
+            // Close existing login socket only (don't kill dashboard via disconnectAll)
             if (service.current) {
                 console.log('Closing existing socket before reconnecting...');
                 if (service.current.disconnect) {
@@ -316,41 +411,61 @@ export default function Login() {
 
             service.current = new HAService(haUrl, haToken);
             service.current.connect();
-            service.current.subscribe(data => {
+
+            const safetyTimer = setTimeout(() => {
+                setLoadingUsers((prev) => {
+                    if (prev) {
+                        console.log('[Login] WebSocket user fetch timed out');
+                        setUsers((u) => (u.length ? u : [{ id: 'manual', name: 'Manual Login' }]));
+                        setSelectedUser((s) => s || { id: 'manual', name: 'Manual Login' });
+                    }
+                    return false;
+                });
+            }, 12000);
+
+            service.current.subscribe((data) => {
                 if (data.type === 'connected') {
-                    // Fetch States (safer than Registry for permissions)
-                    service.current.getStates().then(states => {
+                    clearTimeout(safetyTimer);
+                    service.current.getStates().then((states) => {
                         console.log('DEBUG: Loaded States:', states?.length);
-                        const personEntities = (states || []).filter(e => e.entity_id.startsWith('person.'));
+                        const personEntities = (states || []).filter((e) => e.entity_id.startsWith('person.'));
 
                         console.log('DEBUG: Found Persons:', personEntities.length);
 
-                        // Map to a standard format
-                        const mappedUsers = personEntities.map(p => ({
+                        const mappedUsers = personEntities.map((p) => ({
                             id: p.entity_id,
                             name: p.attributes.friendly_name || p.entity_id,
                             user_id: p.attributes.user_id,
-                            picture: p.attributes.entity_picture
+                            picture: p.attributes.entity_picture,
                         }));
 
-                        setUsers(mappedUsers);
                         if (mappedUsers.length > 0) {
+                            setUsers(mappedUsers);
                             setSelectedUser(mappedUsers[0]);
-                            // Auto-guess for first user
                             setUsername(mappedUsers[0].id.replace('person.', ''));
+                        } else {
+                            setUsers([{ id: 'manual', name: 'Manual Login' }]);
+                            setSelectedUser({ id: 'manual', name: 'Manual Login' });
                         }
                         setLoadingUsers(false);
-                    }).catch(e => {
+                    }).catch((e) => {
                         console.log('Error fetching states:', e);
+                        setUsers([{ id: 'manual', name: 'Manual Login' }]);
+                        setSelectedUser({ id: 'manual', name: 'Manual Login' });
                         setLoadingUsers(false);
                     });
-                } else if (data.type === 'auth_invalid') {
+                } else if (data.type === 'auth_failed' || data.type === 'auth_invalid') {
+                    clearTimeout(safetyTimer);
                     Alert.alert('Error', 'Invalid HA Token');
+                    setUsers([{ id: 'manual', name: 'Manual Login' }]);
+                    setSelectedUser({ id: 'manual', name: 'Manual Login' });
                     setLoadingUsers(false);
                 }
             });
         } catch (e) {
             console.log('Connection error:', e);
+            setUsers([{ id: 'manual', name: 'Manual Login' }]);
+            setSelectedUser({ id: 'manual', name: 'Manual Login' });
             setLoadingUsers(false);
         }
     };
@@ -423,16 +538,28 @@ export default function Login() {
 
             if (isValid) {
                 // Persist session so user doesn't need to log in again
-                await SecureStore.setItemAsync('is_logged_in', 'true');
-                await SecureStore.setItemAsync('has_logged_in_before', 'true');
-                await SecureStore.setItemAsync('logged_in_user', JSON.stringify({
+                const activeProfileId = await SecureStore.getItemAsync(SETTINGS_KEY_ACTIVE_PROFILE);
+                const profilesJson = await SecureStore.getItemAsync(SETTINGS_KEY_PROFILES);
+                let profileName = '';
+                try {
+                    const profiles = JSON.parse(profilesJson || '[]');
+                    profileName = profiles.find((p) => p.id === activeProfileId)?.name || '';
+                } catch {
+                    // ignore
+                }
+
+                // Always store in multi-account list (needed for homepage switching)
+                await upsertAccountAndActivate({
+                    username,
+                    password,
                     name: selectedUser.name,
-                    userId: selectedUser.user_id || ''
-                }));
+                    userId: selectedUser.user_id || '',
+                    profileId: activeProfileId || '',
+                    profileName,
+                });
 
                 if (faceIdEnabled) {
-                    await SecureStore.setItemAsync('saved_username', username);
-                    await SecureStore.setItemAsync('saved_password', password);
+                    setHasSavedBiometricCreds(true);
                 }
 
                 // Re-register push token now that adminUrl is in SecureStore.
@@ -442,7 +569,11 @@ export default function Login() {
 
                 router.replace({
                     pathname: route,
-                    params: { userName: selectedUser.name, userId: selectedUser.user_id || '' }
+                    params: {
+                        userName: selectedUser.name,
+                        userId: selectedUser.user_id || '',
+                        switchKey: String(Date.now()),
+                    }
                 });
             } else {
                 Alert.alert('Login Failed', 'Invalid username or password.');
@@ -458,54 +589,95 @@ export default function Login() {
 
     const handleBiometricLogin = async () => {
         try {
-            const hasCreds = await SecureStore.getItemAsync('saved_password');
-            if (!hasCreds) {
-                Alert.alert('FaceID', 'Please login with password first to enable FaceID.');
+            const faceOn = (await SecureStore.getItemAsync('face_id_enabled')) === 'true';
+            if (!faceOn) {
+                Alert.alert('Face ID', 'Enable Face ID in Settings or Login settings first.');
+                return;
+            }
+
+            const savedUser = await SecureStore.getItemAsync('saved_username');
+            const savedPass = await SecureStore.getItemAsync('saved_password');
+            if (!savedUser || !savedPass) {
+                Alert.alert(
+                    'Face ID',
+                    'Please log in once with your password while Face ID is enabled. After that you can use Face ID.',
+                );
+                return;
+            }
+
+            if (!haUrl) {
+                Alert.alert('Error', 'No Home Assistant URL configured. Please check your profile settings.');
                 return;
             }
 
             const result = await LocalAuthentication.authenticateAsync({
-                promptMessage: 'Login to Home Assistant',
-                fallbackLabel: 'Use Password'
+                promptMessage: 'Login with Face ID',
+                fallbackLabel: 'Use Password',
+                disableDeviceFallback: false,
             });
 
-            if (result.success) {
-                const savedUser = await SecureStore.getItemAsync('saved_username');
-                const savedPass = await SecureStore.getItemAsync('saved_password');
-
-                if (savedUser && savedPass) {
-                    setIsLoggingIn(true);
-                    setUsername(savedUser); // Update UI
-                    // Validate — normalise URL in case it uses wss:// scheme
-                    const normalizedUrl = haUrl
-                        .replace(/^wss:\/\//i, 'https://')
-                        .replace(/^ws:\/\//i, 'http://')
-                        .replace(/\/$/, '');
-                    if (await validateCredentials(normalizedUrl, savedUser, savedPass)) {
-                        console.log('Biometric login success');
-                        // Find the user object to pass correctly
-                        const userObj = users.find(u => {
-                            // Try to match standard guessing logic
-                            const guess = u.id.replace('person.', '');
-                            return guess === savedUser || u.name.toLowerCase().replace(/\s+/g, '_') === savedUser;
-                        }) || { name: 'User' }; // Fallback
-
-                        // Re-register push token in case it changed since last login
-                        registerForPushNotificationsAsync().catch(() => {});
-
-                        router.replace({
-                            pathname: '/dashboard-v2',
-                            params: { userName: userObj.name, userId: userObj.user_id || '' }
-                        });
-                    } else {
-                        Alert.alert('Error', 'Saved credentials are no longer valid.');
-                        setIsLoggingIn(false);
-                    }
+            if (!result.success) {
+                if (result.error && result.error !== 'user_cancel' && result.error !== 'system_cancel') {
+                    Alert.alert('Face ID', result.error === 'not_enrolled'
+                        ? 'No Face ID / biometrics enrolled on this device.'
+                        : 'Face ID authentication failed.');
                 }
+                return;
             }
+
+            setIsLoggingIn(true);
+            setUsername(savedUser);
+
+            const normalizedUrl = haUrl
+                .replace(/^wss:\/\//i, 'https://')
+                .replace(/^ws:\/\//i, 'http://')
+                .replace(/\/$/, '');
+
+            if (!(await validateCredentials(normalizedUrl, savedUser, savedPass))) {
+                Alert.alert('Error', 'Saved credentials are no longer valid. Please log in with your password again.');
+                setIsLoggingIn(false);
+                return;
+            }
+
+            console.log('Biometric login success');
+
+            const userObj = users.find(u => {
+                const guess = u.id.replace('person.', '');
+                return guess === savedUser || u.name?.toLowerCase().replace(/\s+/g, '_') === savedUser;
+            }) || { name: savedUser, user_id: '' };
+
+            const activeProfileId = await SecureStore.getItemAsync(SETTINGS_KEY_ACTIVE_PROFILE);
+            const profilesJson = await SecureStore.getItemAsync(SETTINGS_KEY_PROFILES);
+            let profileName = '';
+            try {
+                const profiles = JSON.parse(profilesJson || '[]');
+                profileName = profiles.find((p) => p.id === activeProfileId)?.name || '';
+            } catch {
+                // ignore
+            }
+
+            await upsertAccountAndActivate({
+                username: savedUser,
+                password: savedPass,
+                name: userObj.name || savedUser,
+                userId: userObj.user_id || '',
+                profileId: activeProfileId || '',
+                profileName,
+            });
+
+            registerForPushNotificationsAsync().catch(() => {});
+
+            router.replace({
+                pathname: '/dashboard-v2',
+                params: {
+                    userName: userObj.name || savedUser,
+                    userId: userObj.user_id || '',
+                    switchKey: String(Date.now()),
+                },
+            });
         } catch (e) {
             console.log('Biometric error:', e);
-            Alert.alert('Error', 'Biometric authentication failed');
+            Alert.alert('Error', e?.message || 'Biometric authentication failed');
             setIsLoggingIn(false);
         }
     };
@@ -576,7 +748,7 @@ export default function Login() {
                     <Text style={[styles.switchLabel, { color: Colors.text }]}>Enable FaceID Login</Text>
                     <TouchableOpacity
                         style={[styles.switch, faceIdEnabled && styles.switchActive]}
-                        onPress={() => setFaceIdEnabled(!faceIdEnabled)}
+                        onPress={() => onToggleFaceId(!faceIdEnabled)}
                     >
                         <View style={[styles.switchThumb, faceIdEnabled && styles.switchThumbActive]} />
                     </TouchableOpacity>
@@ -585,17 +757,62 @@ export default function Login() {
         </View>
     );
 
+    const profileFormScrollRef = useRef(null);
+    const tokenFieldRef = useRef(null);
+    const [settingsKeyboardPad, setSettingsKeyboardPad] = useState(0);
+
+    useEffect(() => {
+        if (!showSettings) {
+            setSettingsKeyboardPad(0);
+            return;
+        }
+        const showEvt = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+        const hideEvt = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+        const onShow = (e) => {
+            const h = e?.endCoordinates?.height ?? 0;
+            setSettingsKeyboardPad(Math.max(0, h));
+        };
+        const onHide = () => setSettingsKeyboardPad(0);
+        const subShow = Keyboard.addListener(showEvt, onShow);
+        const subHide = Keyboard.addListener(hideEvt, onHide);
+        return () => {
+            subShow.remove();
+            subHide.remove();
+        };
+    }, [showSettings]);
+
+    const scrollFormFieldIntoView = (yHint = 0) => {
+        setTimeout(() => {
+            profileFormScrollRef.current?.scrollTo({
+                y: Math.max(0, yHint),
+                animated: true,
+            });
+        }, Platform.OS === 'ios' ? 280 : 120);
+    };
+
     const renderProfileForm = () => (
-        <ScrollView>
+        <ScrollView
+            ref={profileFormScrollRef}
+            style={{ flex: 1 }}
+            contentContainerStyle={{
+                paddingBottom: 24 + (settingsKeyboardPad > 0 ? Math.min(settingsKeyboardPad, 320) : 0),
+                flexGrow: 1,
+            }}
+            keyboardShouldPersistTaps="handled"
+            keyboardDismissMode="on-drag"
+            showsVerticalScrollIndicator={false}
+            nestedScrollEnabled
+        >
             <TouchableOpacity
                 style={styles.backButton}
-                onPress={() => setEditingProfile(null)}
+                onPress={() => {
+                    Keyboard.dismiss();
+                    setEditingProfile(null);
+                }}
             >
                 <ChevronDown size={24} color={Colors.text} style={{ transform: [{ rotate: '90deg' }] }} />
                 <Text style={styles.backButtonText}>Back to Profiles</Text>
             </TouchableOpacity>
-
-            <Text style={styles.modalTitle}>{editingProfile.id ? 'Edit Profile' : 'New Profile'}</Text>
 
             <View style={styles.formGroup}>
                 <Text style={styles.label}>Profile Name</Text>
@@ -605,6 +822,8 @@ export default function Login() {
                     onChangeText={text => setEditingProfile({ ...editingProfile, name: text })}
                     placeholder="e.g. Home, Office, Cabin"
                     placeholderTextColor={Colors.textDim}
+                    returnKeyType="next"
+                    onFocus={() => scrollFormFieldIntoView(0)}
                 />
             </View>
 
@@ -618,11 +837,12 @@ export default function Login() {
                         placeholder="https://homeassistant.local:8123"
                         placeholderTextColor={Colors.textDim}
                         autoCapitalize="none"
+                        returnKeyType="next"
+                        onFocus={() => scrollFormFieldIntoView(80)}
                     />
                     <TouchableOpacity
                         style={styles.scanBtn}
                         onPress={async () => {
-                            // Inner scan for form
                             let found = false;
                             await scanNetwork((url) => {
                                 if (!found) {
@@ -647,23 +867,27 @@ export default function Login() {
                     placeholder="Optional admin backend URL"
                     placeholderTextColor={Colors.textDim}
                     autoCapitalize="none"
+                    returnKeyType="next"
+                    onFocus={() => scrollFormFieldIntoView(160)}
                 />
             </View>
 
-            <View style={styles.formGroup}>
+            <View style={styles.formGroup} collapsable={false}>
                 <Text style={styles.label}>Long-Lived Access Token</Text>
                 <TextInput
+                    ref={tokenFieldRef}
                     style={[styles.settingsInput, { height: 100, textAlignVertical: 'top', paddingTop: 10 }]}
                     value={editingProfile.haToken}
                     onChangeText={text => setEditingProfile({ ...editingProfile, haToken: text })}
                     placeholder="Paste your token here..."
                     placeholderTextColor={Colors.textDim}
                     multiline
+                    onFocus={() => scrollFormFieldIntoView(240)}
                 />
             </View>
 
             <TouchableOpacity
-                style={styles.saveButton}
+                style={[styles.saveButton, { marginTop: 16, marginBottom: 8 }]}
                 onPress={handleSaveProfile}
             >
                 <Text style={styles.saveButtonText}>Save Profile</Text>
@@ -705,11 +929,27 @@ export default function Login() {
                                 <>
                                     <View style={styles.welcomeBlock}>
                                         <Text style={styles.welcomeText}>
-                                            {isReturningUser ? 'Welcome Back' : 'Welcome'}
+                                            {isAddAccount
+                                                ? 'Add Account'
+                                                : isReturningUser
+                                                    ? 'Welcome Back'
+                                                    : 'Welcome'}
                                         </Text>
                                         <Text style={styles.welcomeSubText}>
-                                            {isReturningUser ? 'Good to see you again' : "Let's get you connected"}
+                                            {isAddAccount
+                                                ? 'Sign in with another user — you can switch from the home screen'
+                                                : isReturningUser
+                                                    ? 'Good to see you again'
+                                                    : "Let's get you connected"}
                                         </Text>
+                                        {isAddAccount ? (
+                                            <TouchableOpacity
+                                                style={{ marginTop: 12 }}
+                                                onPress={() => router.back()}
+                                            >
+                                                <Text style={{ color: Colors.primary, fontWeight: '600' }}>Cancel</Text>
+                                            </TouchableOpacity>
+                                        ) : null}
                                     </View>
 
                                     <View style={styles.inputContainer}>
@@ -789,12 +1029,14 @@ export default function Login() {
 
                                     {faceIdEnabled && isBiometricSupported && (
                                         <TouchableOpacity
-                                            style={[styles.bioButton, { opacity: username ? 1 : 0.5 }]}
+                                            style={[styles.bioButton, { opacity: (isLoggingIn || !hasSavedBiometricCreds) ? 0.55 : 1 }]}
                                             onPress={handleBiometricLogin}
-                                            disabled={!username}
+                                            disabled={isLoggingIn}
                                         >
                                             <Fingerprint size={28} color={Colors.primary} />
-                                            <Text style={styles.bioText}>Use FaceID</Text>
+                                            <Text style={styles.bioText}>
+                                                {hasSavedBiometricCreds ? 'Use Face ID' : 'Log in once to activate Face ID'}
+                                            </Text>
                                         </TouchableOpacity>
                                     )}
 
@@ -865,18 +1107,63 @@ export default function Login() {
                             onRequestClose={() => setShowSettings(false)}
                         >
                             <View style={styles.modalOverlay}>
-                                <ModalBackdrop onPress={() => setShowSettings(false)} />
-                                <View style={[styles.modalContent, { maxHeight: '90%' }]}>
+                                <ModalBackdrop onPress={() => {
+                                    Keyboard.dismiss();
+                                    setShowSettings(false);
+                                }} />
+                                <View
+                                    style={[
+                                        styles.modalContent,
+                                        (() => {
+                                            const winH = Dimensions.get('window').height;
+                                            const winW = Dimensions.get('window').width;
+                                            const isTabletLandscape = winW > winH && winW >= 900;
+                                            // Android app.json uses softwareKeyboardLayoutMode: "pan".
+                                            // Shrinking the sheet by keyboard height double-adjusts and
+                                            // collapses the form (only Save stays visible). Pad scroll
+                                            // content instead; only lift the sheet on iOS.
+                                            if (Platform.OS === 'ios' && settingsKeyboardPad > 0) {
+                                                const available = winH - settingsKeyboardPad - 12;
+                                                return {
+                                                    height: Math.min(available, winH * 0.92),
+                                                    maxHeight: available,
+                                                    marginBottom: settingsKeyboardPad,
+                                                    paddingBottom: 12,
+                                                };
+                                            }
+                                            if (editingProfile || isTabletLandscape) {
+                                                return {
+                                                    height: winH * (isTabletLandscape ? 0.92 : 0.9),
+                                                    maxHeight: '94%',
+                                                    marginBottom: 0,
+                                                };
+                                            }
+                                            return {
+                                                height: winH * 0.85,
+                                                maxHeight: '90%',
+                                                marginBottom: 0,
+                                            };
+                                        })(),
+                                    ]}
+                                >
                                     <View style={styles.modalHeader}>
-                                        <Text style={styles.modalTitle}>Settings</Text>
-                                        <TouchableOpacity onPress={() => setShowSettings(false)}>
+                                        <Text style={styles.modalTitle}>
+                                            {editingProfile
+                                                ? (editingProfile.id ? 'Edit Profile' : 'Create Profile')
+                                                : 'Settings'}
+                                        </Text>
+                                        <TouchableOpacity onPress={() => {
+                                            Keyboard.dismiss();
+                                            setEditingProfile(null);
+                                            setShowSettings(false);
+                                        }}>
                                             <X size={24} color={Colors.textDim} />
                                         </TouchableOpacity>
                                     </View>
 
-                                    <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}>
+                                    <View style={{ flex: 1, minHeight: 280 }}>
                                         {editingProfile ? renderProfileForm() : renderProfileList()}
-                                    </KeyboardAvoidingView>
+                                    </View>
                                 </View>
                             </View>
                         </Modal>
@@ -970,8 +1257,9 @@ const styles = StyleSheet.create({
         borderTopLeftRadius: 24,
         borderTopRightRadius: 24,
         padding: 24,
+        width: '100%',
         height: '85%',
-        maxHeight: '90%'
+        maxHeight: '90%',
     },
     modalTitle: {
         color: 'white',

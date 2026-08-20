@@ -24,6 +24,7 @@ import RoomGroupIconButton, { ROOM_GROUP_ICON_GLYPH_SIZE } from './RoomGroupIcon
 import { formatHaServiceError } from '../../utils/haErrorMessages';
 import { getClimateTempBounds, isClimateTemperatureValid } from '../../utils/haEntityMerge';
 import { isBadEntityState } from '../../utils/haEntityHealth';
+import { applyClimatePower, isClimatePoweredOn } from '../../utils/acPowerSwitch';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -343,7 +344,7 @@ export default function ClimateCard({
     const presetModes  = (attributes.preset_modes || []).filter(p => p !== 'none');
     const currentPreset = attributes.preset_mode;
     const entityUnavailable = isBadEntityState(state);
-    const realIsOn     = state !== 'off' && !entityUnavailable;
+    const realIsOn     = isClimatePoweredOn(climate);
     const isOn         = realIsOn;
     const hvacModes = useMemo(() => normalizeHvacModes(hvacModesRaw), [hvacModesRaw]);
     const hvacModesKey = hvacModes.join('|');
@@ -398,13 +399,9 @@ export default function ClimateCard({
         if (entityUnavailable) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         if (isOn) {
-            runUpdate(climate.entity_id, 'climate', 'set_hvac_mode', { hvac_mode: 'off' });
+            applyClimatePower(climate, false, runUpdate);
         } else {
-            const last = attributes.last_on_operation;
-            const mode = (last && hvacModes.includes(last) && last !== 'off')
-                ? last
-                : (displayModes[0]?.haKey || 'cool');
-            runUpdate(climate.entity_id, 'climate', 'set_hvac_mode', { hvac_mode: mode });
+            applyClimatePower(climate, true, runUpdate, resolveTurnOnMode());
         }
     };
 
@@ -489,10 +486,10 @@ export default function ClimateCard({
         clearTick();
         if (timerAction === 'turn_on') {
             if (!realIsOn) {
-                runUpdate(entityId, 'climate', 'set_hvac_mode', { hvac_mode: resolveTurnOnMode() }, { showError: false });
+                applyClimatePower(climate, true, runUpdate, resolveTurnOnMode());
             }
         } else if (realIsOn) {
-            runUpdate(entityId, 'climate', 'set_hvac_mode', { hvac_mode: 'off' }, { showError: false });
+            applyClimatePower(climate, false, runUpdate);
         }
         cancelClimateTimerLocal(entityId);
         syncCancelClimateTimerRemote(entityId);
@@ -644,7 +641,7 @@ export default function ClimateCard({
                             ]}
                             onPress={() => {
                                 if (!isOn) {
-                                    runUpdate(climate.entity_id, 'climate', 'set_hvac_mode', { hvac_mode: slot.haKey });
+                                    applyClimatePower(climate, true, runUpdate, slot.haKey);
                                     return;
                                 }
                                 setMode(slot.haKey);
@@ -810,6 +807,57 @@ export default function ClimateCard({
                     )}
                 </View>
             )}
+
+            {/* ── Damper toggle — only when an AC damper entity is configured ── */}
+            {!!climate.damperEntityId && (() => {
+                const damperState = climate.damperStateObj?.state;
+                const damperUnavailable = !climate.damperStateObj || damperState === 'unavailable' || damperState === 'unknown';
+                const isDamperOpen = damperState === 'open' || damperState === 'on' || damperState === 'true';
+                const toggleDamper = () => {
+                    if (damperUnavailable || !onUpdate) return;
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    const damperId = climate.damperEntityId;
+                    if (damperId.startsWith('cover.')) {
+                        onUpdate(damperId, 'cover', isDamperOpen ? 'close_cover' : 'open_cover', { entity_id: damperId });
+                    } else {
+                        onUpdate(damperId, 'homeassistant', isDamperOpen ? 'turn_off' : 'turn_on', { entity_id: damperId });
+                    }
+                };
+                return (
+                    <View style={s.damperRow}>
+                        <View style={s.damperLeft}>
+                            <AirVent size={16} color={isDamperOpen ? '#44C8CA' : 'rgba(255,255,255,0.35)'} />
+                            <Text style={[s.damperLabel, isDamperOpen && s.damperLabelOpen]}>
+                                Damper
+                            </Text>
+                            {!damperUnavailable && (
+                                <Text style={[s.damperStatus, isDamperOpen && s.damperStatusOpen]}>
+                                    {isDamperOpen ? 'Open' : 'Closed'}
+                                </Text>
+                            )}
+                            {damperUnavailable && (
+                                <Text style={s.damperStatusUnavailable}>Unavailable</Text>
+                            )}
+                        </View>
+                        <TouchableOpacity
+                            style={[
+                                s.damperBtn,
+                                isDamperOpen && s.damperBtnOpen,
+                                damperUnavailable && s.damperBtnDisabled,
+                            ]}
+                            onPress={toggleDamper}
+                            disabled={damperUnavailable}
+                            activeOpacity={damperUnavailable ? 1 : 0.75}
+                            accessibilityLabel={isDamperOpen ? 'Close damper' : 'Open damper'}
+                        >
+                            <Text style={[s.damperBtnText, isDamperOpen && s.damperBtnTextOpen]}>
+                                {isDamperOpen ? 'Close' : 'Open'}
+                            </Text>
+                        </TouchableOpacity>
+                    </View>
+                );
+            })()}
+
             <ServiceMessageToast
                 message={serviceMessage}
                 onDismiss={dismissServiceMessage}
@@ -1107,4 +1155,67 @@ const s = StyleSheet.create({
     },
     timerResetText: { fontSize: 15, fontFamily: CF.semibold, color: 'rgba(255,255,255,0.35)' },
     timerResetTextEnabled: { color: '#fff' },
+
+    // ── Damper row ─────────────────────────────────────────────────────────────
+    damperRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        marginTop: 16,
+        paddingTop: 14,
+        borderTopWidth: 1,
+        borderTopColor: 'rgba(255,255,255,0.07)',
+    },
+    damperLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        flex: 1,
+    },
+    damperLabel: {
+        fontSize: 14,
+        fontFamily: CF.semibold,
+        color: 'rgba(255,255,255,0.55)',
+    },
+    damperLabelOpen: {
+        color: '#44C8CA',
+    },
+    damperStatus: {
+        fontSize: 12,
+        fontFamily: CF.medium,
+        color: 'rgba(255,255,255,0.3)',
+        marginLeft: 2,
+    },
+    damperStatusOpen: {
+        color: 'rgba(68,200,202,0.7)',
+    },
+    damperStatusUnavailable: {
+        fontSize: 11,
+        fontFamily: CF.medium,
+        color: '#EF5350',
+        marginLeft: 2,
+    },
+    damperBtn: {
+        paddingHorizontal: 18,
+        paddingVertical: 8,
+        borderRadius: 20,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.12)',
+    },
+    damperBtnOpen: {
+        backgroundColor: 'rgba(68,200,202,0.15)',
+        borderColor: '#44C8CA',
+    },
+    damperBtnDisabled: {
+        opacity: 0.4,
+    },
+    damperBtnText: {
+        fontSize: 13,
+        fontFamily: CF.semibold,
+        color: 'rgba(255,255,255,0.55)',
+    },
+    damperBtnTextOpen: {
+        color: '#44C8CA',
+    },
 });

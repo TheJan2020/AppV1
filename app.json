@@ -4,7 +4,7 @@
     "slug": "ha-app",
     "version": "1.1.0",
     "orientation": "default",
-    "icon": "./assets/500-black.png",
+    "icon": "./assets/app-icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "splash": {
@@ -26,15 +26,18 @@
           "NSAllowsLocalNetworking": true
         },
         "ITSAppUsesNonExemptEncryption": false,
+        "NSFaceIDUsageDescription": "Primewave uses Face ID so you can unlock the app securely without typing your password.",
         "UIBackgroundModes": ["remote-notification"]
       }
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/500-black.png",
-        "backgroundColor": "#1a1b2e"
+        "foregroundImage": "./assets/app-icon.png",
+        "backgroundColor": "#4B2FA8"
       },
       "edgeToEdgeEnabled": true,
+      "softwareKeyboardLayoutMode": "pan",
+      "versionCode": 1,
       "permissions": [
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT",
@@ -44,7 +47,7 @@
       "package": "ai.primewave.app"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/app-icon.png"
     },
     "scheme": "ha-app",
     "plugins": [
@@ -67,7 +70,7 @@
       [
         "expo-notifications",
         {
-          "icon": "./assets/500-black.png",
+          "icon": "./assets/app-icon.png",
           "color": "#832ea9",
           "sounds": [],
           "mode": "production"

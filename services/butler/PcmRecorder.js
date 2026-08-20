@@ -8,7 +8,7 @@ const INPUT_GAIN = Platform.OS === 'ios' ? 2.5 : 1;
 function getLiveAudioStream() {
     if (!isLiveMicAvailable()) {
         throw new Error(
-            'react-native-live-audio-stream missing. Rebuild dev client: npx expo run:ios --device',
+            'react-native-live-audio-stream missing. Rebuild the native app (npx expo run:android / run:ios).',
         );
     }
     return require('react-native-live-audio-stream').default
@@ -42,7 +42,8 @@ export class PcmRecorder {
                 bufferSize: 4096,
             };
             if (Platform.OS === 'android') {
-                initOpts.audioSource = 6;
+                // VOICE_COMMUNICATION enables hardware AEC — needed for speakerphone.
+                initOpts.audioSource = 7;
             }
             LiveAudioStream.init(initOpts);
 

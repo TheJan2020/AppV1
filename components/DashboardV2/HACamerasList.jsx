@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { View, Text, StyleSheet, ScrollView, Image, TouchableOpacity, AppState } from 'react-native';
+import { formatCameraName } from '../../utils/formatDisplayName';
 
 const HACamera = ({ camera, allEntities, haUrl, haToken, timestamp }) => {
     if (!camera.attributes || !camera.attributes.entity_picture) return null;
@@ -40,7 +41,7 @@ const HACamera = ({ camera, allEntities, haUrl, haToken, timestamp }) => {
                 )}
             </View>
             <Text style={styles.cameraName} numberOfLines={1}>
-                {camera.attributes.friendly_name || 'Camera'}
+                {formatCameraName(camera.attributes.friendly_name || camera.entity_id) || 'Camera'}
             </Text>
         </View>
     );

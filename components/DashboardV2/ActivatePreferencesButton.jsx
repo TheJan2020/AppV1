@@ -42,13 +42,14 @@ export default function ActivatePreferencesButton({ roomName, onActivate, onPref
             const dayType = getDayType(now);
             const hour = now.getHours();
 
+            // Avoid `//api/...` when adminUrl already ends with `/` (some hosts 404 that).
+            const base = String(backendUrl).replace(/\/+$/, '');
             const response = await authFetch(
-                `${backendUrl}/api/preferences/get-room-preferences?room=${encodeURIComponent(roomName)}&season=${season}&dayType=${dayType}&hour=${hour}`
+                `${base}/api/preferences/get-room-preferences?room=${encodeURIComponent(roomName)}&season=${season}&dayType=${dayType}&hour=${hour}`
             );
 
             if (response.ok) {
                 const data = await response.json();
-                console.log('[ActivatePreferencesButton] API Response:', data);
                 if (data.success) {
                     const rawPreferences = data.preferences || [];
 
@@ -75,11 +76,15 @@ export default function ActivatePreferencesButton({ roomName, onActivate, onPref
                         onPreferencesLoaded(processedPreferences);
                     }
                 }
+            } else if (response.status === 404 || response.status === 401) {
+                // Endpoint missing on some backends, or no prefs for this room — not fatal.
+                setPreferences([]);
+                setNeedsChange(0);
             } else {
-                console.error('[ActivatePreferencesButton] API error:', response.status);
+                console.warn('[ActivatePreferencesButton] API error:', response.status);
             }
         } catch (error) {
-            console.error('[ActivatePreferencesButton] Error loading preferences:', error);
+            console.warn('[ActivatePreferencesButton] Error loading preferences:', error?.message || error);
         } finally {
             setLoading(false);
         }

@@ -1,7 +1,7 @@
 {
   "name": "expo-pcm-player",
   "version": "0.1.0",
-  "description": "Native PCM playback for Butler voice (iOS)",
+  "description": "Native PCM playback for Butler voice (iOS + Android)",
   "main": "index.js",
   "license": "MIT",
   "author": "Primewave",

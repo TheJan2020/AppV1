@@ -6,7 +6,9 @@
  * @param {object|null} stateObj — live state for `mass_player_type`
  * @param {string[]|Set|null} musicAssistantConfigEntryIds — `entry_id`s where domain is `music_assistant`
  */
-import { inferCoverLayer, findCoverMapping } from './coverWindows';
+import { inferCoverLayer, findCoverMapping, isMasterCover } from './coverWindows';
+import { findLinkedRemote } from './tvRemote';
+import { attachAcPowerSwitches } from './acPowerSwitch';
 
 export function isMusicAssistantMediaPlayer(re, stateObj, musicAssistantConfigEntryIds = null) {
     const ids =
@@ -57,6 +59,30 @@ function isRoomClimateSensor(re, stateObj, mappedType) {
     return type === 'temperature' || type === 'humidity';
 }
 
+/** Entity ids assigned to any of the given area_ids (direct or via device area). */
+export function getEntityIdsForAreaIds(areaIds, registryDevices = [], registryEntities = []) {
+    const areaSet = areaIds instanceof Set ? areaIds : new Set(areaIds || []);
+    if (!areaSet.size) return new Set();
+
+    const deviceInScope = new Set();
+    for (const d of registryDevices) {
+        if (d?.id && d.area_id && areaSet.has(d.area_id)) deviceInScope.add(d.id);
+    }
+
+    const entityIds = new Set();
+    for (const re of registryEntities) {
+        if (!re?.entity_id) continue;
+        if (re.area_id && areaSet.has(re.area_id)) {
+            entityIds.add(re.entity_id);
+            continue;
+        }
+        if (re.device_id && deviceInScope.has(re.device_id)) {
+            entityIds.add(re.entity_id);
+        }
+    }
+    return entityIds;
+}
+
 export const getRoomEntities = (
     room,
     registryDevices = [],
@@ -65,7 +91,8 @@ export const getRoomEntities = (
     sensorMappings = [],
     coverMappings = [],
     mediaMappings = [],
-    musicAssistantConfigEntryIds = null
+    musicAssistantConfigEntryIds = null,
+    climateMappings = [],
 ) => {
     if (!room) return { lights: [], fans: [], climates: [], covers: [], medias: [], musicMedias: [], switches: [] };
 
@@ -75,6 +102,7 @@ export const getRoomEntities = (
     const safeSensorMappings = Array.isArray(sensorMappings) ? sensorMappings : [];
     const safeCoverMappings = Array.isArray(coverMappings) ? coverMappings : [];
     const safeMediaMappings = Array.isArray(mediaMappings) ? mediaMappings : [];
+    const safeClimateMappings = Array.isArray(climateMappings) ? climateMappings : [];
 
     const areaDevices = safeRegistryDevices.filter(d => d.area_id === room.area_id);
     const areaDeviceIds = areaDevices.map(d => d.id);
@@ -148,6 +176,9 @@ export const getRoomEntities = (
     const automationEntries = potentialEntities.filter(re => re.entity_id.startsWith('automation.'));
     const scriptEntries = potentialEntities.filter(re => re.entity_id.startsWith('script.'));
     const remoteEntries = potentialEntities.filter(re => re.entity_id.startsWith('remote.'));
+    // Remotes may live on the same device but not be assigned to the room area —
+    // still link them so Samsung/Apple KEY / send_command targeting works.
+    const allRemoteEntries = safeRegistryEntities.filter(re => re.entity_id.startsWith('remote.'));
     const binaryEntries = potentialEntities.filter(re => re.entity_id.startsWith('binary_sensor.'));
     const sensorEntries = potentialEntities.filter(re => re.entity_id.startsWith('sensor.'));
 
@@ -167,10 +198,44 @@ export const getRoomEntities = (
         };
     };
 
-    const mappedRemotes = remoteEntries.map(mapEntity);
+    const mappedRemotes = [
+        ...remoteEntries.map(mapEntity),
+        ...allRemoteEntries
+            .filter(re => !remoteEntries.some(r => r.entity_id === re.entity_id))
+            .map(mapEntity),
+    ];
+
     const mappedSensors = sensorEntries.map(mapEntity);
     const mappedBinaries = binaryEntries.map(mapEntity);
     const mappedLocks = lockEntries.map(mapEntity);
+    const mappedSwitches = switchEntries.map(mapEntity);
+    const mappedClimates = climateEntries.map(mapEntity).map(climate => {
+        const cm = safeClimateMappings.find(m => m.entity_id === climate.entity_id);
+        const damperEntityId = cm?.damperEntityId || null;
+        const damperStateObj = damperEntityId
+            ? (safeAllEntities.find(e => e.entity_id === damperEntityId) || null)
+            : null;
+        return { ...climate, damperEntityId, damperStateObj };
+    });
+    const climateDeviceIds = new Set(mappedClimates.map((c) => c.device_id).filter(Boolean));
+    const extraPowerSwitches = safeAllEntities
+        .filter((e) => (
+            e?.entity_id?.startsWith('switch.')
+            && e.device_id
+            && climateDeviceIds.has(e.device_id)
+            && !mappedSwitches.some((s) => s.entity_id === e.entity_id)
+        ))
+        .map((e) => {
+            const reg = safeRegistryEntities.find((r) => r.entity_id === e.entity_id)
+                || { entity_id: e.entity_id, name: e.attributes?.friendly_name, device_id: e.device_id };
+            return mapEntity(reg);
+        });
+    const { climates: climatesWithPower, leftoverSwitches: pairedLeftover } = attachAcPowerSwitches(
+        mappedClimates,
+        [...mappedSwitches, ...extraPowerSwitches],
+        safeAllEntities,
+    );
+    const leftoverSwitches = pairedLeftover.filter((sw) => mappedSwitches.some((s) => s.entity_id === sw.entity_id));
 
     // Filter Doors (Strict Sensor Mapping)
     const doorEntities = [
@@ -181,42 +246,40 @@ export const getRoomEntities = (
     return {
         lights: [...lightEntries.map(mapEntity), ...mappedLocks],
         fans: fanEntries.map(mapEntity),
-        climates: climateEntries.map(mapEntity),
+        climates: climatesWithPower,
         covers: (() => {
             const mapped = coverEntries.map(mapEntity);
 
             // Garage covers are handled exclusively in HomeAccess — exclude them here.
-            // Shutter covers belong in the room curtains section, sorted to the end.
-            const nonShutters = mapped.filter(c => {
-                const id   = (c.entity_id   || '').toLowerCase();
-                const name = (c.displayName || '').toLowerCase();
-                const isMaster = id.includes('master_curtain') || id.includes('master curtain') ||
-                                 name.includes('master curtain') || name.includes('master_curtain');
-                // master always included; garage always excluded; shutter handled separately
-                if (isMaster) return true;
+            // Shutters belong in the room section (sorted last). Window-grouped covers
+            // must still show even when coverType was never set in admin — but each
+            // entity_id must appear only once (windowId + shutter used to double-add).
+            const included = mapped.filter((c) => {
+                if (isMasterCover(c)) return true;
+                if (c.coverType === 'garage') return false;
+                if (c.windowId) return true;
                 if (!c.coverType) return false;
-                return c.coverType !== 'shutter' && c.coverType !== 'garage';
+                return true;
             });
 
-            const shutters = mapped.filter(c => c.coverType === 'shutter');
+            const nonShutters = included.filter((c) => c.coverType !== 'shutter');
+            const shutters = included.filter((c) => c.coverType === 'shutter');
 
-            // Shutters go last, after all curtain types
             return [...nonShutters, ...shutters];
         })(),
         cameras: potentialEntities.filter(re => re.entity_id.startsWith('camera.')).map(mapEntity),
         sensors: mappedSensors,
         doors: doorEntities,
-        switches: switchEntries.map(mapEntity),
+        switches: leftoverSwitches,
         automations: automationEntries.map(mapEntity),
         scripts: scriptEntries.map(mapEntity),
-        medias: mediaEntries.map(mapEntity).map(media => {
-            // Link Remote if device_id matches
-            const linkedRemote = mappedRemotes.find(r => r.device_id && r.device_id === media.device_id);
-            return { ...media, linkedRemote };
-        }),
-        musicMedias: musicEntries.map(mapEntity).map(media => {
-            const linkedRemote = mappedRemotes.find(r => r.device_id && r.device_id === media.device_id);
-            return { ...media, linkedRemote };
-        })
+        medias: mediaEntries.map(mapEntity).map(media => ({
+            ...media,
+            linkedRemote: findLinkedRemote(media, mappedRemotes),
+        })),
+        musicMedias: musicEntries.map(mapEntity).map(media => ({
+            ...media,
+            linkedRemote: findLinkedRemote(media, mappedRemotes),
+        })),
     };
 };

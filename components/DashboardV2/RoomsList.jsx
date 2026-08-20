@@ -5,6 +5,7 @@ import { Sofa, Bed, Bath, Utensils, Monitor, Lamp, Settings, Lightbulb, Fan, Gal
 import { LinearGradient } from 'expo-linear-gradient';
 import { CF } from '../../utils/typography';
 import { inferSensorType } from '../../utils/roomHelpers';
+import { formatDisplayName } from '../../utils/formatDisplayName';
 
 const getIconForRoom = (name) => {
     const lower = (name || '').toLowerCase();
@@ -16,16 +17,7 @@ const getIconForRoom = (name) => {
     return Lamp; // Default
 };
 
-// Convert area_id-style names (e.g. "living_room") to proper display names ("Living Room")
-const formatRoomName = (name) => {
-    if (!name) return '';
-    // If already has spaces, it's a proper name — return as-is
-    if (name.includes(' ')) return name;
-    // Otherwise treat as slug: replace underscores with spaces and title-case each word
-    return name
-        .replace(/_/g, ' ')
-        .replace(/\b\w/g, c => c.toUpperCase());
-};
+const formatRoomName = (name) => formatDisplayName(name);
 
 
 function RoomsList({

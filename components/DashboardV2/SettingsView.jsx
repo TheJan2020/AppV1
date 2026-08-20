@@ -1,5 +1,5 @@
 import { useState, useEffect, memo } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, ScrollView, FlatList, TextInput, Alert, ActivityIndicator, Switch } from 'react-native';
+import { View, Text, TouchableOpacity, Pressable, StyleSheet, ScrollView, FlatList, TextInput, Alert, ActivityIndicator, Switch } from 'react-native';
 import { Colors } from '../../constants/Colors';
 import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles, Monitor, LayoutGrid, Timer } from 'lucide-react-native';
 import { router } from 'expo-router';
@@ -7,6 +7,7 @@ import { AIService } from '../../services/ai';
 import * as SecureStore from 'expo-secure-store';
 import { authFetch } from '../../utils/authFetch';
 import { unregisterPushTokenAsync } from '../../services/notifications';
+import { logoutActiveAccount } from '../../services/accounts';
 import MonitoredEntitiesModal from './MonitoredEntitiesModal';
 import AlertEntitiesModal from './AlertEntitiesModal';
 import MyPreferencesModal from './MyPreferencesModal';
@@ -641,7 +642,16 @@ function SettingsView({
                         value={faceIdEnabled}
                         onValueChange={async (val) => {
                             setFaceIdEnabled(val);
-                            await SecureStore.setItemAsync('face_id_enabled', val.toString());
+                            await SecureStore.setItemAsync('face_id_enabled', val ? 'true' : 'false');
+                            if (!val) {
+                                await SecureStore.deleteItemAsync('saved_password');
+                                await SecureStore.deleteItemAsync('saved_username');
+                            } else {
+                                Alert.alert(
+                                    'Face ID enabled',
+                                    'Log out and log in once with your password so Face ID can store your credentials. After that you can use Face ID on the login screen.',
+                                );
+                            }
                         }}
                         trackColor={{ false: '#767577', true: Colors.primary }}
                         thumbColor={faceIdEnabled ? '#fff' : '#f4f3f4'}
@@ -806,18 +816,25 @@ function SettingsView({
             <TouchableOpacity
                 style={styles.logoutBtn}
                 onPress={async () => {
-                    // Remove this device's push token so server stops sending notifications
                     await unregisterPushTokenAsync();
-                    // Clear session so the next launch goes to login
-                    await SecureStore.deleteItemAsync('is_logged_in');
-                    await SecureStore.deleteItemAsync('logged_in_user');
-                    await SecureStore.deleteItemAsync('saved_password');
-                    await SecureStore.deleteItemAsync('saved_username');
-                    router.replace('/login');
+                    const { nextAccount } = await logoutActiveAccount();
+                    if (nextAccount) {
+                        // Still signed in as another saved account — reload dashboard as them.
+                        router.replace({
+                            pathname: '/dashboard-v2',
+                            params: {
+                                userName: nextAccount.name,
+                                userId: nextAccount.userId || '',
+                                switchKey: String(Date.now()),
+                            },
+                        });
+                    } else {
+                        router.replace('/login');
+                    }
                 }}
             >
                 <LogOut size={20} color={Colors.error} />
-                <Text style={styles.logoutText}>Log Out</Text>
+                <Text style={styles.logoutText}>Log Out of This Account</Text>
             </TouchableOpacity>
         </ScrollView>
     );
@@ -829,40 +846,46 @@ function SettingsView({
                 <Text style={styles.title}>Settings</Text>
             </View>
 
-            <View style={styles.tabs}>
-                <TouchableOpacity
-                    style={[styles.tab, activeTab === 'general' && styles.activeTab]}
-                    onPress={() => { setActiveTab('general'); setSelectedArea(null); }}
-                >
-                    <Text style={[styles.tabText, activeTab === 'general' && styles.activeTabText]}>General</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[styles.tab, activeTab === 'areas' && styles.activeTab]}
-                    onPress={() => { setActiveTab('areas'); setSelectedArea(null); }}
-                >
-                    <Text style={[styles.tabText, activeTab === 'areas' && styles.activeTabText]}>Areas</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[styles.tab, activeTab === 'entities' && styles.activeTab]}
-                    onPress={() => { setActiveTab('entities'); setSelectedArea(null); }}
-                >
-                    <Text style={[styles.tabText, activeTab === 'entities' && styles.activeTabText]}>Entities</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[styles.tab, activeTab === 'ai' && styles.activeTab]}
-                    onPress={() => { setActiveTab('ai'); setSelectedArea(null); }}
-                >
-                    <Text style={[styles.tabText, activeTab === 'ai' && styles.activeTabText]}>A.I.</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[styles.tab, activeTab === 'account' && styles.activeTab]}
-                    onPress={() => { setActiveTab('account'); setSelectedArea(null); }}
-                >
-                    <Text style={[styles.tabText, activeTab === 'account' && styles.activeTabText]}>Account</Text>
-                </TouchableOpacity>
+            <View style={styles.tabs} collapsable={false}>
+                {[
+                    { id: 'general', label: 'General' },
+                    { id: 'areas', label: 'Areas' },
+                    { id: 'entities', label: 'Entities' },
+                    { id: 'ai', label: 'A.I.' },
+                    { id: 'account', label: 'Account' },
+                ].map((tab) => {
+                    const selected = activeTab === tab.id;
+                    return (
+                        <Pressable
+                            key={tab.id}
+                            style={({ pressed }) => [
+                                styles.tab,
+                                selected && styles.activeTab,
+                                pressed && styles.tabPressed,
+                            ]}
+                            onPress={() => {
+                                setActiveTab(tab.id);
+                                setSelectedArea(null);
+                            }}
+                            hitSlop={6}
+                            accessibilityRole="tab"
+                            accessibilityState={{ selected }}
+                            accessibilityLabel={tab.label}
+                        >
+                            <Text
+                                style={[styles.tabText, selected && styles.activeTabText]}
+                                numberOfLines={1}
+                                adjustsFontSizeToFit
+                                minimumFontScale={0.85}
+                            >
+                                {tab.label}
+                            </Text>
+                        </Pressable>
+                    );
+                })}
             </View>
 
-            <View style={styles.content}>
+            <View style={styles.content} collapsable={false}>
                 {activeTab === 'general' && renderGeneralSettings()}
                 {activeTab === 'areas' && (selectedArea ? renderAreaDetails() : renderAreaList())}
                 {activeTab === 'entities' && renderEntitiesList()}
@@ -909,34 +932,53 @@ const styles = StyleSheet.create({
         ...Heading.xl,
         color: '#fff',
     },
+    tabsScroll: {
+        flexGrow: 0,
+        marginBottom: 16,
+        maxHeight: 48,
+        zIndex: 2,
+        elevation: 2,
+    },
     tabs: {
         flexDirection: 'row',
-        marginBottom: 20,
+        alignItems: 'center',
         backgroundColor: 'rgba(255,255,255,0.05)',
         borderRadius: 12,
         padding: 4,
+        marginBottom: 16,
+        // Keep above settings content, but below the app footer (TabBar ~10000)
+        zIndex: 2,
+        elevation: 2,
     },
     tab: {
         flex: 1,
+        minHeight: 44,
+        paddingHorizontal: 4,
         paddingVertical: 10,
         alignItems: 'center',
+        justifyContent: 'center',
         borderRadius: 8,
     },
+    tabPressed: {
+        opacity: 0.7,
+    },
     activeTab: {
-        backgroundColor: 'rgba(255,255,255,0.1)',
+        backgroundColor: 'rgba(255,255,255,0.12)',
     },
     tabText: {
         color: Colors.textDim,
         fontFamily: CF.semibold,
-        fontSize: 13,
+        fontSize: 12,
+        textAlign: 'center',
     },
     activeTabText: {
         color: Colors.text,
         fontFamily: CF.bold,
-        fontSize: 13,
+        fontSize: 12,
     },
     content: {
         flex: 1,
+        zIndex: 1,
     },
     listContent: {
         paddingBottom: 120, // Increased to avoid TabBar overlap

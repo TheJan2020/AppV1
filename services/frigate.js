@@ -1,8 +1,6 @@
-import { Alert } from 'react-native';
-
 export class FrigateService {
     constructor(baseUrl, username, password, adminUrl, haToken) {
-        this.baseUrl = baseUrl.replace(/\/$/, ''); // Remove trailing slash
+        this.baseUrl = (baseUrl || '').replace(/\/$/, '');
         this.username = username;
         this.password = password;
         this.adminUrl = adminUrl ? adminUrl.replace(/\/$/, '') : '';
@@ -27,20 +25,10 @@ export class FrigateService {
             });
 
             if (!response.ok) {
-                console.error('Frigate Login Failed:', response.status);
-                Alert.alert('Frigate Login Failed', `Status: ${response.status}`);
+                console.warn('Frigate login skipped:', response.status);
                 return false;
             }
 
-            // In v0.14, token is often returned in body or cookie. 
-            // Often body: { message: "Login successful" } and set-cookie.
-            // But usually we need to grab the JWT to use as Bearer if pure API.
-            // Let's check response body for a token, or rely on cookie handling if React Native handles it?
-            // React Native fetch does not persist cookies automatically across sessions reliably without a cookie jar,
-            // but often handles them within a session.
-            // Ideally, the API returns a token. Let's try to parse it.
-
-            // Check for Set-Cookie header
             const cookie = response.headers.get('set-cookie');
             if (cookie) {
                 this.sessionCookie = cookie;
@@ -48,17 +36,12 @@ export class FrigateService {
 
             return true;
         } catch (error) {
-            console.error('Frigate Login Error:', error);
-            Alert.alert('Frigate Login Error', error.message || 'Unknown error');
+            console.warn('Frigate login skipped:', error.message || error);
             return false;
         }
     }
 
     async ensureAuth() {
-        // Simple check: make a lightweight call. If 401, login.
-        // Or just login once on init? Better to login on demand/fail.
-        // Since we don't have an expirable token stored, let's just login if we suspect we aren't.
-        // Optimistic: Just try call, if 401, login and retry.
         return true;
     }
 
@@ -73,7 +56,6 @@ export class FrigateService {
         if (response.status === 401) {
             const loggedIn = await this.login();
             if (loggedIn) {
-                // Retry
                 response = await fetch(url, {
                     ...options,
                     headers: { ...this.headers, ...options.headers }
@@ -85,7 +67,7 @@ export class FrigateService {
 
     async getConfig() {
         try {
-            // Use backend proxy
+            if (!this.adminUrl) return null;
             const proxyUrl = this.adminUrl + '/api/frigate/config';
             const response = await fetch(proxyUrl, {
                 method: 'GET',
@@ -93,22 +75,22 @@ export class FrigateService {
             });
 
             if (!response.ok) {
-                console.error('Frigate: Config fetch failed with status:', response.status);
-                Alert.alert('Connection Error', 'Unable to connect to Frigate');
+                console.warn('Frigate config unavailable:', response.status);
                 return null;
             }
 
             const data = await response.json();
+            if (data?.error && !data.cameras) return null;
             return data;
         } catch (error) {
-            console.error('Frigate Config Error:', error.message || error);
-            Alert.alert('Connection Error', 'Unable to connect to Frigate');
+            console.warn('Frigate config skipped:', error.message || error);
             return null;
         }
     }
 
     async getStats() {
         try {
+            if (!this.adminUrl) return null;
             const proxyUrl = this.adminUrl + '/api/frigate/stats';
             const response = await fetch(proxyUrl, {
                 method: 'GET',
@@ -118,18 +100,17 @@ export class FrigateService {
             const text = await response.text();
             if (!text || text.trim().startsWith('<')) return null;
             return JSON.parse(text);
-        } catch (error) {
-            // Silently ignore — stats are optional
+        } catch {
             return null;
         }
     }
 
     async getEvents(options = {}) {
-        // options: { camera, limit, has_clip, has_snapshot }
         try {
+            if (!this.adminUrl) return [];
             const params = new URLSearchParams();
             if (options.limit) params.append('limit', options.limit);
-            else params.append('limit', 20); // Default limit
+            else params.append('limit', 20);
 
             if (options.camera) params.append('camera', options.camera);
             if (options.label) params.append('label', options.label);
@@ -137,28 +118,25 @@ export class FrigateService {
             if (options.after) params.append('after', options.after);
             if (options.has_clip) params.append('has_clip', 1);
             if (options.has_snapshot) params.append('has_snapshot', 1);
-            if (options.include_thumbnails === 0) params.append('include_thumbnails', 0); // Frigate defaults to 1
+            if (options.include_thumbnails === 0) params.append('include_thumbnails', 0);
 
-            // Use backend proxy
             const proxyUrl = this.adminUrl + `/api/frigate/events?${params.toString()}`;
             const response = await fetch(proxyUrl, { headers: this.headers });
-            return await response.json();
+            if (!response.ok) return [];
+            const data = await response.json();
+            return Array.isArray(data) ? data : [];
         } catch (error) {
-            console.error('Frigate Events Error:', error);
-            Alert.alert('Frigate Events Error', error.message || String(error));
+            console.warn('Frigate events skipped:', error.message || error);
             return [];
         }
     }
 
     getStreamUrl(cameraName) {
-        // Use backend proxy instead of direct Frigate connection
-        // This solves WebView authentication issues
         const url = `${this.adminUrl}/api/frigate/stream/${cameraName}?fps=5&height=720&bbox=1`;
         return url;
     }
 
     getSnapshotUrl(cameraName) {
-        // Use backend proxy for snapshots too
         const url = `${this.adminUrl}/api/frigate/snapshot/${cameraName}`;
         return url;
     }
@@ -170,26 +148,24 @@ export class FrigateService {
     }
 
     getAudioUrl(cameraName) {
-        // Frigate audio stream endpoint - using backend proxy
         const url = `${this.adminUrl}/api/frigate/audio/${cameraName}`;
         return url;
     }
 
     async getRecordingSummary(cameraName) {
         try {
+            if (!this.adminUrl) return [];
             const proxyUrl = this.adminUrl + `/api/frigate/recordings/${cameraName}/summary`;
             const response = await fetch(proxyUrl, { headers: this.headers });
             if (!response.ok) return [];
             return await response.json();
         } catch (e) {
-            console.error('Frigate Recording Summary Error:', e);
-            Alert.alert('Frigate Recording Error', e.message || String(e));
+            console.warn('Frigate recordings skipped:', e.message || e);
             return [];
         }
     }
 
     getVodUrl(cameraName, start, end) {
-        // /api/frigate/vod/<camera>/start/<start>/end/<end>/index.m3u8
         const proxyUrl = this.adminUrl + '/api/frigate/vod';
         return `${proxyUrl}/${cameraName}/start/${start}/end/${end}/index.m3u8`;
     }
@@ -202,8 +178,7 @@ export class FrigateService {
             });
             return response.ok;
         } catch (error) {
-            console.error('PTZ Error:', error);
-            Alert.alert('PTZ Error', error.message || String(error));
+            console.warn('PTZ skipped:', error.message || error);
             return false;
         }
     }

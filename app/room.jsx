@@ -42,6 +42,7 @@ export default function RoomPage() {
     const [coverMappings] = useState(() => initialPayload?.coverMappings ?? []);
     const [coverWindows] = useState(() => initialPayload?.coverWindows ?? []);
     const [mediaMappings] = useState(() => initialPayload?.mediaMappings ?? []);
+    const [climateMappings] = useState(() => initialPayload?.climateMappings ?? []);
     const [showPreferenceButton, setShowPreferenceButton] = useState(true);
     const [loading, setLoading] = useState(() => !initialPayload);
     const [haStatus, setHaStatus] = useState(
@@ -246,6 +247,7 @@ export default function RoomPage() {
         sensorMappings,
         coverMappings,
         mediaMappings,
+        climateMappings,
         musicAssistantEntryIds,
         badgeConfig,
     });

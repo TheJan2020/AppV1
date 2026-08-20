@@ -5,10 +5,11 @@ export class ButlerProxyClient {
     constructor(wsBaseUrl) {
         this.wsBaseUrl = wsBaseUrl.replace(/\/$/, '');
         this.ws = null;
-        this.allowInterruption = true;
+        this.allowInterruption = false;
         this.listeners = {};
         this._pingTimer = null;
         this._connected = false;
+        this._closing = false;
     }
 
     on(event, fn) {
@@ -45,6 +46,7 @@ export class ButlerProxyClient {
                 fn(arg);
             };
 
+            this._closing = false;
             const ws = new WebSocket(url);
             this.ws = ws;
 
@@ -65,6 +67,7 @@ export class ButlerProxyClient {
             };
             ws.onmessage = (ev) => this._handleMessage(ev.data);
             ws.onerror = () => {
+                if (this._closing) return;
                 const err = new Error('Butler voice WebSocket error — is uvicorn running on port 8787?');
                 this.emit('error', err);
                 finish(reject, err);
@@ -74,6 +77,7 @@ export class ButlerProxyClient {
                 this._stopPing();
                 const wasConnected = this._connected;
                 this._connected = false;
+                if (this._closing) return;
                 this.emit('close', `${ev.code} ${ev.reason || ''}`.trim());
                 if (!settled) {
                     finish(reject, new Error(`Butler connection closed (${ev.code})`));
@@ -103,9 +107,12 @@ export class ButlerProxyClient {
     }
 
     close() {
+        this._closing = true;
         this._stopPing();
         this._connected = false;
-        this.ws?.close();
+        try {
+            this.ws?.close();
+        } catch (_) { /* ignore */ }
         this.ws = null;
     }
 

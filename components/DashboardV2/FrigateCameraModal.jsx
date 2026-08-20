@@ -4,6 +4,7 @@ import { X, User, Car, Dog, AlertTriangle, Clock } from 'lucide-react-native';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CF } from '../../utils/typography';
+import { formatCameraName } from '../../utils/formatDisplayName';
 import CameraSensorOverlay, { isSensorActive, buildEntityMap, resolveSensorIds } from './CameraSensorOverlay';
 import { dedupeEventsById, paginationBeforeCursor } from '../../utils/frigateEvents';
 import FrigateEventImageModal from './FrigateEventImageModal';
@@ -85,7 +86,7 @@ function EventCard({ event, adminUrl, authHeaders, onPress }) {
             </View>
 
             <View style={styles.info}>
-                <Text style={styles.cameraName} numberOfLines={1}>{event.camera}</Text>
+                <Text style={styles.cameraName} numberOfLines={1}>{formatCameraName(event.camera)}</Text>
                 <View style={styles.timeRow}>
                     <Clock size={11} color="rgba(255,255,255,0.4)" />
                     <Text style={styles.timeText}>{formatDate(event.start_time)} · {formatTime(event.start_time)}</Text>
@@ -298,7 +299,7 @@ export default function FrigateCameraModal({ visible, camera, service, onClose, 
             />
             <View style={styles.container}>
                 <View style={styles.header}>
-                    <Text style={styles.title}>{camera?.name ?? 'Camera'}</Text>
+                    <Text style={styles.title}>{formatCameraName(camera?.name) || 'Camera'}</Text>
                     <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
                         <X size={24} color="white" />
                     </TouchableOpacity>

@@ -8,6 +8,7 @@ import * as Haptics from 'expo-haptics';
 
 import useDeviceType from '../hooks/useDeviceType';
 import useHAConnection from '../hooks/useHAConnection';
+import { filterPoweredOnClimates } from '../utils/acPowerSwitch';
 import { Colors } from '../constants/Colors';
 
 // Widgets
@@ -76,7 +77,7 @@ export default function DashboardV3() {
 
     // Badge counts
     const lightsOn = entities.filter(e => e.entity_id.startsWith('light.') && e.state === 'on').length;
-    const acOn = entities.filter(e => e.entity_id.startsWith('climate.') && e.state !== 'off' && e.state !== 'unavailable').length;
+    const acOn = filterPoweredOnClimates(entities, entities).length;
     const doorsOpen = entities.filter(e => {
         const isSensorDoor = e.entity_id.startsWith('sensor.door_');
         const isBinaryDoor = e.entity_id.startsWith('binary_sensor.') && (
@@ -112,13 +113,17 @@ export default function DashboardV3() {
         registryAreas.forEach(area => {
             const areaDevices = registryDevices.filter(d => d.area_id === area.area_id);
             const areaDeviceIds = areaDevices.map(d => d.id);
-            const activeInRoom = registryEntities.filter(re => {
+            const roomEntities = registryEntities.filter(re => {
                 return re.area_id === area.area_id || (re.device_id && areaDeviceIds.includes(re.device_id));
-            }).map(re => entities.find(e => e.entity_id === re.entity_id))
-                .filter(e => {
-                    if (!e) return false;
+            }).map(re => {
+                const e = entities.find(e => e.entity_id === re.entity_id);
+                return e ? { ...e, device_id: re.device_id } : null;
+            }).filter(Boolean);
+
+            const activeInRoom = type === 'ac'
+                ? filterPoweredOnClimates(roomEntities, entities)
+                : roomEntities.filter(e => {
                     if (type === 'lights') return e.entity_id.startsWith('light.') && e.state === 'on';
-                    if (type === 'ac') return e.entity_id.startsWith('climate.') && e.state !== 'off' && e.state !== 'unavailable';
                     if (type === 'doors') {
                         const isDoor = e.entity_id.startsWith('sensor.door_') ||
                             (e.entity_id.startsWith('binary_sensor.') && (
@@ -184,11 +189,13 @@ export default function DashboardV3() {
                 return s && s.state === 'on';
             }).length;
 
-            const activeAC = areaRegEntries.filter(re => {
-                if (!re.entity_id.startsWith('climate.')) return false;
-                const s = entities.find(e => e.entity_id === re.entity_id);
-                return s && s.state !== 'off' && s.state !== 'unavailable';
-            }).length;
+            const roomEntities = areaRegEntries
+                .map(re => {
+                    const e = entities.find(e => e.entity_id === re.entity_id);
+                    return e ? { ...e, device_id: re.device_id } : null;
+                })
+                .filter(Boolean);
+            const activeAC = filterPoweredOnClimates(roomEntities, entities).length;
 
             const activeCovers = areaRegEntries.filter(re => {
                 if (!re.entity_id.startsWith('cover.')) return false;

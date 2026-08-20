@@ -17,14 +17,10 @@ import * as Haptics from 'expo-haptics';
 import ClimateCard from './ClimateCard';
 import { Heading, CF, RoomDeviceStatus } from '../../utils/typography';
 import RoomGroupIconButton, { ROOM_GROUP_ICON_GLYPH_SIZE } from './RoomGroupIconButton';
+import { applyClimatePower, isClimatePoweredOn } from '../../utils/acPowerSwitch';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
     UIManager.setLayoutAnimationEnabledExperimental(true);
-}
-
-function isClimateOn(climate) {
-    const state = climate.stateObj?.state || 'off';
-    return state !== 'off' && state !== 'unavailable';
 }
 
 export default function ClimateGroupCard({
@@ -36,16 +32,16 @@ export default function ClimateGroupCard({
     const isTabletSplit = variant === 'tabletSplit';
     const [detailsExpanded, setDetailsExpanded] = useState(false);
 
-    const anyOn = useMemo(() => climates.some(isClimateOn), [climates]);
+    const anyOn = useMemo(() => climates.some(isClimatePoweredOn), [climates]);
     const primary = climates[0];
-    const primaryOn = primary ? isClimateOn(primary) : false;
+    const primaryOn = primary ? isClimatePoweredOn(primary) : false;
 
     const handleMasterToggle = useCallback(() => {
         if (!climates.length) return;
         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
         climates.forEach((c) => {
             if (anyOn) {
-                onUpdate?.(c.entity_id, 'climate', 'set_hvac_mode', { hvac_mode: 'off' });
+                applyClimatePower(c, false, onUpdate);
             } else {
                 const attrs = c.stateObj?.attributes || {};
                 const modes = attrs.hvac_modes || [];
@@ -54,7 +50,7 @@ export default function ClimateGroupCard({
                     last && modes.includes(last) && last !== 'off'
                         ? last
                         : modes.find((m) => m !== 'off') || 'cool';
-                onUpdate?.(c.entity_id, 'climate', 'set_hvac_mode', { hvac_mode: mode });
+                applyClimatePower(c, true, onUpdate, mode);
             }
         });
     }, [climates, anyOn, onUpdate]);
@@ -72,7 +68,7 @@ export default function ClimateGroupCard({
         : 'Climate';
     const headerStatus = climates.length === 1
         ? (primaryOn ? 'ON' : 'OFF')
-        : `${climates.filter(isClimateOn).length} ON`;
+        : `${climates.filter(isClimatePoweredOn).length} ON`;
 
     return (
         <View style={[styles.container, isTabletSplit && styles.containerTabletSplit]}>
@@ -113,9 +109,9 @@ export default function ClimateGroupCard({
                                 </Text>
                                 <Text style={[
                                     styles.unitStatus,
-                                    isClimateOn(climate) && styles.unitStatusOn,
+                                    isClimatePoweredOn(climate) && styles.unitStatusOn,
                                 ]}>
-                                    {isClimateOn(climate) ? 'ON' : 'OFF'}
+                                    {isClimatePoweredOn(climate) ? 'ON' : 'OFF'}
                                 </Text>
                             </View>
                         )}
@@ -141,7 +137,7 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         paddingHorizontal: 18,
         paddingTop: 18,
-        paddingBottom: 8,
+        paddingBottom: 16,
         marginBottom: 12,
     },
     containerTabletSplit: {

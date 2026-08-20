@@ -7,8 +7,8 @@ export function getButlerAudioBackend() {
     if (Platform.OS !== 'ios' && Platform.OS !== 'android') {
         return 'unsupported';
     }
-    // iOS native path needs BOTH playback (expo-pcm-player) and mic (live-audio-stream).
-    if (Platform.OS === 'ios' && isPcmPlayerAvailable() && isLiveMicAvailable()) {
+    // Native path needs BOTH playback (expo-pcm-player) and mic (live-audio-stream).
+    if (isPcmPlayerAvailable() && isLiveMicAvailable()) {
         return 'native';
     }
     return 'unsupported';
@@ -16,7 +16,7 @@ export function getButlerAudioBackend() {
 
 export function isPcmPlayerAvailable() {
     if (pcmPlayerAvailable !== null) return pcmPlayerAvailable;
-    if (Platform.OS !== 'ios') {
+    if (Platform.OS !== 'ios' && Platform.OS !== 'android') {
         pcmPlayerAvailable = false;
         return false;
     }
@@ -40,6 +40,16 @@ export function isLiveMicAvailable() {
     return liveMicAvailable;
 }
 
+function rebuildHint() {
+    if (Platform.OS === 'android') {
+        return 'Voice needs a native rebuild. Run: npx expo run:android';
+    }
+    if (Platform.OS === 'ios') {
+        return 'Voice needs a native rebuild. Run: npx expo run:ios --device';
+    }
+    return 'Butler voice is not supported on this platform.';
+}
+
 export function getNativeAudioStatus() {
     const backend = getButlerAudioBackend();
     const pcm = isPcmPlayerAvailable();
@@ -56,12 +66,19 @@ export function getNativeAudioStatus() {
         };
     }
 
+    const missing = [];
+    if (!pcm) missing.push('playback');
+    if (!mic) missing.push('microphone');
+    const detail = missing.length
+        ? `Missing native ${missing.join(' + ')} module. ${rebuildHint()}`
+        : rebuildHint();
+
     return {
         ready: false,
         backend: 'unsupported',
         pcm,
         mic,
         platform: Platform.OS,
-        message: 'Butler voice is not supported on this platform.',
+        message: detail,
     };
 }

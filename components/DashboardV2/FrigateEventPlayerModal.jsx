@@ -16,6 +16,7 @@ import { CF } from '../../utils/typography';
 import {
     getEventPlayUrl, getEventThumbnailUrl, getClipRelativePath, resolveEventEndTime,
 } from '../../utils/frigateEvents';
+import { formatCameraName } from '../../utils/formatDisplayName';
 
 const CLIP_RETRY_MS = 2500;
 const CLIP_MAX_RETRIES = 12;
@@ -351,7 +352,7 @@ export default function FrigateEventPlayerModal({
 
     if (!event) return null;
 
-    const title = event.camera || 'Event';
+    const title = formatCameraName(event.camera) || 'Event';
     const subtitle = [
         event.label,
         event.sub_label,

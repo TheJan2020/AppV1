@@ -15,7 +15,7 @@ const OUTPUT_GAIN_HEADSET = Platform.OS === 'ios' ? 3.0 : 2.5;
 function getNativePlayer() {
     if (!isPcmPlayerAvailable()) {
         throw new Error(
-            'expo-pcm-player native module missing. Rebuild the native app.',
+            'expo-pcm-player native module missing. Rebuild: npx expo run:android / npx expo run:ios',
         );
     }
     return require('expo-pcm-player').default;
