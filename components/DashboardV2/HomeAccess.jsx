@@ -1,28 +1,23 @@
 /**
- * HomeAccess — Locks, Garage & Shutter section
+ * HomeAccess — Locks & Garage section
  *
- * Three distinct pill types sharing the same visual language:
+ * Two pill types sharing the same visual language:
  *
  *   LockPill    — binary drag knob
  *                 locked:   knob LEFT  (purple) → drag RIGHT to unlock
  *                 unlocked: knob RIGHT (orange) → drag LEFT  to lock
  *
- *   GaragePill  — drag when idle, timed progress bar + stop button when in transit
+ *   GaragePill  — drag when idle, timed progress bar when in transit
  *                 closed:   knob LEFT  (purple) → drag RIGHT to open
  *                 open:     knob RIGHT (orange) → drag LEFT  to close
- *                 opening/closing: knob hidden, pulsing label, progress bar, amber ✕ stop
- *
- *   ShutterPill — full-width 3-zone tap bar
- *                 [ ↑ Open | ■ Stop | ↓ Close ]
- *                 active zone highlights based on current HA state
+ *                 opening/closing: knob hidden, pulsing label, progress bar
  *
  * Layout:
  *   Locks + Garages → half-width pills, 2 per row
- *   Shutters        → full-width pill, one per row (below locks/garages)
  */
 
 import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView, Switch, ActivityIndicator } from 'react-native';
-import { Edit2, ChevronUp, ChevronDown, Square, X, Check, Lock, DoorOpen, Blinds } from 'lucide-react-native';
+import { Edit2, ChevronUp, ChevronDown, X, Check, Lock, DoorOpen } from 'lucide-react-native';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, {
@@ -46,8 +41,6 @@ import ModalBackdrop from '../ModalBackdrop';
 // ── Color tokens ──────────────────────────────────────────────────────────────
 const C_PURPLE = '#8947ca';   // locked / closed
 const C_ORANGE = '#FF7043';   // unlocked / open
-const C_AMBER  = '#FFA000';   // in transit / stop
-const C_BG     = '#12132a';
 const C_BORDER = '#212136';
 
 // ── Pill dimensions ───────────────────────────────────────────────────────────
@@ -555,69 +548,6 @@ function GaragePill({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  ShutterPill — same pill shell as Lock/Garage, 3 knob-style tap buttons
-// ─────────────────────────────────────────────────────────────────────────────
-function ShutterPill({ name, isOpen, isOpening, isClosing, onControl }) {
-    const inMotion = isOpening || isClosing;
-
-    const handlePress = (action) => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-        onControl(action);
-    };
-
-    const pillBg = inMotion ? 'rgba(255,160,0,0.05)' : C_BG;
-    const border = inMotion ? 'rgba(255,160,0,0.35)' : C_BORDER;
-
-    const openActive  = isOpening || (isOpen && !inMotion);
-    const closeActive = isClosing || (!isOpen && !inMotion);
-    const stopActive  = inMotion;
-
-    const openColor  = isOpening  ? C_ORANGE : openActive  ? `${C_ORANGE}aa` : 'rgba(255,255,255,0.45)';
-    const stopColor  = stopActive ? C_AMBER  : 'rgba(255,255,255,0.45)';
-    const closeColor = isClosing  ? C_PURPLE : closeActive ? `${C_PURPLE}aa` : 'rgba(255,255,255,0.45)';
-
-    const openKnobBg  = isOpening  ? `${C_ORANGE}33` : openActive  ? `${C_ORANGE}1A` : 'rgba(255,255,255,0.06)';
-    const stopKnobBg  = stopActive ? `${C_AMBER}33`  : 'rgba(255,255,255,0.06)';
-    const closeKnobBg = isClosing  ? `${C_PURPLE}33` : closeActive ? `${C_PURPLE}1A` : 'rgba(255,255,255,0.06)';
-
-    const KNOB_BTN = HEIGHT - PAD * 2;
-
-    return (
-        <View style={[styles.pill, styles.shutterPill, { backgroundColor: pillBg }]}>
-            <View style={[styles.pillTrack, { borderColor: border }]} />
-
-            <Text style={styles.shutterName} numberOfLines={1}>{name}</Text>
-
-            <View style={styles.shutterBtns}>
-                <TouchableOpacity
-                    style={[styles.shutterKnob, { width: KNOB_BTN, height: KNOB_BTN, borderRadius: KNOB_BTN / 2, backgroundColor: openKnobBg }]}
-                    onPress={() => handlePress('open_cover')}
-                    activeOpacity={0.65}
-                >
-                    <ChevronUp size={18} color={openColor} strokeWidth={2.5} />
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                    style={[styles.shutterKnob, { width: KNOB_BTN, height: KNOB_BTN, borderRadius: KNOB_BTN / 2, backgroundColor: stopKnobBg }]}
-                    onPress={() => handlePress('stop_cover')}
-                    activeOpacity={0.65}
-                >
-                    <Square size={14} color={stopColor} strokeWidth={2.5} fill={stopActive ? C_AMBER : 'transparent'} />
-                </TouchableOpacity>
-
-                <TouchableOpacity
-                    style={[styles.shutterKnob, { width: KNOB_BTN, height: KNOB_BTN, borderRadius: KNOB_BTN / 2, backgroundColor: closeKnobBg }]}
-                    onPress={() => handlePress('close_cover')}
-                    activeOpacity={0.65}
-                >
-                    <ChevronDown size={18} color={closeColor} strokeWidth={2.5} />
-                </TouchableOpacity>
-            </View>
-        </View>
-    );
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 //  EditModal sub-components — defined OUTSIDE modal to keep stable references
 //  (defining them inside would recreate them on every state change → lag)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -646,12 +576,12 @@ function EntityRow({ name, entity_id, isSelected, onToggle }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  EditModal — pick which locks, garages, and shutters appear on Home
+//  EditModal — pick which locks and garages appear on Home
 //
 //  Data flow:
 //   • Locks   — passed in as allLockEntities (already in HA state from dashboard)
 //   • Covers  — fetched fresh from /api/covers on open, filtered to
-//               coverType === 'shutter' | 'garage'  (type assigned in admin Covers page)
+//               coverType === 'garage'  (type assigned in admin Covers page)
 //   • Names   — covers: friendly_name from haEntities prop (HA live state)
 //   • Saved selection — fetched fresh from /api/home-access on open
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1390,35 +1320,5 @@ const styles = StyleSheet.create({
     progressBar: {
         height: 3,
         borderRadius: 1.5,
-    },
-
-    // ── ShutterPill ──────────────────────────────────────────────────────────
-    shutterPill: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingLeft: PAD + 12,
-        paddingRight: PAD,
-        gap: 8,
-    },
-    shutterName: {
-        flex: 1,
-        color: '#ededf5',
-        fontSize: 13,
-        fontFamily: CF.semibold,
-        letterSpacing: 0.1,
-    },
-    shutterBtns: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 6,
-    },
-    shutterKnob: {
-        alignItems: 'center',
-        justifyContent: 'center',
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.25,
-        shadowRadius: 4,
-        elevation: 4,
     },
 });

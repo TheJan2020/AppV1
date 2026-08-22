@@ -59,8 +59,9 @@ export function getSelectedAreasForDashboard(registryAreas = [], badgeConfig = n
         return allAreas;
     }
 
+    // Show selected rooms even before the HA area registry arrives (cached Home).
     return selected
-        .filter((sa) => sa?.area_id && allAreas.some((ra) => ra.area_id === sa.area_id))
+        .filter((sa) => sa?.area_id)
         .map((sa) => {
             const reg = allAreas.find((ra) => ra.area_id === sa.area_id);
             return reg ? { ...reg, ...sa } : { ...sa };

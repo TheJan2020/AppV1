@@ -13,6 +13,7 @@ import AlertEntitiesModal from './AlertEntitiesModal';
 import MyPreferencesModal from './MyPreferencesModal';
 import PreferencedEntitiesModal from './PreferencedEntitiesModal';
 import { Heading, CF } from '../../utils/typography';
+import useDeviceType from '../../hooks/useDeviceType';
 
 function capitalizeWords(str) {
     if (!str) return '';
@@ -37,6 +38,7 @@ function SettingsView({
     userName = '',
     onEntitiesChanged, // Called after monitored-entity changes so dashboard refreshes refs
 }) {
+    const { isTablet } = useDeviceType();
     const [activeTab, setActiveTab] = useState('general');
     const [selectedArea, setSelectedArea] = useState(null);
     const [faceIdEnabled, setFaceIdEnabled] = useState(false);
@@ -480,7 +482,7 @@ function SettingsView({
                     />
                 </View>
 
-                {/* Voice Assistant Toggle */}
+                {isTablet && (
                 <View style={styles.listItem}>
                     <View style={styles.itemInfo}>
                         <View style={styles.iconContainer}>
@@ -488,7 +490,7 @@ function SettingsView({
                         </View>
                         <View>
                             <Text style={styles.itemName}>Voice Assistant</Text>
-                            <Text style={styles.itemSub}>Legacy center widget (tablet only). Phone uses the Butler tab in the bottom bar.</Text>
+                            <Text style={styles.itemSub}>Center voice widget on tablet. Phone uses the Butler tab.</Text>
                         </View>
                     </View>
                     <Switch
@@ -498,6 +500,7 @@ function SettingsView({
                         thumbColor={showVoiceAssistant ? '#fff' : '#f4f3f4'}
                     />
                 </View>
+                )}
 
                 {/* Show Preference Button Toggle */}
                 <View style={styles.listItem}>

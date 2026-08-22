@@ -58,7 +58,7 @@ const STRIP_PAGE_JS = `
 `;
 
 // Camera card — live WebView stream
-const CameraCard = ({ cam, frigateService, onPress, isOnline = true, sensorIds = [], entityMap = {}, cardWidth }) => {
+const CameraCard = ({ cam, frigateService, onPress, sensorIds = [], entityMap = {}, cardWidth }) => {
     const [streamError, setStreamError] = useState(false);
     const isHACamera = !!(cam.entity_id);
     const streamUrl = isHACamera
@@ -118,8 +118,29 @@ const CameraCard = ({ cam, frigateService, onPress, isOnline = true, sensorIds =
     );
 };
 
+function cameraKey(id) {
+    return String(id || '').trim().toLowerCase().replace(/^camera\./, '');
+}
+
+function normalizeSelectedIds(rawList, cameras) {
+    const raw = Array.isArray(rawList) ? rawList : [];
+    const matched = new Set();
+    for (const item of raw) {
+        if (item == null || String(item).trim() === '') continue;
+        const key = cameraKey(item);
+        if (!key) continue;
+        const cam = cameras.find((c) => (
+            cameraKey(c.entity_id) === key
+            || cameraKey(c.name) === key
+            || cameraKey(c.friendly_name) === key
+        ));
+        if (cam?.entity_id) matched.add(cam.entity_id);
+    }
+    return matched;
+}
+
 // ── Edit Cameras Modal ────────────────────────────────────────────────────────
-function EditCamerasModal({ visible, onClose, adminUrl, onSave }) {
+function EditCamerasModal({ visible, onClose, adminUrl, onSave, initialSelected = [] }) {
     const [allCameras, setAllCameras] = useState([]);
     const [selected, setSelected]     = useState(new Set());
     const [loading, setLoading]       = useState(false);
@@ -165,6 +186,7 @@ function EditCamerasModal({ visible, onClose, adminUrl, onSave }) {
 
         setSearch('');
         setAllCameras([]);
+        setSelected(new Set());
         setLoading(true);
 
         const base = adminUrl?.endsWith('/') ? adminUrl : `${adminUrl}/`;
@@ -173,12 +195,15 @@ function EditCamerasModal({ visible, onClose, adminUrl, onSave }) {
                 const data = await res.json();
                 const cams = (data.cameras || []).map(c => ({
                     entity_id:     c.entity_id || c.name || c,
-                    friendly_name: c.attributes?.friendly_name || c.entity_id || c.name || c,
+                    name:          c.name,
+                    friendly_name: c.attributes?.friendly_name || c.name || c.entity_id || c,
                 }));
                 cams.sort((a, b) => a.friendly_name.localeCompare(b.friendly_name));
                 setAllCameras(cams);
 
-                const savedSet = new Set(data.selected_cameras || []);
+                const fromConfig = Array.isArray(initialSelected) ? initialSelected : null;
+                const fromApi = Array.isArray(data.selected_cameras) ? data.selected_cameras : [];
+                const savedSet = normalizeSelectedIds(fromConfig ?? fromApi, cams);
                 savedIdsRef.current = savedSet;
                 setSelected(new Set(savedSet));
             })
@@ -333,7 +358,6 @@ function HomeCameraStrip({
     columns = 2,
 }) {
     const [editVisible, setEditVisible] = useState(false);
-    const [cameraOnlineStatus, setCameraOnlineStatus] = useState({});
     const [gridWidth, setGridWidth] = useState(0);
     const cardWidth =
         gridWidth > 0
@@ -349,48 +373,23 @@ function HomeCameraStrip({
         return map;
     }, [haEntities]);
 
-    useEffect(() => {
-        if (!frigateService) return;
-        let cancelled = false;
-
-        const poll = async () => {
-            try {
-                const stats = await frigateService.getStats();
-                if (cancelled || !stats?.cameras) return;
-                const status = {};
-                Object.entries(stats.cameras).forEach(([name, data]) => {
-                    // camera_fps > 0 means Frigate is receiving frames from this camera
-                    status[name] = (data.camera_fps ?? 0) > 0;
-                });
-                setCameraOnlineStatus(status);
-            } catch {
-                // Silently ignore — keep last known status
-            }
-        };
-
-        poll();
-        const id = setInterval(poll, 10000);
-        return () => {
-            cancelled = true;
-            clearInterval(id);
-        };
-    }, [frigateService]);
-
     // selectedCameraNames may be HA entity IDs like "camera.doorstep"
     // frigateCameras have name like "doorstep" (without prefix)
     // Normalise both sides: strip "camera." prefix before comparing
     const normalise = s => (s || '').toLowerCase().replace(/^camera\./, '');
     const selectedNormalised = selectedCameraNames.map(normalise);
     const cameras = frigateCameras.filter(c => selectedNormalised.includes(normalise(c.name || c.id)));
+    const canEdit = !!adminUrl;
+    const hasAnyCameras = frigateCameras.length > 0 || canEdit;
 
-    if (cameras.length === 0 && !editVisible) return null;
+    if (!hasAnyCameras && cameras.length === 0 && !editVisible) return null;
 
     return (
         <View style={styles.container}>
             <View style={styles.headerRow}>
                 <Text style={styles.title}>CAMERAS</Text>
                 <View style={styles.headerActions}>
-                    {adminUrl ? (
+                    {canEdit ? (
                         <TouchableOpacity onPress={() => setEditVisible(true)} style={styles.editBtn} activeOpacity={0.7}>
                             <Edit2 size={12} color="#9199BA" />
                             <Text style={styles.editText}>Edit</Text>
@@ -398,7 +397,7 @@ function HomeCameraStrip({
                     ) : null}
                 </View>
             </View>
-            {cameras.length > 0 && (
+            {cameras.length > 0 ? (
                 <View
                     style={styles.grid}
                     onLayout={(e) => {
@@ -414,7 +413,6 @@ function HomeCameraStrip({
                                     cam={cam}
                                     frigateService={frigateService}
                                     onPress={onCameraPress}
-                                    isOnline={cameraOnlineStatus[cam.name] !== false}
                                     sensorIds={sensorIds}
                                     entityMap={entityMap}
                                     cardWidth={cardWidth}
@@ -423,11 +421,19 @@ function HomeCameraStrip({
                         );
                     })}
                 </View>
+            ) : (
+                <View style={styles.emptyBox}>
+                    <Text style={styles.emptyTitle}>No cameras selected</Text>
+                    <Text style={styles.emptyHint}>
+                        For selecting a camera please press the Edit button.
+                    </Text>
+                </View>
             )}
             <EditCamerasModal
                 visible={editVisible}
                 onClose={() => setEditVisible(false)}
                 adminUrl={adminUrl}
+                initialSelected={selectedCameraNames}
                 onSave={(ids) => onCamerasUpdated && onCamerasUpdated(ids)}
             />
         </View>
@@ -444,6 +450,29 @@ const styles = StyleSheet.create({
         justifyContent: 'space-between',
         marginBottom: 10,
         marginHorizontal: 2,
+    },
+    emptyBox: {
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+        backgroundColor: 'rgba(255,255,255,0.04)',
+        paddingVertical: 22,
+        paddingHorizontal: 16,
+        alignItems: 'center',
+    },
+    emptyTitle: {
+        color: '#ededf5',
+        fontSize: 14,
+        fontFamily: CF.semibold,
+        marginBottom: 6,
+        textAlign: 'center',
+    },
+    emptyHint: {
+        color: 'rgba(237,237,245,0.45)',
+        fontSize: 13,
+        fontFamily: CF.regular,
+        textAlign: 'center',
+        lineHeight: 18,
     },
     title: {
         color: '#9199BA',
@@ -535,41 +564,6 @@ const styles = StyleSheet.create({
         textShadowColor: 'rgba(0,0,0,0.75)',
         textShadowOffset: { width: 0, height: 1 },
         textShadowRadius: 3,
-    },
-    liveBadge: {
-        position: 'absolute',
-        top: 8,
-        right: 8,
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 4,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        paddingHorizontal: 6,
-        paddingVertical: 3,
-        borderRadius: 8,
-    },
-    liveBadgeError: {
-        backgroundColor: 'rgba(239,83,80,0.15)',
-        borderWidth: 1,
-        borderColor: 'rgba(239,83,80,0.4)',
-    },
-    liveDot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-        backgroundColor: '#4ade80',
-    },
-    liveDotError: {
-        backgroundColor: '#EF5350',
-    },
-    liveText: {
-        color: 'white',
-        fontSize: 10,
-        fontFamily: CF.semibold,
-        letterSpacing: 0.5,
-    },
-    liveTextError: {
-        color: '#EF5350',
     },
 });
 

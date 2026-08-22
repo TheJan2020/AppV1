@@ -12,16 +12,6 @@ import ModalBackdrop from '../ModalBackdrop';
 
 export const MAX_QUICK_SCENES = 4;
 
-// ── Icon picker ───────────────────────────────────────────────────────────────
-function getSceneIcon(name = '') {
-    const n = name.toLowerCase();
-    if (n.includes('night') || n.includes('sleep')) return Moon;
-    if (n.includes('morning') || n.includes('wake'))  return Sun;
-    if (n.includes('leav') || n.includes('away') || n.includes('out')) return LogOut;
-    if (n.includes('arriv') || n.includes('home') || n.includes('back')) return Home;
-    return Zap;
-}
-
 // ── Edit Modal ────────────────────────────────────────────────────────────────
 export function EditScenesModal({
     visible,

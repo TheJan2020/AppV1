@@ -10,6 +10,7 @@ import { HAService } from '../services/ha';
 import { validateCredentials } from '../services/auth';
 import { registerForPushNotificationsAsync } from '../services/notifications';
 import { upsertAccountAndActivate } from '../services/accounts';
+import { preloadDashboardSnapshot } from '../utils/dashboardCache';
 import ModalBackdrop from '../components/ModalBackdrop';
 
 const SETTINGS_KEY_PROFILES = 'ha_profiles';
@@ -108,6 +109,8 @@ export default function Login() {
     // Add-account opens login while dashboard still holds a WebSocket — force a fresh fetch.
     useEffect(() => {
         if (!isAddAccount) return;
+        setUsername('');
+        setPassword('');
         if (haUrl && haToken) {
             setUsers([]);
             setSelectedUser(null);
@@ -134,7 +137,7 @@ export default function Login() {
             setHasSavedBiometricCreds(!!(savedPass && savedUser));
 
             // Prefill username for returning Face ID users (button no longer requires typing)
-            if (savedUser) setUsername(savedUser);
+            if (savedUser && !isAddAccount) setUsername(savedUser);
 
             // Check if returning user
             const hasLoggedInBefore = await SecureStore.getItemAsync('has_logged_in_before');
@@ -567,14 +570,21 @@ export default function Login() {
                 // null and the token was never sent to the backend.
                 registerForPushNotificationsAsync().catch(() => {});
 
-                router.replace({
-                    pathname: route,
-                    params: {
-                        userName: selectedUser.name,
-                        userId: selectedUser.user_id || '',
-                        switchKey: String(Date.now()),
-                    }
-                });
+                await preloadDashboardSnapshot(activeProfileId);
+
+                if (isAddAccount) {
+                    // Keep the existing dashboard underneath so both accounts stay signed in.
+                    router.back();
+                } else {
+                    router.replace({
+                        pathname: route,
+                        params: {
+                            userName: selectedUser.name,
+                            userId: selectedUser.user_id || '',
+                            switchKey: String(Date.now()),
+                        }
+                    });
+                }
             } else {
                 Alert.alert('Login Failed', 'Invalid username or password.');
             }
@@ -666,6 +676,8 @@ export default function Login() {
             });
 
             registerForPushNotificationsAsync().catch(() => {});
+
+            await preloadDashboardSnapshot(activeProfileId);
 
             router.replace({
                 pathname: '/dashboard-v2',
@@ -1027,7 +1039,7 @@ export default function Login() {
                                         )}
                                     </TouchableOpacity>
 
-                                    {faceIdEnabled && isBiometricSupported && (
+                                    {faceIdEnabled && isBiometricSupported && !isAddAccount && (
                                         <TouchableOpacity
                                             style={[styles.bioButton, { opacity: (isLoggingIn || !hasSavedBiometricCreds) ? 0.55 : 1 }]}
                                             onPress={handleBiometricLogin}

@@ -1,6 +1,5 @@
 import { useRef, useState, useEffect, useMemo, useCallback, useContext } from 'react';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
-import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
 import NotificationModal from '../components/DashboardV2/NotificationModal';
 import ButlerVoiceModal from '../components/DashboardV2/ButlerVoiceModal';
 import { canOpenButlerCall, requestButlerMicPermission, runButlerBackgroundSetup } from '../services/butler/openButlerCall';
@@ -11,50 +10,41 @@ import AlertNotificationModal from '../components/DashboardV2/AlertNotificationM
 import SecurityAlertModal from '../components/DashboardV2/SecurityAlertModal';
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator, Image, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, Alert } from 'react-native';
 import HomeCameraStrip from '../components/DashboardV2/HomeCameraStrip';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import HeaderV2 from '../components/DashboardV2/HeaderV2';
+import AccountSwitcherModal from '../components/DashboardV2/AccountSwitcherModal';
 import StatusBadges from '../components/DashboardV2/StatusBadges';
 import PersonBadges from '../components/DashboardV2/PersonBadges';
-import ActiveDevicesModal from '../components/DashboardV2/ActiveDevicesModal';
 import LocksModal from '../components/DashboardV2/LocksModal';
 import DevicesToggleModal from '../components/DashboardV2/DevicesToggleModal';
 import SettingsView from '../components/DashboardV2/SettingsView';
 import { HAService } from '../services/ha';
-import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
+import { Stack, useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { ensureAccountsMigrated } from '../services/accounts';
 import * as Haptics from 'expo-haptics';
 import NetworkModal from '../components/DashboardV2/NetworkModal';
 import QuickScenes from '../components/DashboardV2/QuickScenes';
-import AppleTVRemoteModal from '../components/DashboardV2/AppleTVRemoteModal';
 import DraggableRoomList from '../components/DashboardV2/DraggableRoomList';
 import RoomsList from '../components/DashboardV2/RoomsList';
 import CamerasList from '../components/DashboardV2/CamerasList';
 import FrigateEventsFeed from '../components/DashboardV2/FrigateEventsFeed';
-import HACamerasList from '../components/DashboardV2/HACamerasList';
 import { buildEntityMap } from '../components/DashboardV2/CameraSensorOverlay';
 import TabBar from '../components/DashboardV2/TabBar';
 import TabletSidebar from '../components/DashboardV2/TabletSidebar';
 import useDeviceType from '../hooks/useDeviceType';
 import useNotifications from '../hooks/useNotifications';
 import RoomSheet from '../components/DashboardV2/RoomSheet';
-import OpacitySettingsModal from '../components/DashboardV2/OpacitySettingsModal';
 import HomeAccess from '../components/DashboardV2/HomeAccess';
 import BrainView from '../components/DashboardV2/BrainView';
-import DashboardSkeleton, {
-    HeaderSkeleton,
-    ScenesSkeleton,
-    HomeAccessSkeleton,
-    RoomsSkeleton,
-    CamerasSkeleton,
-} from '../components/DashboardV2/DashboardSkeleton';
 
 import { FrigateService } from '../services/frigate';
 import * as SecureStore from 'expo-secure-store';
 import { startHeartbeat, stopHeartbeat, updateAppState } from '../services/heartbeat';
 import { getRoomEntities, getEntityIdsForAreaIds } from '../utils/roomHelpers';
-import { filterPoweredOnClimates, isClimatePoweredOn } from '../utils/acPowerSwitch';
+import { isClimatePoweredOn } from '../utils/acPowerSwitch';
 import { isCoverUiOpen } from '../utils/coverWindows';
 import {
     collectGroupedLightMemberIds,
@@ -72,57 +62,71 @@ import { useHaSystemHealth } from '../hooks/useHaSystemHealth';
 import HaSystemBanner from '../components/DashboardV2/HaSystemBanner';
 import { NotifContext } from '../services/NotifContext';
 import { logOperationalIssue } from '../utils/devLog';
+import {
+    loadDashboardSnapshot,
+    saveDashboardSnapshot,
+    applyDashboardSnapshot,
+    bootValue,
+    peekBootProfile,
+    peekDashboardSnapshot,
+    rememberBootProfile,
+    startBackgroundBoot,
+    toHaHttpUrl,
+} from '../utils/dashboardCache';
 
 export default function DashboardV2() {
     const router = useRouter();
-    const { userName, userId } = useLocalSearchParams();
+    const { userName: userNameParam, userId: userIdParam } = useLocalSearchParams();
+    const userName = Array.isArray(userNameParam) ? userNameParam[0] : userNameParam;
+    const userId = Array.isArray(userIdParam) ? userIdParam[0] : userIdParam;
     const { isTablet, isLandscape, columns } = useDeviceType();
     const homeColumns = isTablet ? 4 : 2;
     const homeRoomColumns = isTablet ? 6 : 2;
 
+    const bootProf = peekBootProfile();
+    const [bootReady, setBootReady] = useState(() => !!(peekDashboardSnapshot() || bootProf));
+    const [showCameras, setShowCameras] = useState(false);
+
     // Config State
-    const [connectionConfig, setConnectionConfig] = useState({
-        url: '',
-        token: '',
-        adminUrl: '',
-        loaded: false
-    });
+    const [connectionConfig, setConnectionConfig] = useState(() => (
+        bootProf
+            ? { url: bootProf.url, token: bootProf.token, adminUrl: bootProf.adminUrl, loaded: true }
+            : { url: '', token: '', adminUrl: '', loaded: false }
+    ));
     const [haStatus, setHaStatus] = useState(HA_STATUS.LOADING);
     const [adminStatus, setAdminStatus] = useState(ADMIN_STATUS.UNKNOWN);
 
     const service = useRef(null);
     const frigateService = useRef(null); // Frigate Service Ref
+    const profileIdRef = useRef(bootProf?.profileId || null);
+    const haLiveRef = useRef(false);
+    const saveTimerRef = useRef(null);
 
-    const [entities, setEntities] = useState([]);
-    const [cityName, setCityName] = useState('Home');
-    const [badgeConfig, setBadgeConfig] = useState(null);
+    const [entities, setEntities] = useState(() => bootValue('entities', []));
+    const [cityName, setCityName] = useState(() => bootValue('cityName', 'Home'));
+    const [badgeConfig, setBadgeConfig] = useState(() => bootValue('badgeConfig', null));
     const [currentFloor, setCurrentFloor] = useState(null);
     const [activeTab, setActiveTab] = useState('home');
     const [cctvView, setCctvView] = useState('cameras'); // 'cameras' | 'events'
-    const [frigateCameras, setFrigateCameras] = useState([]); // Frigate State
+    const [frigateCameras, setFrigateCameras] = useState(() => bootValue('frigateCameras', []));
     /** First Frigate config fetch finished (success or fail) — camera strip uses skeleton until then to avoid a blank gap. */
     const [frigateConfigResolved, setFrigateConfigResolved] = useState(false);
     const [selectedFrigateCamera, setSelectedFrigateCamera] = useState(null);
     const [showFrigateModal, setShowFrigateModal] = useState(false);
     const [frigateInitialView, setFrigateInitialView] = useState('live'); // 'live' or 'history'
-    const [showAppleTVRemote, setShowAppleTVRemote] = useState(false);
     const [showNetworkModal, setShowNetworkModal] = useState(false);
-    const [roomTrackingLookup, setRoomTrackingLookup] = useState({}); // Tracking state -> area_id mapping
+    const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
+    const [roomTrackingLookup, setRoomTrackingLookup] = useState(() => bootValue('roomTrackingLookup', {}));
 
     // Settings State
     const [showFamily, setShowFamily] = useState(false);
     const [autoRoomVisit, setAutoRoomVisit] = useState(true);
     const [autoRoomResume, setAutoRoomResume] = useState(true);
-    const [showVoiceAssistant, setShowVoiceAssistant] = useState(false);
-    /** Voice UI mounts one frame after home content — avoids building the huge voice context during first paint. */
     const [showPreferenceButton, setShowPreferenceButton] = useState(true);
 
     const haHttpUrl = useMemo(() => {
-        if (!connectionConfig.url) return '';
-        return connectionConfig.url
-            .replace(/^ws:\/\//i, 'http://')
-            .replace(/^wss:\/\//i, 'https://')
-            .replace(/\/api\/websocket\/?$/i, '');
+        if (connectionConfig.url) return toHaHttpUrl(connectionConfig.url);
+        return bootValue('haHttpUrl', '');
     }, [connectionConfig.url]);
 
 
@@ -143,21 +147,18 @@ export default function DashboardV2() {
                     showFamilyVal,
                     autoVisitVal,
                     autoResumeVal,
-                    voiceVal,
                     prefBtnVal,
                     roomOrderVal,
                 ] = await Promise.all([
                     SecureStore.getItemAsync('settings_show_family'),
                     SecureStore.getItemAsync('settings_auto_room_visit'),
                     SecureStore.getItemAsync('settings_auto_room_resume'),
-                    SecureStore.getItemAsync('settings_show_voice_assistant'),
                     SecureStore.getItemAsync('settings_show_preference_button'),
                     SecureStore.getItemAsync('room_reorder_config'),
                 ]);
                 if (showFamilyVal !== null) setShowFamily(showFamilyVal === 'true');
                 if (autoVisitVal !== null) setAutoRoomVisit(autoVisitVal === 'true');
                 if (autoResumeVal !== null) setAutoRoomResume(autoResumeVal === 'true');
-                if (voiceVal !== null) setShowVoiceAssistant(voiceVal === 'true');
                 if (prefBtnVal !== null) setShowPreferenceButton(prefBtnVal === 'true');
                 if (roomOrderVal !== null) {
                     try {
@@ -171,8 +172,19 @@ export default function DashboardV2() {
             }
         })();
 
-        loadConnectionConfig();
-        void getButlerBackendUrl();
+        void (async () => {
+            await startBackgroundBoot();
+            await loadConnectionConfig();
+            setBootReady(true);
+            void getButlerBackendUrl();
+        })();
+    }, []);
+
+    useEffect(() => {
+        const id = requestAnimationFrame(() => {
+            requestAnimationFrame(() => setShowCameras(true));
+        });
+        return () => cancelAnimationFrame(id);
     }, []);
 
     const loadConnectionConfig = async () => {
@@ -192,6 +204,40 @@ export default function DashboardV2() {
                     const normalizedAdminUrl = activeProfile.adminUrl?.replace(/^https?:\/\//i, (m) => m.toLowerCase()) || activeProfile.adminUrl;
 
                     console.log('[Dashboard] Loaded active profile:', activeProfile.name);
+                    profileIdRef.current = activeProfileId;
+                    rememberBootProfile({
+                        profileId: activeProfileId,
+                        url: normalizedHaUrl,
+                        token: activeProfile.haToken,
+                        adminUrl: normalizedAdminUrl,
+                    });
+                    const snapshot = await loadDashboardSnapshot(activeProfileId);
+                    if (snapshot && !haLiveRef.current) {
+                        applyDashboardSnapshot(snapshot, {
+                            setEntities,
+                            setCityName,
+                            setRegistryDevices,
+                            setRegistryEntities,
+                            setRegistryAreas,
+                            setRegistryFloors,
+                            setBadgeConfig,
+                            setAllowedQuickScenes,
+                            setSelectedLockIds,
+                            setSelectedCoverIds,
+                            setLockPassageConfigs,
+                            setLightMappings,
+                            setMediaMappings,
+                            setSensorMappings,
+                            setCoverMappings,
+                            setCoverWindows,
+                            setClimateMappings,
+                            setFrigateCameras,
+                            setRoomTrackingLookup,
+                            setMusicAssistantEntryIds,
+                            setAlertRules,
+                            setCachedHomeRooms,
+                        });
+                    }
                     setConnectionConfig({
                         url: normalizedHaUrl,
                         token: activeProfile.haToken,
@@ -219,62 +265,95 @@ export default function DashboardV2() {
         setShowFrigateModal(true);
     }, []);
 
+    const handleAccountSwitched = useCallback(async (account) => {
+        const nextName = account?.name || '';
+        const nextId = account?.userId || '';
+        router.setParams({
+            userName: nextName,
+            userId: nextId,
+            switchKey: String(Date.now()),
+        });
+        setActiveTab('home');
+        setRoomSheetVisible(false);
+        setSelectedRoom(null);
+        if (account?.profileId && account.profileId !== profileIdRef.current) {
+            haLiveRef.current = false;
+            setConnectionConfig({ url: '', token: '', adminUrl: '', loaded: false });
+            setTimeout(() => {
+                loadConnectionConfig();
+            }, 0);
+        }
+    }, [router]);
+
+    const handleAddAccount = useCallback(() => {
+        router.push({ pathname: '/login', params: { mode: 'addAccount' } });
+    }, [router]);
+
+    useFocusEffect(
+        useCallback(() => {
+            let cancelled = false;
+            (async () => {
+                try {
+                    await ensureAccountsMigrated();
+                    const [userJson, activeProfileId] = await Promise.all([
+                        SecureStore.getItemAsync('logged_in_user'),
+                        SecureStore.getItemAsync('ha_active_profile_id'),
+                    ]);
+                    if (cancelled || !userJson) return;
+                    const user = JSON.parse(userJson);
+                    const nextName = user.name || '';
+                    const nextId = user.userId || '';
+                    if (nextName !== (userName || '') || nextId !== (userId || '')) {
+                        router.setParams({
+                            userName: nextName,
+                            userId: nextId,
+                            switchKey: String(Date.now()),
+                        });
+                    }
+                    if (activeProfileId && activeProfileId !== profileIdRef.current) {
+                        haLiveRef.current = false;
+                        setConnectionConfig({ url: '', token: '', adminUrl: '', loaded: false });
+                        setTimeout(() => {
+                            loadConnectionConfig();
+                        }, 0);
+                    }
+                } catch (e) {
+                    console.log('[Dashboard] Account focus sync failed:', e);
+                }
+            })();
+            return () => {
+                cancelled = true;
+            };
+        }, [router, userName, userId]),
+    );
+
     // Registry Data
-    const [registryDevices, setRegistryDevices] = useState([]);
-    const [registryEntities, setRegistryEntities] = useState([]);
-    const [registryAreas, setRegistryAreas] = useState([]);
-    const [registryCategories, setRegistryCategories] = useState([]);
-    const [registryFloors, setRegistryFloors] = useState([]);
+    const [registryDevices, setRegistryDevices] = useState(() => bootValue('registryDevices', []));
+    const [registryEntities, setRegistryEntities] = useState(() => bootValue('registryEntities', []));
+    const [registryAreas, setRegistryAreas] = useState(() => bootValue('registryAreas', []));
+    const [registryFloors, setRegistryFloors] = useState(() => bootValue('registryFloors', []));
     const [selectedFloor, setSelectedFloor] = useState(null);
-    const [alertRules, setAlertRules] = useState([]);
-    const [lightMappings, setLightMappings] = useState([]);
-    const [mediaMappings, setMediaMappings] = useState([]);
-    const [allowedQuickScenes, setAllowedQuickScenes] = useState([]);
-    const [sensorMappings, setSensorMappings] = useState([]);
-    const [coverMappings, setCoverMappings] = useState([]);
-    const [coverWindows, setCoverWindows] = useState([]);
-    const [climateMappings, setClimateMappings] = useState([]);
+    const [alertRules, setAlertRules] = useState(() => bootValue('alertRules', []));
+    const [lightMappings, setLightMappings] = useState(() => bootValue('lightMappings', []));
+    const [mediaMappings, setMediaMappings] = useState(() => bootValue('mediaMappings', []));
+    const [allowedQuickScenes, setAllowedQuickScenes] = useState(() => bootValue('allowedQuickScenes', []));
+    const [sensorMappings, setSensorMappings] = useState(() => bootValue('sensorMappings', []));
+    const [coverMappings, setCoverMappings] = useState(() => bootValue('coverMappings', []));
+    const [coverWindows, setCoverWindows] = useState(() => bootValue('coverWindows', []));
+    const [climateMappings, setClimateMappings] = useState(() => bootValue('climateMappings', []));
     /** `entry_id`s from HA config_entries where domain is music_assistant — ties entities → MA without relying on state attrs */
-    const [musicAssistantEntryIds, setMusicAssistantEntryIds] = useState([]);
+    const [musicAssistantEntryIds, setMusicAssistantEntryIds] = useState(() => bootValue('musicAssistantEntryIds', []));
     // null = never configured (show all), [] = none selected, [...] = selected ids
-    const [selectedLockIds, setSelectedLockIds] = useState(null);
-    const [selectedCoverIds, setSelectedCoverIds] = useState(null);
-    const [lockPassageConfigs, setLockPassageConfigs] = useState({}); // { [entity_id]: { enabled, passage_entity_id } }
-
-    // ── Home tab reveal ─────────────────────────────────────────────────────────
-    // Show the full home (revealStep 5) as soon as HA states + quick-scenes +
-    // home-access APIs are ready. Frigate / HA camera lists load in the
-    // background — waiting on them used to block the entire page on slow networks.
-    //
-    // revealStep: 0 = section skeletons, 5 = real content (per-section thresholds
-    // below still use < 1 … < 5 for layout compatibility).
-    const [scenesFetched, setScenesFetched] = useState(false);
-    const [homeAccessFetched, setHomeAccessFetched] = useState(false);
-    const [revealStep, setRevealStep] = useState(0);
-
-    const resetReveal = useCallback(() => {
-        setRevealStep(0);
-        setScenesFetched(false);
-        setHomeAccessFetched(false);
-    }, []);
+    const [selectedLockIds, setSelectedLockIds] = useState(() => bootValue('selectedLockIds', null));
+    const [selectedCoverIds, setSelectedCoverIds] = useState(() => bootValue('selectedCoverIds', null));
+    const [lockPassageConfigs, setLockPassageConfigs] = useState(() => bootValue('lockPassageConfigs', {}));
+    const [cachedHomeRooms, setCachedHomeRooms] = useState(() => bootValue('rooms', []));
 
     const mappingsAbortRef = useRef(null);
 
-    /** @param {{ resetRevealCascade?: boolean }} [opts] — set false when refreshing after edits / resume so skeletons do not re-run */
-    const fetchMappings = (opts = {}) => {
-        const { resetRevealCascade = true } = opts;
-        // Config not ready yet — wait, don't touch any flags
+    const fetchMappings = () => {
         if (!connectionConfig.loaded) return;
-
-        // Loaded but no admin URL — nothing to fetch, mark all API flags done immediately
-        if (!connectionConfig.adminUrl) {
-            setScenesFetched(true);
-            setHomeAccessFetched(true);
-            return;
-        }
-
-        // Only reset the progressive-reveal cascade on initial / connection change loads
-        if (resetRevealCascade) resetReveal();
+        if (!connectionConfig.adminUrl) return;
 
         // Abort any in-flight mapping requests
         if (mappingsAbortRef.current) mappingsAbortRef.current.abort();
@@ -295,11 +374,9 @@ export default function DashboardV2() {
             .then(res => res.json())
             .then(data => {
                 if (Array.isArray(data)) setAllowedQuickScenes(data.map(s => s.entity_id));
-                setScenesFetched(true);
             })
             .catch(e => {
                 if (e.name !== 'AbortError') logOperationalIssue('Mappings Quick Scenes', e);
-                setScenesFetched(true);
             });
 
         // 2. Lights (+ icon type inference from entity_id)
@@ -355,11 +432,9 @@ export default function DashboardV2() {
                     setSelectedLockIds(data.locks);
                     setSelectedCoverIds(data.covers);
                 }
-                setHomeAccessFetched(true);
             })
             .catch(e => {
                 if (e.name !== 'AbortError') logOperationalIssue('Mappings HomeAccess', e);
-                setHomeAccessFetched(true);
             });
 
         // 7. Lock passage configs
@@ -402,8 +477,6 @@ export default function DashboardV2() {
     // Initial Load Logic
     useEffect(() => {
         if (!connectionConfig.loaded) return;
-
-        setFrigateConfigResolved(false);
 
         const { url: haUrl, token: haToken } = connectionConfig;
     const adminUrl = connectionConfig.adminUrl;
@@ -515,17 +588,16 @@ export default function DashboardV2() {
                         service.current.getConfig(),
                         service.current.getDeviceRegistry(),
                         service.current.getEntityRegistry(),
-                        service.current.getCategoryRegistry(),
                         service.current.getAreaRegistry(),
                         service.current.getFloorRegistry(),
                         service.current.getConfigEntries().catch(() => []),
-                    ]).then(([states, config, devices, regs, cats, areas, floors, configEntries]) => {
+                    ]).then(([states, config, devices, regs, areas, floors, configEntries]) => {
                         // Batch all state updates — React 18 batches these automatically
+                        haLiveRef.current = true;
                         setEntities(states || []);
                         if (config?.location_name) setCityName(config.location_name);
                         setRegistryDevices(devices || []);
                         setRegistryEntities(regs || []);
-                        setRegistryCategories(cats || []);
                         setRegistryAreas(areas || []);
                         if (floors && floors.length > 0) {
                             const sorted = [...floors].sort((a, b) => (a.level || 0) - (b.level || 0));
@@ -538,6 +610,29 @@ export default function DashboardV2() {
                             .filter(e => e?.domain === 'music_assistant' && e?.entry_id)
                             .map(e => e.entry_id);
                         setMusicAssistantEntryIds(maIds);
+                        saveDashboardSnapshot(profileIdRef.current, {
+                            entities: states || [],
+                            cityName: config?.location_name || 'Home',
+                            registryDevices: devices || [],
+                            registryEntities: regs || [],
+                            registryAreas: areas || [],
+                            registryFloors: floors || [],
+                            musicAssistantEntryIds: maIds,
+                            badgeConfig,
+                            allowedQuickScenes,
+                            selectedLockIds,
+                            selectedCoverIds,
+                            lockPassageConfigs,
+                            lightMappings,
+                            mediaMappings,
+                            sensorMappings,
+                            coverMappings,
+                            coverWindows,
+                            climateMappings,
+                            frigateCameras,
+                            roomTrackingLookup,
+                            alertRules,
+                        });
                         console.log(`[Dashboard] Loaded: ${(states||[]).length} states, ${(areas||[]).length} areas, ${(floors||[]).length} floors, Music Assistant config entries: ${maIds.length}`);
                     }).catch((e) => {
                         console.log('[Dashboard] Initial load error:', e.message);
@@ -778,28 +873,6 @@ export default function DashboardV2() {
         return climate ? Math.round(climate.attributes.current_temperature) : null;
     }, [entities]);
 
-    // Security zones for SecurityControlModal dot display
-    const securityZones = useMemo(() => {
-        const alarmEntity = entities.find(e => e.entity_id.startsWith('alarm_control_panel.'));
-        if (!alarmEntity) return [];
-        const isArmed = alarmEntity.state !== 'disarmed';
-        // Try to find sub-zone binary sensors; fall back to empty so modal uses defaults
-        const zoneSensors = entities.filter(e =>
-            e.entity_id.startsWith('binary_sensor.') &&
-            (e.attributes?.device_class === 'door' || e.attributes?.device_class === 'window' ||
-             e.attributes?.device_class === 'motion' || e.entity_id.includes('zone'))
-        );
-        if (zoneSensors.length > 0) {
-            return zoneSensors.slice(0, 6).map(z => ({
-                id: z.entity_id,
-                name: z.attributes?.friendly_name || z.entity_id.replace(/_/g, ' '),
-                detail: z.state === 'on' ? 'Active' : 'Inactive',
-                armed: isArmed && z.state !== 'unavailable',
-            }));
-        }
-        return []; // let the modal use its DEFAULT_ZONES
-    }, [entities]);
-
     // ── Security Alert: open locks / garage-shutter covers while armed ──────
     // Resolves the room name for an entity using registryEntities + registryDevices + registryAreas
     const resolveRoomName = useCallback((entityId) => {
@@ -869,23 +942,13 @@ export default function DashboardV2() {
         entities.find(e => e.entity_id.startsWith('alarm_control_panel.'))?.state ?? null,
     [entities]);
 
-    // Active Devices Modal State
-    const [modalVisible, setModalVisible] = useState(false);
-    const [securityModalVisible, setSecurityModalVisible] = useState(false);
     const [locksModalVisible, setLocksModalVisible] = useState(false);
     const [devicesToggleVisible, setDevicesToggleVisible] = useState(false);
     const [devicesToggleKind, setDevicesToggleKind] = useState('lights'); // 'lights' | 'ac'
 
-    const [activeBadgeType, setActiveBadgeType] = useState(null); // 'lights', 'ac', 'doors'
-
     // Room Sheet State
     const [roomSheetVisible, setRoomSheetVisible] = useState(false);
     const [selectedRoom, setSelectedRoom] = useState(null);
-
-    // Opacity Settings State
-    const [cardOpacity, setCardOpacity] = useState(0.4);
-    const [cardColor, setCardColor] = useState('#000000');
-    const [settingsModalVisible, setSettingsModalVisible] = useState(false);
 
     // ── Notifications ───────────────────────────────────────────────────────
     const {
@@ -900,22 +963,6 @@ export default function DashboardV2() {
     const [showButlerCall, setShowButlerCall] = useState(false);
     // Alert modal shown when user taps a push notification
     const [alertNotif, setAlertNotif] = useState(null); // { title, body, category, timestamp }
-
-    // One step to full home content once HA entities + mapping flags are ready
-    // (do not wait on Frigate — camera strip fills in when config arrives).
-    useEffect(() => {
-        if (alertNotif) {
-            setRevealStep(5);
-            return;
-        }
-        if (entities.length === 0) {
-            setRevealStep(0);
-            return;
-        }
-        if (scenesFetched && homeAccessFetched) {
-            setRevealStep(5);
-        }
-    }, [alertNotif, entities.length, scenesFetched, homeAccessFetched]);
 
     // Read the pending notification from context (_layout.jsx captures it via
     // both getLastNotificationResponseAsync [cold start] and the tap listener
@@ -989,73 +1036,12 @@ export default function DashboardV2() {
         [entities],
     );
 
-    const getAllActiveDevices = useCallback((type) => {
-        if (!dashboardParentAreaIds.size) return [];
-
-        const grouped = [];
-        const parentAreas = registryAreas.filter((a) => dashboardParentAreaIds.has(a.area_id));
-
-        parentAreas.forEach(area => {
-            const areaDevices = registryDevices.filter(d => d.area_id === area.area_id);
-            const areaDeviceIds = areaDevices.map(d => d.id);
-
-            const roomEntities = registryEntities.filter(re => {
-                const directMatch = re.area_id === area.area_id;
-                const deviceMatch = re.device_id && areaDeviceIds.includes(re.device_id);
-                return directMatch || deviceMatch;
-            }).map(re => {
-                const e = entities.find(e => e.entity_id === re.entity_id);
-                return e ? { ...e, device_id: re.device_id } : null;
-            }).filter(Boolean);
-
-            let activeInRoom;
-            if (type === 'ac') {
-                activeInRoom = filterPoweredOnClimates(roomEntities, entities);
-            } else {
-                activeInRoom = roomEntities.filter(e => {
-                    if (type === 'lights') {
-                        return (
-                            e.entity_id.startsWith('light.') &&
-                            e.state === 'on' &&
-                            isLightCountableUnit(e, groupedLightMemberIds)
-                        );
-                    }
-                    if (type === 'doors') {
-                        const mapping = sensorMappings.find(m => m.entity_id === e.entity_id);
-                        return !!(mapping && mapping.sensorType === 'door');
-                    }
-                    return false;
-                });
-            }
-
-            if (activeInRoom.length > 0) {
-                grouped.push({ title: area.name, data: activeInRoom });
-            }
-        });
-
-        return grouped;
-    }, [registryAreas, registryDevices, registryEntities, entities, sensorMappings, groupedLightMemberIds, dashboardParentAreaIds]);
-
-    const { title: modalTitle, devices: modalDevices } = useMemo(() => {
-        if (!activeBadgeType) return { title: '', devices: [] };
-        let title = '';
-        if (activeBadgeType === 'lights') title = 'Active Lights';
-        if (activeBadgeType === 'ac') title = 'Active ACs';
-        if (activeBadgeType === 'doors') title = 'All Doors';
-        return { title, devices: getAllActiveDevices(activeBadgeType) };
-    }, [activeBadgeType, getAllActiveDevices]);
-
     const handleBadgePress = useCallback((type) => {
-        if (type === 'security') {
-            setSecurityModalVisible(true);
-        } else if (type === 'locks') {
+        if (type === 'locks') {
             setLocksModalVisible(true);
         } else if (type === 'lights' || type === 'ac') {
             setDevicesToggleKind(type);
             setDevicesToggleVisible(true);
-        } else {
-            setActiveBadgeType(type);
-            setModalVisible(true);
         }
     }, []);
 
@@ -1077,35 +1063,6 @@ export default function DashboardV2() {
             console.warn('[LockArm] Failed to save to backend:', e.message);
         }
     }, [badgeConfig, connectionConfig]);
-
-    const activeACGrouped = useMemo(() => getAllActiveDevices('ac'), [getAllActiveDevices]);
-    const acOn = activeACGrouped.reduce((sum, group) => sum + group.data.length, 0);
-
-    const doorsOpen = useMemo(() => entities.filter(e => {
-        const mapping = sensorMappings.find(m => m.entity_id === e.entity_id);
-        if (mapping && mapping.sensorType === 'door') {
-            const s = e.state.toLowerCase();
-            return s === 'open' || s === 'on' || s === 'true' || s === '1';
-        }
-        return false;
-    }).length, [entities, sensorMappings]);
-
-    const { power, securityState } = useMemo(() => {
-        let pw = null;
-        let sec = 'Unknown';
-        if (badgeConfig) {
-            const pEntity = entities.find(e => e.entity_id === badgeConfig.power_entity);
-            pw = pEntity ? pEntity.state : '--';
-            const sEntity = entities.find(e => e.entity_id === badgeConfig.security_entity);
-            sec = sEntity ? sEntity.state : 'Unknown';
-        } else {
-            const pEntity = entities.find(e => e.entity_id.includes('power'));
-            pw = pEntity ? pEntity.state : null;
-            const sEntity = entities.find(e => e.entity_id.startsWith('alarm_control_panel.'));
-            sec = sEntity ? sEntity.state : 'Unknown';
-        }
-        return { power: pw, securityState: sec };
-    }, [entities, badgeConfig]);
 
     // Fast entity map for sensor overlays on camera cards
     const haEntityMap = useMemo(() => buildEntityMap(entities), [entities]);
@@ -1271,8 +1228,72 @@ export default function DashboardV2() {
     const refreshNotificationsRef = useRef(refreshNotifications);
     refreshNotificationsRef.current = refreshNotifications;
 
+    const snapshotRef = useRef(null);
+    snapshotRef.current = {
+        entities,
+        cityName,
+        registryDevices,
+        registryEntities,
+        registryAreas,
+        registryFloors,
+        badgeConfig,
+        allowedQuickScenes,
+        selectedLockIds,
+        selectedCoverIds,
+        lockPassageConfigs,
+        lightMappings,
+        mediaMappings,
+        sensorMappings,
+        coverMappings,
+        coverWindows,
+        climateMappings,
+        frigateCameras,
+        roomTrackingLookup,
+        musicAssistantEntryIds,
+        alertRules,
+        haHttpUrl,
+    };
+
+    useEffect(() => {
+        if (!haLiveRef.current || !profileIdRef.current) return undefined;
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = setTimeout(() => {
+            saveDashboardSnapshot(profileIdRef.current, snapshotRef.current);
+        }, 2500);
+        return () => {
+            if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        };
+    }, [
+        entities,
+        cityName,
+        registryDevices,
+        registryEntities,
+        registryAreas,
+        registryFloors,
+        badgeConfig,
+        allowedQuickScenes,
+        selectedLockIds,
+        selectedCoverIds,
+        lockPassageConfigs,
+        lightMappings,
+        mediaMappings,
+        sensorMappings,
+        coverMappings,
+        coverWindows,
+        climateMappings,
+        frigateCameras,
+        roomTrackingLookup,
+        musicAssistantEntryIds,
+        alertRules,
+    ]);
+
     useEffect(() => {
         const subscription = AppState.addEventListener('change', nextAppState => {
+            if (nextAppState.match(/inactive|background/)) {
+                if (haLiveRef.current) {
+                    saveDashboardSnapshot(profileIdRef.current, snapshotRef.current);
+                }
+            }
             if (
                 appState.current.match(/inactive|background/) &&
                 nextAppState === 'active'
@@ -1281,7 +1302,7 @@ export default function DashboardV2() {
                 lastActiveRoomRef.current = null;
                 navigateToPresenceRoomRef.current(true);
                 // Refresh config
-                fetchMappings({ resetRevealCascade: false });
+                fetchMappings();
 
                 // Note: notification tap modal (alertNotif) is handled automatically
                 // by useLastNotificationResponse() — no SecureStore polling needed here.
@@ -1435,30 +1456,6 @@ export default function DashboardV2() {
         router,
     ]);
 
-    const handleHeaderRoomPress = useCallback(() => {
-        const personEntity = entities.find(e =>
-            e.entity_id.startsWith('person.') &&
-            (e.attributes?.friendly_name?.toLowerCase() === userName?.toLowerCase() ||
-                e.entity_id.includes(userName?.toLowerCase()))
-        );
-
-        const currentLocation = personEntity?.state;
-        if (!currentLocation || currentLocation === 'home' || currentLocation === 'not_home') return;
-
-        const currentRoom = registryAreas.find(area =>
-            area.name?.toLowerCase() === currentLocation.toLowerCase() ||
-            area.area_id?.toLowerCase() === currentLocation.toLowerCase()
-        );
-
-        if (currentRoom) {
-            setSelectedRoom(currentRoom);
-            setRoomSheetVisible(true);
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }
-    }, [entities, userName, registryAreas]);
-
-
-
     const handleTabPress = useCallback((tabId) => {
         if (tabId === 'tablet') {
             router.push('/dashboard-v2-tablet');
@@ -1474,7 +1471,6 @@ export default function DashboardV2() {
         if (key === 'showFamily') setShowFamily(val);
         if (key === 'autoRoomVisit') setAutoRoomVisit(val);
         if (key === 'autoRoomResume') setAutoRoomResume(val);
-        if (key === 'showVoiceAssistant') setShowVoiceAssistant(val);
         if (key === 'showPreferenceButton') setShowPreferenceButton(val);
     }, []);
 
@@ -1483,7 +1479,6 @@ export default function DashboardV2() {
         setActiveTab('home');
         setAiTabVisited(false); // unmount BrainView → resets chat history + WS session
     }, []);
-    const handleOpenOpacitySettings = useCallback(() => setSettingsModalVisible(true), []);
 
     const getRoomsWithCounts = () => {
         const sourceAreas = getSelectedAreasForDashboard(registryAreas, badgeConfig);
@@ -1610,7 +1605,7 @@ export default function DashboardV2() {
         return parentRooms;
     };
 
-    const roomsWithCounts = useMemo(() => getRoomsWithCounts(), [
+    const liveRoomsWithCounts = useMemo(() => getRoomsWithCounts(), [
         badgeConfig,
         registryAreas,
         registryDevices,
@@ -1623,6 +1618,8 @@ export default function DashboardV2() {
         savedRoomOrder,
         groupedLightMemberIds,
     ]);
+    const roomsWithCounts = liveRoomsWithCounts.length > 0 ? liveRoomsWithCounts : cachedHomeRooms;
+    if (snapshotRef.current) snapshotRef.current.rooms = roomsWithCounts;
 
     /**
      * Lights for the modal — exact same entities each room card uses for badges.
@@ -1656,6 +1653,10 @@ export default function DashboardV2() {
     // Header quantity = sum of room card badges (always matches rooms)
     const lightsOn = useMemo(
         () => roomsWithCounts.reduce((sum, r) => sum + (r.activeLights || 0), 0),
+        [roomsWithCounts],
+    );
+    const acOn = useMemo(
+        () => roomsWithCounts.reduce((sum, r) => sum + (r.activeAC || 0), 0),
         [roomsWithCounts],
     );
 
@@ -1710,12 +1711,6 @@ export default function DashboardV2() {
 
     const sidebarPadding = isLandscape ? { paddingLeft: 80 } : {};
 
-    const LoadingSpinner = () => (
-        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-            <ActivityIndicator size="large" color="#8947ca" />
-        </View>
-    );
-
     const availableFloors = useMemo(() =>
         registryFloors.sort((a, b) => (a.level || 0) - (b.level || 0)),
         [registryFloors]
@@ -1749,17 +1744,6 @@ export default function DashboardV2() {
         }
         return areaId && activeRoomIds.includes(areaId);
     }), [entities, selectedLockIds, registryEntities, registryDevices, roomsWithCounts]);
-
-    // Garage-only covers for the edit modal (shutters now live in room curtains)
-    const allHomeAccessCovers = useMemo(() => {
-        return coverMappings
-            .filter(m => m.coverType === 'garage')
-            .map(m => ({
-                entity_id: m.entity_id,
-                coverType: m.coverType,
-                name: entities.find(e => e.entity_id === m.entity_id)?.attributes?.friendly_name || m.entity_id,
-            }));
-    }, [coverMappings, entities]);
 
     // Garage door covers for home screen (global, not per-room) — shutters now live inside room curtains
     const homeCovers = useMemo(() => {
@@ -1800,6 +1784,18 @@ export default function DashboardV2() {
             .filter(Boolean);
     }, [coverMappings, entities, selectedCoverIds]);
 
+    if (!bootReady) {
+        return (
+            <View style={styles.container}>
+                <Stack.Screen options={{ headerShown: false }} />
+                <LinearGradient
+                    colors={['#09091A', '#09091A', '#09091A']}
+                    style={styles.background}
+                />
+            </View>
+        );
+    }
+
     return (
         <View style={styles.container}>
             <Stack.Screen options={{ headerShown: false }} />
@@ -1808,16 +1804,6 @@ export default function DashboardV2() {
                 style={styles.background}
             />
             <StatusBar style="light" />
-
-            {securityModalVisible && (
-                <SecurityControlModal
-                    visible={securityModalVisible}
-                    onClose={() => setSecurityModalVisible(false)}
-                    entity={entities.find(e => e.entity_id.startsWith('alarm_control_panel.'))}
-                    onCallService={callService}
-                    zones={securityZones}
-                />
-            )}
 
             <NotificationModal
                 visible={showNotifications}
@@ -1889,19 +1875,6 @@ export default function DashboardV2() {
                 />
             )}
 
-            {modalVisible && (
-                <ActiveDevicesModal
-                    visible={modalVisible}
-                    title={modalTitle}
-                    devices={modalDevices}
-                    onClose={() => {
-                        setModalVisible(false);
-                        setActiveBadgeType(null);
-                    }}
-                    onToggle={callService}
-                />
-            )}
-
             {showFrigateModal && (
                 <FrigateCameraModal
                     visible={showFrigateModal}
@@ -1911,15 +1884,6 @@ export default function DashboardV2() {
                     onClose={() => setShowFrigateModal(false)}
                     cameraSensors={badgeConfig?.camera_sensors || {}}
                     haEntities={entities}
-                />
-            )}
-
-            {showAppleTVRemote && (
-                <AppleTVRemoteModal
-                    visible={showAppleTVRemote}
-                    onClose={() => setShowAppleTVRemote(false)}
-                    remoteEntityId="remote.living_room"
-                    callService={callService}
                 />
             )}
 
@@ -1933,133 +1897,100 @@ export default function DashboardV2() {
                 />
             )}
 
+            <AccountSwitcherModal
+                visible={showAccountSwitcher}
+                onClose={() => setShowAccountSwitcher(false)}
+                onSwitched={handleAccountSwitched}
+                onAddAccount={handleAddAccount}
+            />
+
             {/* ===== HOME TAB ===== */}
-            <View style={[{ flex: 1 }, activeTab !== 'home' && { display: 'none' }]}>
-                {!connectionConfig.loaded ? <DashboardSkeleton /> : (
-                    <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
+            <View style={[{ flex: 1 }, activeTab !== 'home' && activeTab !== 'ai' && { display: 'none' }]}>
+                <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
+                    <HeaderV2
+                        weather={weather}
+                        cityName={cityName}
+                        userName={userName}
+                        humidity={humidity}
+                        indoorTemp={indoorTemp}
+                        onBellPress={handleBellPress}
+                        unreadCount={notifUnread}
+                        onUserPress={() => setShowAccountSwitcher(true)}
+                    />
+                    <StatusBadges
+                        lightsOn={lightsOn}
+                        acOn={acOn}
+                        onPress={handleBadgePress}
+                        locks={entities.filter(e => e.entity_id.startsWith('lock.'))}
+                        lockPassageConfigs={lockPassageConfigs}
+                        entities={entities}
+                    />
+                    <View style={styles.divider} />
+                    {showFamily && <PersonBadges entities={entities} alertRules={alertRules} haUrl={haHttpUrl} />}
+                    <HaSystemBanner banner={systemHealth.banner} />
 
-                        {/* ── Header + Locks ── step 1 */}
-                        {revealStep < 1 ? <HeaderSkeleton /> : (
-                            <>
-                                <HeaderV2
-                                    weather={weather}
-                                    cityName={cityName}
-                                    userName={userName}
-                                    entities={entities}
-                                    config={badgeConfig}
-                                    humidity={humidity}
-                                    indoorTemp={indoorTemp}
-                                    onRoomPress={handleHeaderRoomPress}
-                                    onVoiceAssistantPress={handleVoiceAssistantPress}
-                                    voiceAssistantActive={showButlerCall}
-                                    onBellPress={handleBellPress}
-                                    unreadCount={notifUnread}
-                                />
-                                <StatusBadges
-                                    securityState={securityState}
-                                    lightsOn={lightsOn}
-                                    acOn={acOn}
-                                    doorsOpen={doorsOpen}
-                                    power={power}
-                                    onPress={handleBadgePress}
-                                    zones={securityZones}
-                                    locks={entities.filter(e => e.entity_id.startsWith('lock.'))}
-                                    lockPassageConfigs={lockPassageConfigs}
-                                    entities={entities}
-                                />
-                                <View style={styles.divider} />
-                                {showFamily && <PersonBadges entities={entities} alertRules={alertRules} haUrl={haHttpUrl} />}
-                                <HaSystemBanner banner={systemHealth.banner} />
-                            </>
-                        )}
+                    <QuickScenes
+                        scenes={quickScenesData}
+                        onScenePress={handleScenePress}
+                        adminUrl={connectionConfig?.adminUrl}
+                        onScenesUpdated={(ids) => setAllowedQuickScenes(ids)}
+                        columns={homeColumns}
+                    />
 
-                        {/* ── Scenes ── step 2 */}
-                        {revealStep < 2 ? <ScenesSkeleton columns={homeColumns} /> : (
-                            <QuickScenes
-                                scenes={quickScenesData}
-                                onScenePress={handleScenePress}
-                                adminUrl={connectionConfig?.adminUrl}
-                                onScenesUpdated={(ids) => setAllowedQuickScenes(ids)}
-                                columns={homeColumns}
-                            />
-                        )}
+                    <HomeAccess
+                        isHomeActive={activeTab === 'home'}
+                        locks={homeLocks}
+                        covers={homeCovers}
+                        columns={homeColumns}
+                        allLockEntities={entities.filter(e => e.entity_id.startsWith('lock.'))}
+                        haEntities={entities}
+                        lockPassageConfigs={lockPassageConfigs}
+                        adminUrl={connectionConfig.adminUrl}
+                        haToken={connectionConfig.token}
+                        onConfigSaved={fetchMappings}
+                        onToggleLock={(entityId, state) => {
+                            const isUnlocked = state === 'unlocked' || state === 'open';
+                            callService('lock', isUnlocked ? 'lock' : 'unlock', { entity_id: entityId });
+                        }}
+                        onControlCover={(entityId, action) => {
+                            callService('cover', action, { entity_id: entityId });
+                        }}
+                    />
 
-                        {/* ── Home Access ── step 3 */}
-                        {revealStep < 3 ? <HomeAccessSkeleton columns={homeColumns} /> : (
-                            <HomeAccess
-                                isHomeActive={activeTab === 'home'}
-                                locks={homeLocks}
-                                covers={homeCovers}
-                                columns={homeColumns}
-                                allLockEntities={entities.filter(e => e.entity_id.startsWith('lock.'))}
-                                haEntities={entities}
-                                lockPassageConfigs={lockPassageConfigs}
-                                adminUrl={connectionConfig.adminUrl}
-                                haToken={connectionConfig.token}
-                                onConfigSaved={() => fetchMappings({ resetRevealCascade: false })}
-                                onToggleLock={(entityId, state) => {
-                                    const isUnlocked = state === 'unlocked' || state === 'open';
-                                    callService('lock', isUnlocked ? 'lock' : 'unlock', { entity_id: entityId });
-                                }}
-                                onControlCover={(entityId, action) => {
-                                    callService('cover', action, { entity_id: entityId });
-                                }}
-                            />
-                        )}
+                    <RoomsList
+                        rooms={roomsWithCounts}
+                        registryEntities={registryEntities}
+                        allEntities={entities}
+                        onRoomPress={handleRoomPress}
+                        onAllRoomsPress={() => setActiveTab('rooms')}
+                        layout={isTablet ? 'tablet-home' : 'horizontal'}
+                        columns={homeRoomColumns}
+                        tabletPreviewCount={6}
+                        haUrl={haHttpUrl}
+                        haToken={connectionConfig.token}
+                        sensorMappings={sensorMappings}
+                    />
 
-                        {/* ── Rooms ── step 4 */}
-                        {revealStep < 4 ? (
-                            <RoomsSkeleton
-                                columns={homeRoomColumns}
-                                layout={isTablet ? 'tablet-home' : 'horizontal'}
-                            />
-                        ) : (
-                            <RoomsList
-                                rooms={roomsWithCounts}
-                                registryEntities={registryEntities}
-                                allEntities={entities}
-                                onRoomPress={handleRoomPress}
-                                overlayOpacity={cardOpacity}
-                                overlayColor={cardColor}
-                                onSettingsPress={handleOpenOpacitySettings}
-                                onAllRoomsPress={() => setActiveTab('rooms')}
-                                layout={isTablet ? 'tablet-home' : 'horizontal'}
-                                columns={homeRoomColumns}
-                                tabletPreviewCount={6}
-                                haUrl={haHttpUrl}
-                                haToken={connectionConfig.token}
-                                sensorMappings={sensorMappings}
-                            />
-                        )}
-
-                        {/* ── Cameras ── step 5 (skeleton until Frigate config attempt completes — avoids blank strip) */}
-                        {revealStep < 5 ? (
-                            <CamerasSkeleton columns={2} />
-                        ) : !frigateConfigResolved ? (
-                            <CamerasSkeleton columns={2} />
-                        ) : (
-                            <HomeCameraStrip
-                                frigateCameras={frigateCameras}
-                                selectedCameraNames={badgeConfig?.selected_cameras || []}
-                                frigateService={frigateService.current}
-                                onCameraPress={handleFrigateCameraPress}
-                                onAllCamerasPress={() => setActiveTab('cctv')}
-                                adminUrl={connectionConfig.adminUrl}
-                                onCamerasUpdated={(ids) => setBadgeConfig(prev => ({ ...prev, selected_cameras: ids }))}
-                                cameraSensors={badgeConfig?.camera_sensors || {}}
-                                haEntities={entities}
-                                columns={isTablet ? 2 : 2}
-                            />
-                        )}
-
-                    </ScrollView>
-                )}
+                    {showCameras ? (
+                    <HomeCameraStrip
+                        frigateCameras={frigateCameras}
+                        selectedCameraNames={badgeConfig?.selected_cameras || []}
+                        frigateService={frigateService.current}
+                        onCameraPress={handleFrigateCameraPress}
+                        onAllCamerasPress={() => setActiveTab('cctv')}
+                        adminUrl={connectionConfig.adminUrl}
+                        onCamerasUpdated={(ids) => setBadgeConfig(prev => ({ ...prev, selected_cameras: ids }))}
+                        cameraSensors={badgeConfig?.camera_sensors || {}}
+                        haEntities={entities}
+                        columns={isTablet ? 2 : 2}
+                    />
+                    ) : null}
+                </ScrollView>
             </View>
 
             {/* ===== ROOMS TAB ===== */}
             <View style={[{ flex: 1 }, activeTab !== 'rooms' && { display: 'none' }]}>
-                {entities.length === 0 ? <DashboardSkeleton /> : (
-                    <ScrollView
+                <ScrollView
                         style={{ flex: 1 }}
                         contentContainerStyle={[styles.content, { marginTop: 60, paddingBottom: 120 }, isLandscape && sidebarPadding]}
                         showsVerticalScrollIndicator={false}
@@ -2114,9 +2045,6 @@ export default function DashboardV2() {
                                     registryEntities={registryEntities}
                                     allEntities={entities}
                                     onRoomPress={handleRoomPress}
-                                    overlayOpacity={cardOpacity}
-                                    overlayColor={cardColor}
-                                    onSettingsPress={handleOpenOpacitySettings}
                                     layout="grid"
                                     columns={columns}
                                     haUrl={haHttpUrl}
@@ -2126,15 +2054,12 @@ export default function DashboardV2() {
                             </>
                         )}
                     </ScrollView>
-                )}
             </View>
 
             {/* ===== CCTV TAB — WebViews only rendered when active (too heavy to keep in background) ===== */}
             <View style={[{ flex: 1 }, activeTab !== 'cctv' && { display: 'none' }]}>
                 {activeTab === 'cctv' ? (
-                    !frigateConfigResolved ? (
-                        <DashboardSkeleton />
-                    ) : frigateCameras.length === 0 ? (
+                    frigateConfigResolved && frigateCameras.length === 0 ? (
                         <View style={{ flex: 1, marginTop: 60, paddingHorizontal: 20 }}>
                             <Text style={styles.sectionTitle}>Surveillance</Text>
                             <Text style={styles.cctvEmptyText}>No cameras yet</Text>
@@ -2192,23 +2117,6 @@ export default function DashboardV2() {
                 ) : null}
             </View>
 
-            {/* ===== AI TAB — mounts on first visit, stays mounted (preserves conversation) ===== */}
-            <View style={[{ flex: 1 }, activeTab !== 'ai' && { display: 'none' }]}>
-                {aiTabVisited ? (
-                    <BrainView
-                        entities={entities}
-                        callService={callService}
-                        registryDevices={registryDevices}
-                        registryEntities={registryEntities}
-                        registryAreas={registryAreas}
-                        onExit={handleAiExit}
-                        onStartVoiceCall={handleVoiceAssistantPress}
-                        haUrl={haHttpUrl}
-                        haToken={connectionConfig.token}
-                    />
-                ) : null}
-            </View>
-
             {/* ===== SETTINGS TAB — unmount when hidden (rarely visited, no state to preserve) ===== */}
             <View style={[{ flex: 1 }, activeTab !== 'settings' && { display: 'none' }]}>
                 {activeTab === 'settings' ? <SettingsView
@@ -2220,7 +2128,6 @@ export default function DashboardV2() {
                     showFamily={showFamily}
                     autoRoomVisit={autoRoomVisit}
                     autoRoomResume={autoRoomResume}
-                    showVoiceAssistant={showVoiceAssistant}
                     showPreferenceButton={showPreferenceButton}
                     adminUrl={connectionConfig.adminUrl}
                     userName={userName}
@@ -2233,14 +2140,31 @@ export default function DashboardV2() {
             {isLandscape ? (
                 <TabletSidebar activeTab={activeTab} onTabPress={handleTabPress} />
             ) : (
-                activeTab !== 'ai' && (
-                    <TabBar
-                        activeTab={activeTab}
-                        onTabPress={handleTabPress}
-                        butlerActive={showButlerCall}
-                    />
-                )
+                <TabBar
+                    activeTab={activeTab}
+                    onTabPress={handleTabPress}
+                    butlerActive={showButlerCall}
+                />
             )}
+
+            {activeTab === 'ai' ? (
+                <View
+                    style={[StyleSheet.absoluteFill, styles.butlerOverlay]}
+                    pointerEvents="auto"
+                >
+                    <BrainView
+                        entities={entities}
+                        callService={callService}
+                        registryDevices={registryDevices}
+                        registryEntities={registryEntities}
+                        registryAreas={registryAreas}
+                        onExit={handleAiExit}
+                        onStartVoiceCall={handleVoiceAssistantPress}
+                        haUrl={haHttpUrl}
+                        haToken={connectionConfig.token}
+                    />
+                </View>
+            ) : null}
 
             {roomSheetVisible && selectedRoom && (
                 <RoomSheet
@@ -2276,17 +2200,6 @@ export default function DashboardV2() {
                     badgeConfig={badgeConfig}
                 />
             )}
-
-            {settingsModalVisible && (
-                <OpacitySettingsModal
-                    visible={settingsModalVisible}
-                    onClose={() => setSettingsModalVisible(false)}
-                    currentOpacity={cardOpacity}
-                    setOpacity={setCardOpacity}
-                    currentColor={cardColor}
-                    setColor={setCardColor}
-                />
-            )}
         </View >
     );
 }
@@ -2294,6 +2207,12 @@ export default function DashboardV2() {
 const styles = StyleSheet.create({
     container: {
         flex: 1,
+    },
+    butlerOverlay: {
+        zIndex: 10050,
+        elevation: 10050,
+        overflow: 'hidden',
+        backgroundColor: 'transparent',
     },
     background: {
         position: 'absolute',

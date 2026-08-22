@@ -4,9 +4,10 @@ import { useRouter } from 'expo-router';
 import LottieView from 'lottie-react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import * as SecureStore from 'expo-secure-store';
+import { preloadDashboardSnapshot, rememberBootProfile } from '../utils/dashboardCache';
 import { Colors } from '../constants/Colors';
 
-const MIN_SPLASH_MS = 2200;
+const MIN_SPLASH_MS = 2000;
 
 export default function Splash() {
     const router = useRouter();
@@ -36,6 +37,16 @@ export default function Splash() {
                     const profiles = JSON.parse(profilesJson);
                     const activeProfile = profiles.find(p => p.id === activeProfileId);
                     if (activeProfile) {
+                        const normalizedHaUrl = activeProfile.haUrl?.replace(/^https?:\/\//i, (m) => m.toLowerCase()) || activeProfile.haUrl;
+                        const normalizedAdminUrl = activeProfile.adminUrl?.replace(/^https?:\/\//i, (m) => m.toLowerCase()) || activeProfile.adminUrl;
+                        rememberBootProfile({
+                            profileId: activeProfileId,
+                            url: normalizedHaUrl,
+                            token: activeProfile.haToken,
+                            adminUrl: normalizedAdminUrl,
+                        });
+                        await preloadDashboardSnapshot(activeProfileId);
+                        if (cancelled) return;
                         const user = JSON.parse(userJson);
                         navigationTarget.current = {
                             pathname: '/dashboard-v2',

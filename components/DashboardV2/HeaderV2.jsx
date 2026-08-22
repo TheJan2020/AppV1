@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { Cloud, CloudRain, Sun, CloudSnow, CloudLightning, Bell } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
 
-function HeaderV2({ weather, cityName, userName, entities = [], config = {}, humidity, indoorTemp, onRoomPress, onBellPress, unreadCount = 0, onUserPress }) {
+function HeaderV2({ weather, cityName, userName, humidity, indoorTemp, onBellPress, unreadCount = 0, onUserPress }) {
 
     const capitalizeWords = (str) => {
         if (!str) return str;

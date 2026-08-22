@@ -13,6 +13,8 @@ import { NotifContext } from '../services/NotifContext';
 import { preloadLocalLightIcons } from '../utils/lightTypeAssets';
 import { CF } from '../utils/typography';
 import * as SplashScreen from 'expo-splash-screen';
+import * as SecureStore from 'expo-secure-store';
+import { preloadDashboardSnapshot } from '../utils/dashboardCache';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -78,6 +80,9 @@ export default function RootLayout() {
 
     useEffect(() => {
         preloadLocalLightIcons().catch(() => {});
+        SecureStore.getItemAsync('ha_active_profile_id')
+            .then((id) => (id ? preloadDashboardSnapshot(id) : null))
+            .catch(() => {});
     }, []);
 
     useEffect(() => {

@@ -7,6 +7,7 @@ import {
     TouchableOpacity,
     ActivityIndicator,
     Alert,
+    ScrollView,
 } from 'react-native';
 import { Check, Plus, UserRound, ChevronRight } from 'lucide-react-native';
 import ModalBackdrop from '../ModalBackdrop';
@@ -86,7 +87,11 @@ export default function AccountSwitcherModal({
                     {loading ? (
                         <ActivityIndicator color={Colors.primary} style={{ marginVertical: 24 }} />
                     ) : (
-                        <View style={styles.list}>
+                        <ScrollView
+                            style={styles.list}
+                            contentContainerStyle={styles.listContent}
+                            bounces={false}
+                        >
                             {accounts.length === 0 ? (
                                 <Text style={styles.empty}>No saved accounts yet.</Text>
                             ) : (
@@ -124,7 +129,7 @@ export default function AccountSwitcherModal({
                                     );
                                 })
                             )}
-                        </View>
+                        </ScrollView>
                     )}
 
                     <TouchableOpacity
@@ -173,8 +178,11 @@ const styles = StyleSheet.create({
         marginBottom: 18,
     },
     list: {
-        gap: 8,
         marginBottom: 16,
+        maxHeight: 320,
+    },
+    listContent: {
+        gap: 8,
     },
     empty: {
         color: 'rgba(237,237,245,0.45)',

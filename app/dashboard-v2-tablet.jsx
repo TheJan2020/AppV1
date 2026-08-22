@@ -1,6 +1,5 @@
 import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
-import SecurityControlModal from '../components/DashboardV2/SecurityControlModal';
 import ButlerVoiceModal from '../components/DashboardV2/ButlerVoiceModal';
 import { canOpenButlerCall, requestButlerMicPermission, runButlerBackgroundSetup } from '../services/butler/openButlerCall';
 import { getButlerBackendUrl } from '../utils/butlerBackend';
@@ -8,33 +7,30 @@ import { fetchEnrichedLightMappings } from '../utils/lightMappingsClient';
 import { CF } from '../utils/typography';
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, ActivityIndicator, InteractionManager, Alert } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import HeaderV2 from '../components/DashboardV2/HeaderV2';
 import AccountSwitcherModal from '../components/DashboardV2/AccountSwitcherModal';
 import StatusBadges from '../components/DashboardV2/StatusBadges';
 import PersonBadges from '../components/DashboardV2/PersonBadges';
-import ActiveDevicesModal from '../components/DashboardV2/ActiveDevicesModal';
 import DevicesToggleModal from '../components/DashboardV2/DevicesToggleModal';
 import SettingsView from '../components/DashboardV2/SettingsView';
 import { HAService } from '../services/ha';
 import { applyHaStateChangedEvent, applyClimateServiceToEntity } from '../utils/haEntityMerge';
-import { Stack, useRouter, useLocalSearchParams } from 'expo-router';
+import { Stack, useRouter, useLocalSearchParams, useFocusEffect } from 'expo-router';
+import { ensureAccountsMigrated } from '../services/accounts';
 import * as Haptics from 'expo-haptics';
 import NetworkModal from '../components/DashboardV2/NetworkModal';
 import QuickScenes from '../components/DashboardV2/QuickScenes';
 import RoomsList from '../components/DashboardV2/RoomsList';
 import HomeCameraStrip from '../components/DashboardV2/HomeCameraStrip';
-import AppleTVRemoteModal from '../components/DashboardV2/AppleTVRemoteModal';
 import DraggableRoomList from '../components/DashboardV2/DraggableRoomList';
 import CamerasList from '../components/DashboardV2/CamerasList';
-import HACamerasList from '../components/DashboardV2/HACamerasList';
 import TabBar from '../components/DashboardV2/TabBar';
 import TabletSidebar from '../components/DashboardV2/TabletSidebar';
 import useDeviceType from '../hooks/useDeviceType';
 import RoomSheet from '../components/DashboardV2/RoomSheet';
-import OpacitySettingsModal from '../components/DashboardV2/OpacitySettingsModal';
 import SlideAction from '../components/DashboardV2/SlideAction';
 import BrainView from '../components/DashboardV2/BrainView';
 import VoiceConversation from '../components/VoiceConversation';
@@ -44,7 +40,7 @@ import { FrigateService } from '../services/frigate';
 import * as SecureStore from 'expo-secure-store';
 import { startHeartbeat, stopHeartbeat, updateAppState } from '../services/heartbeat';
 import { getRoomEntities, getEntityIdsForAreaIds } from '../utils/roomHelpers';
-import { filterPoweredOnClimates, isClimatePoweredOn } from '../utils/acPowerSwitch';
+import { isClimatePoweredOn } from '../utils/acPowerSwitch';
 import { isCoverUiOpen } from '../utils/coverWindows';
 import {
     collectGroupedLightMemberIds,
@@ -57,6 +53,16 @@ import {
     getSelectedAreasForDashboard,
 } from '../utils/roomAreas';
 import { setRoomPageBootstrap } from '../utils/roomPageBootstrap';
+import {
+    loadDashboardSnapshot,
+    saveDashboardSnapshot,
+    applyDashboardSnapshot,
+    bootValue,
+    peekBootProfile,
+    rememberBootProfile,
+    startBackgroundBoot,
+    toHaHttpUrl,
+} from '../utils/dashboardCache';
 
 export default function DashboardV2Tablet() {
     const router = useRouter();
@@ -67,38 +73,33 @@ export default function DashboardV2Tablet() {
     const homeColumns = 4;
     const homeRoomColumns = 6;
 
+    const bootProf = peekBootProfile();
+
     // Config State
-    const [connectionConfig, setConnectionConfig] = useState({
-        url: '',
-        token: '',
-        adminUrl: '',
-        loaded: false
-    });
+    const [connectionConfig, setConnectionConfig] = useState(() => (
+        bootProf
+            ? { url: bootProf.url, token: bootProf.token, adminUrl: bootProf.adminUrl, loaded: true }
+            : { url: '', token: '', adminUrl: '', loaded: false }
+    ));
     const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
 
     const service = useRef(null);
     const frigateService = useRef(null); // Frigate Service Ref
+    const profileIdRef = useRef(bootProf?.profileId || null);
+    const haLiveRef = useRef(false);
+    const saveTimerRef = useRef(null);
 
-    const [entities, setEntities] = useState([]);
-    const [cityName, setCityName] = useState('Home');
-    const [badgeConfig, setBadgeConfig] = useState(null);
+    const [entities, setEntities] = useState(() => bootValue('entities', []));
+    const [cityName, setCityName] = useState(() => bootValue('cityName', 'Home'));
+    const [badgeConfig, setBadgeConfig] = useState(() => bootValue('badgeConfig', null));
     const [currentFloor, setCurrentFloor] = useState(null);
     const [activeTab, setActiveTab] = useState('tablet');
-    const [isReady, setIsReady] = useState(false);
-
-    useEffect(() => {
-        const task = InteractionManager.runAfterInteractions(() => {
-            setIsReady(true);
-        });
-        return () => task.cancel();
-    }, []);
-    const [frigateCameras, setFrigateCameras] = useState([]); // Frigate State
+    const [frigateCameras, setFrigateCameras] = useState(() => bootValue('frigateCameras', []));
     const [selectedFrigateCamera, setSelectedFrigateCamera] = useState(null);
     const [showFrigateModal, setShowFrigateModal] = useState(false);
     const [frigateInitialView, setFrigateInitialView] = useState('live'); // 'live' or 'history'
-    const [showAppleTVRemote, setShowAppleTVRemote] = useState(false);
     const [showNetworkModal, setShowNetworkModal] = useState(false);
-    const [roomTrackingLookup, setRoomTrackingLookup] = useState({}); // Tracking state -> area_id mapping
+    const [roomTrackingLookup, setRoomTrackingLookup] = useState(() => bootValue('roomTrackingLookup', {}));
 
     // Settings State
     const [showFamily, setShowFamily] = useState(false);
@@ -140,7 +141,7 @@ export default function DashboardV2Tablet() {
             }
         });
 
-        loadConnectionConfig();
+        void startBackgroundBoot().then(() => loadConnectionConfig());
         void getButlerBackendUrl();
     }, []);
 
@@ -159,6 +160,37 @@ export default function DashboardV2Tablet() {
                     const normalizedAdminUrl = activeProfile.adminUrl?.replace(/^https?:\/\//i, (m) => m.toLowerCase()) || activeProfile.adminUrl;
 
                     console.log('[Dashboard] Loaded active profile:', activeProfile.name);
+                    profileIdRef.current = activeProfileId;
+                    rememberBootProfile({
+                        profileId: activeProfileId,
+                        url: normalizedHaUrl,
+                        token: activeProfile.haToken,
+                        adminUrl: normalizedAdminUrl,
+                    });
+                    const snapshot = await loadDashboardSnapshot(activeProfileId);
+                    if (snapshot && !haLiveRef.current) {
+                        applyDashboardSnapshot(snapshot, {
+                            setEntities,
+                            setCityName,
+                            setRegistryDevices,
+                            setRegistryEntities,
+                            setRegistryAreas,
+                            setRegistryFloors,
+                            setBadgeConfig,
+                            setAllowedQuickScenes,
+                            setLightMappings,
+                            setMediaMappings,
+                            setSensorMappings,
+                            setCoverMappings,
+                            setCoverWindows,
+                            setClimateMappings,
+                            setFrigateCameras,
+                            setRoomTrackingLookup,
+                            setMusicAssistantEntryIds,
+                            setAlertRules,
+                            setCachedHomeRooms,
+                        });
+                    }
                     setConnectionConfig({
                         url: normalizedHaUrl,
                         token: activeProfile.haToken,
@@ -187,41 +219,83 @@ export default function DashboardV2Tablet() {
     };
 
     const handleAccountSwitched = useCallback(async (account) => {
-        setConnectionConfig({ url: '', token: '', adminUrl: '', loaded: false });
-        setEntities([]);
+        const nextName = account?.name || '';
+        const nextId = account?.userId || '';
+        router.setParams({
+            userName: nextName,
+            userId: nextId,
+            switchKey: String(Date.now()),
+        });
         setActiveTab('tablet');
         setRoomSheetVisible(false);
         setSelectedRoom(null);
-        router.setParams({
-            userName: account?.name || '',
-            userId: account?.userId || '',
-            switchKey: String(Date.now()),
-        });
-        setTimeout(() => {
-            loadConnectionConfig();
-        }, 0);
+        if (account?.profileId && account.profileId !== profileIdRef.current) {
+            haLiveRef.current = false;
+            setConnectionConfig({ url: '', token: '', adminUrl: '', loaded: false });
+            setTimeout(() => {
+                loadConnectionConfig();
+            }, 0);
+        }
     }, [router]);
 
     const handleAddAccount = useCallback(() => {
         router.push({ pathname: '/login', params: { mode: 'addAccount' } });
     }, [router]);
 
+    useFocusEffect(
+        useCallback(() => {
+            let cancelled = false;
+            (async () => {
+                try {
+                    await ensureAccountsMigrated();
+                    const [userJson, activeProfileId] = await Promise.all([
+                        SecureStore.getItemAsync('logged_in_user'),
+                        SecureStore.getItemAsync('ha_active_profile_id'),
+                    ]);
+                    if (cancelled || !userJson) return;
+                    const user = JSON.parse(userJson);
+                    const nextName = user.name || '';
+                    const nextId = user.userId || '';
+                    if (nextName !== (userName || '') || nextId !== (userId || '')) {
+                        router.setParams({
+                            userName: nextName,
+                            userId: nextId,
+                            switchKey: String(Date.now()),
+                        });
+                    }
+                    if (activeProfileId && activeProfileId !== profileIdRef.current) {
+                        haLiveRef.current = false;
+                        setConnectionConfig({ url: '', token: '', adminUrl: '', loaded: false });
+                        setTimeout(() => {
+                            loadConnectionConfig();
+                        }, 0);
+                    }
+                } catch (e) {
+                    console.log('[Dashboard] Account focus sync failed:', e);
+                }
+            })();
+            return () => {
+                cancelled = true;
+            };
+        }, [router, userName, userId]),
+    );
+
     // Registry Data
-    const [registryDevices, setRegistryDevices] = useState([]);
-    const [registryEntities, setRegistryEntities] = useState([]);
-    const [registryAreas, setRegistryAreas] = useState([]);
-    const [registryCategories, setRegistryCategories] = useState([]);
-    const [registryFloors, setRegistryFloors] = useState([]);
+    const [registryDevices, setRegistryDevices] = useState(() => bootValue('registryDevices', []));
+    const [registryEntities, setRegistryEntities] = useState(() => bootValue('registryEntities', []));
+    const [registryAreas, setRegistryAreas] = useState(() => bootValue('registryAreas', []));
+    const [registryFloors, setRegistryFloors] = useState(() => bootValue('registryFloors', []));
     const [selectedFloor, setSelectedFloor] = useState(null);
-    const [alertRules, setAlertRules] = useState([]);
-    const [lightMappings, setLightMappings] = useState([]);
-    const [mediaMappings, setMediaMappings] = useState([]);
-    const [allowedQuickScenes, setAllowedQuickScenes] = useState([]);
-    const [sensorMappings, setSensorMappings] = useState([]);
-    const [coverMappings, setCoverMappings] = useState([]);
-    const [coverWindows, setCoverWindows] = useState([]);
-    const [climateMappings, setClimateMappings] = useState([]);
-    const [musicAssistantEntryIds, setMusicAssistantEntryIds] = useState([]);
+    const [alertRules, setAlertRules] = useState(() => bootValue('alertRules', []));
+    const [lightMappings, setLightMappings] = useState(() => bootValue('lightMappings', []));
+    const [mediaMappings, setMediaMappings] = useState(() => bootValue('mediaMappings', []));
+    const [allowedQuickScenes, setAllowedQuickScenes] = useState(() => bootValue('allowedQuickScenes', []));
+    const [sensorMappings, setSensorMappings] = useState(() => bootValue('sensorMappings', []));
+    const [coverMappings, setCoverMappings] = useState(() => bootValue('coverMappings', []));
+    const [coverWindows, setCoverWindows] = useState(() => bootValue('coverWindows', []));
+    const [climateMappings, setClimateMappings] = useState(() => bootValue('climateMappings', []));
+    const [musicAssistantEntryIds, setMusicAssistantEntryIds] = useState(() => bootValue('musicAssistantEntryIds', []));
+    const [cachedHomeRooms, setCachedHomeRooms] = useState(() => bootValue('rooms', []));
 
     const mappingsAbortRef = useRef(null);
 
@@ -439,6 +513,7 @@ export default function DashboardV2Tablet() {
             service.current.subscribe(data => {
                 if (data.type === 'connected') {
                     service.current.getStates().then(states => {
+                        haLiveRef.current = true;
                         setEntities(states || []);
                     });
                     service.current.getConfig().then(config => {
@@ -453,10 +528,6 @@ export default function DashboardV2Tablet() {
                     });
                     service.current.getEntityRegistry().then(regs => {
                         setRegistryEntities(regs || []);
-                    });
-                    service.current.getCategoryRegistry().then(cats => {
-                        console.log('[Dashboard] Loaded Categories:', cats ? cats.length : 0);
-                        setRegistryCategories(cats || []);
                     });
                     service.current.getAreaRegistry().then(areas => {
                         if (areas && areas.length > 0) {
@@ -527,22 +598,12 @@ export default function DashboardV2Tablet() {
 
     const weather = entities.find(e => e.entity_id.startsWith('weather.'));
 
-    // Active Devices Modal State
-    const [modalVisible, setModalVisible] = useState(false);
     const [devicesToggleVisible, setDevicesToggleVisible] = useState(false);
     const [devicesToggleKind, setDevicesToggleKind] = useState('lights');
-    const [securityModalVisible, setSecurityModalVisible] = useState(false);
-
-    const [activeBadgeType, setActiveBadgeType] = useState(null); // 'lights', 'ac', 'doors'
 
     // Room Sheet State
     const [roomSheetVisible, setRoomSheetVisible] = useState(false);
     const [selectedRoom, setSelectedRoom] = useState(null);
-
-    // Opacity Settings State
-    const [cardOpacity, setCardOpacity] = useState(0.4);
-    const [cardColor, setCardColor] = useState('#000000');
-    const [settingsModalVisible, setSettingsModalVisible] = useState(false);
 
     const dashboardParentAreaIds = useMemo(() => {
         const selected = getSelectedAreasForDashboard(registryAreas, badgeConfig);
@@ -555,126 +616,12 @@ export default function DashboardV2Tablet() {
         [dashboardParentAreaIds, registryDevices, registryEntities],
     );
 
-    // Derived Logic for Badges
-    const getAllActiveDevices = (type) => {
-        if (!dashboardParentAreaIds.size) return [];
-
-        const grouped = [];
-        const parentAreas = registryAreas.filter((a) => dashboardParentAreaIds.has(a.area_id));
-
-        parentAreas.forEach(area => {
-            // Find all entities associated with this area (directly or via device)
-            const areaDevices = registryDevices.filter(d => d.area_id === area.area_id);
-            const areaDeviceIds = areaDevices.map(d => d.id);
-
-            const roomLightEntities = registryEntities.filter(re => {
-                if (!re.entity_id?.startsWith('light.')) return false;
-                const directMatch = re.area_id === area.area_id;
-                const deviceMatch = re.device_id && areaDeviceIds.includes(re.device_id);
-                return directMatch || deviceMatch;
-            }).map(re => entities.find(e => e.entity_id === re.entity_id)).filter(Boolean);
-
-            const roomGroupedMemberIds = collectGroupedLightMemberIds(roomLightEntities);
-
-            const roomEntities = registryEntities.filter(re => {
-                const directMatch = re.area_id === area.area_id;
-                const deviceMatch = re.device_id && areaDeviceIds.includes(re.device_id);
-                return directMatch || deviceMatch;
-            }).map(re => {
-                const e = entities.find(e => e.entity_id === re.entity_id);
-                return e ? { ...e, device_id: re.device_id } : null;
-            }).filter(Boolean);
-
-            let activeInRoom;
-            if (type === 'ac') {
-                activeInRoom = filterPoweredOnClimates(roomEntities, entities);
-            } else {
-                activeInRoom = roomEntities.filter(e => {
-                    if (type === 'lights') {
-                        return (
-                            e.entity_id.startsWith('light.') &&
-                            e.state === 'on' &&
-                            isLightCountableUnit(e, roomGroupedMemberIds)
-                        );
-                    }
-                    if (type === 'doors') {
-                        const mapping = sensorMappings.find(m => m.entity_id === e.entity_id);
-                        return !!(mapping && mapping.sensorType === 'door');
-                    }
-                    return false;
-                });
-            }
-
-            if (activeInRoom.length > 0) {
-                grouped.push({
-                    title: area.name,
-                    data: activeInRoom
-                });
-            }
-        });
-
-        return grouped;
-    };
-
-    const getModalData = () => {
-        if (!activeBadgeType) return { title: '', devices: [] };
-
-        let title = '';
-        if (activeBadgeType === 'lights') title = 'Active Lights';
-        if (activeBadgeType === 'ac') title = 'Active ACs';
-        if (activeBadgeType === 'doors') title = 'All Doors';
-
-        return {
-            title,
-            devices: getAllActiveDevices(activeBadgeType)
-        };
-    };
-
-    const { title: modalTitle, devices: modalDevices } = getModalData();
-
     const handleBadgePress = (type) => {
-        if (type === 'security') {
-            setSecurityModalVisible(true);
-        } else if (type === 'lights' || type === 'ac') {
+        if (type === 'lights' || type === 'ac') {
             setDevicesToggleKind(type);
             setDevicesToggleVisible(true);
-        } else if (type === 'locks') {
-            setActiveBadgeType(type);
-            setModalVisible(true);
-        } else {
-            setActiveBadgeType(type);
-            setModalVisible(true);
         }
     };
-
-
-    // Count OPEN doors specifically for the badge number
-    const doorsOpen = entities.filter(e => {
-        const mapping = sensorMappings.find(m => m.entity_id === e.entity_id);
-        if (mapping && mapping.sensorType === 'door') {
-            const s = e.state.toLowerCase();
-            return s === 'open' || s === 'on' || s === 'true' || s === '1';
-        }
-        return false;
-    }).length;
-
-    // Power and Security still single entities for now
-    let power = null;
-    let securityState = 'Unknown';
-    if (badgeConfig) {
-        const pEntity = entities.find(e => e.entity_id === badgeConfig.power_entity);
-        power = pEntity ? pEntity.state : '--';
-        const sEntity = entities.find(e => e.entity_id === badgeConfig.security_entity);
-        securityState = sEntity ? sEntity.state : 'Unknown';
-    } else {
-        const pEntity = entities.find(e => e.entity_id.includes('power'));
-        power = pEntity ? pEntity.state : null;
-        const sEntity = entities.find(e => e.entity_id.startsWith('alarm_control_panel.'));
-        securityState = sEntity ? sEntity.state : 'Unknown';
-        if (sEntity) {
-            console.log('[Security Debug] Entity:', sEntity.entity_id, 'Attributes:', JSON.stringify(sEntity.attributes, null, 2));
-        }
-    }
 
     // Default floor selection
     useEffect(() => {
@@ -795,8 +742,65 @@ export default function DashboardV2Tablet() {
     }, [entities, roomsWithCounts, userName, autoRoomVisit]); // Check whenever relevant data updates
 
     // Run check on App Resume
+    const snapshotRef = useRef(null);
+    snapshotRef.current = {
+        entities,
+        cityName,
+        registryDevices,
+        registryEntities,
+        registryAreas,
+        registryFloors,
+        badgeConfig,
+        allowedQuickScenes,
+        lightMappings,
+        mediaMappings,
+        sensorMappings,
+        coverMappings,
+        coverWindows,
+        climateMappings,
+        frigateCameras,
+        roomTrackingLookup,
+        musicAssistantEntryIds,
+        alertRules,
+    };
+
+    useEffect(() => {
+        if (!haLiveRef.current || !profileIdRef.current) return undefined;
+        if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = setTimeout(() => {
+            saveDashboardSnapshot(profileIdRef.current, snapshotRef.current);
+        }, 2500);
+        return () => {
+            if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+        };
+    }, [
+        entities,
+        cityName,
+        registryDevices,
+        registryEntities,
+        registryAreas,
+        registryFloors,
+        badgeConfig,
+        allowedQuickScenes,
+        lightMappings,
+        mediaMappings,
+        sensorMappings,
+        coverMappings,
+        coverWindows,
+        climateMappings,
+        frigateCameras,
+        roomTrackingLookup,
+        musicAssistantEntryIds,
+        alertRules,
+    ]);
+
     useEffect(() => {
         const subscription = AppState.addEventListener('change', nextAppState => {
+            if (nextAppState.match(/inactive|background/)) {
+                if (haLiveRef.current) {
+                    saveDashboardSnapshot(profileIdRef.current, snapshotRef.current);
+                }
+            }
             if (
                 appState.current.match(/inactive|background/) &&
                 nextAppState === 'active'
@@ -904,36 +908,6 @@ export default function DashboardV2Tablet() {
             setRoomSheetVisible(true);
         }
     };
-
-    const handleHeaderRoomPress = () => {
-        // Find the current user's person entity
-        const personEntity = entities.find(e =>
-            e.entity_id.startsWith('person.') &&
-            (e.attributes?.friendly_name?.toLowerCase() === userName?.toLowerCase() ||
-                e.entity_id.includes(userName?.toLowerCase()))
-        );
-
-        const currentLocation = personEntity?.state;
-
-        // If at home or no location, don't open sheet
-        if (!currentLocation || currentLocation === 'home' || currentLocation === 'not_home') {
-            return;
-        }
-
-        // Find the room that matches the current location
-        const currentRoom = registryAreas.find(area =>
-            area.name?.toLowerCase() === currentLocation.toLowerCase() ||
-            area.area_id?.toLowerCase() === currentLocation.toLowerCase()
-        );
-
-        if (currentRoom) {
-            setSelectedRoom(currentRoom);
-            setRoomSheetVisible(true);
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }
-    };
-
-
 
     const handleTabPress = (tabId) => {
         if (tabId === 'home') {
@@ -1068,7 +1042,7 @@ export default function DashboardV2Tablet() {
         return parentRooms;
     };
 
-    const roomsWithCounts = useMemo(() => getRoomsWithCounts(), [
+    const liveRoomsWithCounts = useMemo(() => getRoomsWithCounts(), [
         badgeConfig,
         registryAreas,
         registryDevices,
@@ -1080,6 +1054,8 @@ export default function DashboardV2Tablet() {
         musicAssistantEntryIds,
         savedRoomOrder,
     ]);
+    const roomsWithCounts = liveRoomsWithCounts.length > 0 ? liveRoomsWithCounts : cachedHomeRooms;
+    if (snapshotRef.current) snapshotRef.current.rooms = roomsWithCounts;
 
     const roomLightsForModal = useMemo(() => {
         const byId = new Map();
@@ -1203,17 +1179,11 @@ export default function DashboardV2Tablet() {
                         weather={weather}
                         cityName={cityName}
                         userName={userName}
-                        entities={entities}
-                        config={badgeConfig}
-                        onRoomPress={handleHeaderRoomPress}
                         onUserPress={() => setShowAccountSwitcher(true)}
                     />
                     <StatusBadges
-                        securityState={securityState}
                         lightsOn={lightsOn}
                         acOn={acOn}
-                        doorsOpen={doorsOpen}
-                        power={power}
                         onPress={handleBadgePress}
                     />
                     <View style={styles.divider} />
@@ -1424,13 +1394,10 @@ export default function DashboardV2Tablet() {
                         registryEntities={registryEntities}
                         allEntities={entities}
                         onRoomPress={handleRoomPress}
-                        overlayOpacity={cardOpacity}
-                        overlayColor={cardColor}
-                        onSettingsPress={() => setSettingsModalVisible(true)}
                         layout="tablet-home"
                         columns={homeRoomColumns}
                         tabletPreviewCount={6}
-                        haUrl={connectionConfig.url}
+                        haUrl={toHaHttpUrl(connectionConfig.url) || connectionConfig.url}
                         haToken={connectionConfig.token}
                         sensorMappings={sensorMappings}
                     />
@@ -1515,9 +1482,6 @@ export default function DashboardV2Tablet() {
                                 registryEntities={registryEntities}
                                 allEntities={entities}
                                 onRoomPress={handleRoomPress}
-                                overlayOpacity={cardOpacity}
-                                overlayColor={cardColor}
-                                onSettingsPress={() => setSettingsModalVisible(true)}
                                 layout="grid"
                                 columns={columns}
                                 haUrl={connectionConfig.url}
@@ -1613,20 +1577,6 @@ export default function DashboardV2Tablet() {
         return null;
     };
 
-    if (!isReady) {
-        return (
-            <View style={styles.container}>
-                <LinearGradient
-                    colors={['#1a1b2e', '#16161e', '#000000']}
-                    style={styles.background}
-                />
-                <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-                    <ActivityIndicator size="large" color="#8947ca" />
-                </View>
-            </View>
-        );
-    }
-
     return (
         <View style={styles.container}>
             <Stack.Screen options={{ headerShown: false }} />
@@ -1642,28 +1592,6 @@ export default function DashboardV2Tablet() {
                 onSwitched={handleAccountSwitched}
                 onAddAccount={handleAddAccount}
             />
-
-            {securityModalVisible && (
-                <SecurityControlModal
-                    visible={securityModalVisible}
-                    onClose={() => setSecurityModalVisible(false)}
-                    entity={entities.find(e => e.entity_id.startsWith('alarm_control_panel.'))}
-                    onCallService={callService}
-                />
-            )}
-
-            {modalVisible && (
-                <ActiveDevicesModal
-                    visible={modalVisible}
-                    title={modalTitle}
-                    devices={modalDevices}
-                    onClose={() => {
-                        setModalVisible(false);
-                        setActiveBadgeType(null);
-                    }}
-                    onToggle={callService}
-                />
-            )}
 
             {devicesToggleVisible && (
                 <DevicesToggleModal
@@ -1692,15 +1620,6 @@ export default function DashboardV2Tablet() {
                     service={frigateService.current}
                     initialView={frigateInitialView}
                     onClose={() => setShowFrigateModal(false)}
-                />
-            )}
-
-            {showAppleTVRemote && (
-                <AppleTVRemoteModal
-                    visible={showAppleTVRemote}
-                    onClose={() => setShowAppleTVRemote(false)}
-                    remoteEntityId="remote.living_room"
-                    callService={callService}
                 />
             )}
 
@@ -1770,17 +1689,6 @@ export default function DashboardV2Tablet() {
                         service.current?.callService?.(domain, serviceName, serviceData, { returnResponse: true })
                     }
                     badgeConfig={badgeConfig}
-                />
-            )}
-
-            {settingsModalVisible && (
-                <OpacitySettingsModal
-                    visible={settingsModalVisible}
-                    onClose={() => setSettingsModalVisible(false)}
-                    currentOpacity={cardOpacity}
-                    setOpacity={setCardOpacity}
-                    currentColor={cardColor}
-                    setColor={setCardColor}
                 />
             )}
         </View >

@@ -707,7 +707,12 @@ export default function MediaCard({
         <View style={[styles.container, needsChange && { borderColor: accentColor, borderWidth: 2 }]}>
             <View style={styles.topRow}>
                 <TouchableOpacity
-                    style={[styles.iconBox, parentState === 'unavailable' && styles.iconBoxDisabled]}
+                    style={[
+                        styles.iconBox,
+                        isOn && styles.iconBoxOn,
+                        isPlaying && styles.iconBoxPlaying,
+                        parentState === 'unavailable' && styles.iconBoxDisabled,
+                    ]}
                     onPress={toggleTvPower}
                     disabled={parentState === 'unavailable'}
                     activeOpacity={0.75}
@@ -1148,11 +1153,25 @@ const styles = StyleSheet.create({
     iconBox: {
         width: 42,
         height: 42,
+        borderRadius: 21,
         alignItems: 'center',
         justifyContent: 'center',
+        backgroundColor: 'rgba(255,255,255,0.06)',
+        borderWidth: 1.5,
+        borderColor: 'rgba(255,255,255,0.32)',
+    },
+    iconBoxOn: {
+        backgroundColor: 'rgba(0, 134, 204, 0.18)',
+        borderColor: '#00A3E0',
+    },
+    iconBoxPlaying: {
+        backgroundColor: 'rgba(137, 71, 202, 0.22)',
+        borderColor: '#8947ca',
     },
     iconBoxDisabled: {
         opacity: 0.45,
+        borderColor: 'rgba(255,255,255,0.12)',
+        backgroundColor: 'rgba(255,255,255,0.03)',
     },
     chevronBtn: {
         width: 36,

@@ -252,18 +252,6 @@ export class HAService {
         });
     }
 
-    /**
-     * List category registry entries for a scope (required by HA 2025+).
-     * Scopes are integration-defined (e.g. `automation`, `script`, `zone`).
-     * @param {string} [scope='automation'] — default matches HA core tests / common use
-     */
-    async getCategoryRegistry(scope = 'automation') {
-        return this.sendMessage({
-            type: 'config/category_registry/list',
-            scope,
-        });
-    }
-
     async getConfig() {
         return this.sendMessage({
             type: 'get_config',

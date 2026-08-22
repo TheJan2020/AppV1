@@ -15,12 +15,17 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Heading, CF } from '../../utils/typography';
 import { Mic, ChevronLeft, CheckCheck } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
     useAnimatedStyle,
     useSharedValue,
     withRepeat,
     withSequence,
+    withSpring,
     withTiming,
+    runOnJS,
+    interpolate,
+    Extrapolation,
 } from 'react-native-reanimated';
 import { ButlerChatClient } from '../../services/butler/ButlerChatClient';
 import { getButlerBackendUrl, toButlerWsUrl } from '../../utils/butlerBackend';
@@ -419,8 +424,56 @@ function BrainView({
         onStartVoiceCall?.();
     }, [handleSend, onStartVoiceCall]);
 
+    const screenW = Dimensions.get('window').width;
+    const swipeEdge = 40 + (insets.left || 0);
+    const translateX = useSharedValue(0);
+
+    const finishSwipeBack = useCallback(() => {
+        onExit?.();
+    }, [onExit]);
+
+    const dismissKeyboard = useCallback(() => {
+        Keyboard.dismiss();
+    }, []);
+
+    const swipeBackGesture = Gesture.Pan()
+        .maxPointers(1)
+        .activeOffsetX(12)
+        .failOffsetY([-28, 28])
+        .onTouchesDown((e, state) => {
+            const x = e?.allTouches?.[0]?.x ?? 999;
+            if (x > swipeEdge) state.fail();
+        })
+        .onStart(() => {
+            runOnJS(dismissKeyboard)();
+        })
+        .onUpdate((e) => {
+            translateX.value = Math.max(0, e.translationX);
+        })
+        .onEnd((e) => {
+            const shouldPop = e.translationX > screenW * 0.28 || e.velocityX > 800;
+            if (shouldPop) {
+                translateX.value = withTiming(screenW, { duration: 180 }, (finished) => {
+                    if (finished) runOnJS(finishSwipeBack)();
+                });
+            } else {
+                translateX.value = withSpring(0, { damping: 22, stiffness: 220 });
+            }
+        });
+
+    const swipeStyle = useAnimatedStyle(() => ({
+        transform: [{ translateX: translateX.value }],
+        shadowColor: '#000',
+        shadowOffset: { width: -8, height: 0 },
+        shadowOpacity: interpolate(translateX.value, [0, 24], [0, 0.28], Extrapolation.CLAMP),
+        shadowRadius: 12,
+        elevation: interpolate(translateX.value, [0, 24], [0, 12], Extrapolation.CLAMP),
+    }));
+
     return (
-        <View style={[styles.container, { paddingTop: insets.top + 8 }]}>
+        <View style={styles.swipeRoot}>
+            <GestureDetector gesture={swipeBackGesture}>
+                <Animated.View style={[styles.container, { paddingTop: insets.top + 8 }, swipeStyle]}>
             <View style={styles.header}>
                 <TouchableOpacity
                     onPress={onExit}
@@ -551,11 +604,16 @@ function BrainView({
                     </TouchableOpacity>
                 </View>
             </View>
+                </Animated.View>
+            </GestureDetector>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
+    swipeRoot: {
+        flex: 1,
+    },
     container: {
         flex: 1,
         backgroundColor: '#09091A',

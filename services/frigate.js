@@ -88,23 +88,6 @@ export class FrigateService {
         }
     }
 
-    async getStats() {
-        try {
-            if (!this.adminUrl) return null;
-            const proxyUrl = this.adminUrl + '/api/frigate/stats';
-            const response = await fetch(proxyUrl, {
-                method: 'GET',
-                headers: this.headers,
-            });
-            if (!response.ok) return null;
-            const text = await response.text();
-            if (!text || text.trim().startsWith('<')) return null;
-            return JSON.parse(text);
-        } catch {
-            return null;
-        }
-    }
-
     async getEvents(options = {}) {
         try {
             if (!this.adminUrl) return [];

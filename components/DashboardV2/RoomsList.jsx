@@ -1,7 +1,7 @@
 import { memo, useState } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { Image } from 'expo-image';
-import { Sofa, Bed, Bath, Utensils, Monitor, Lamp, Settings, Lightbulb, Fan, GalleryVerticalEnd, DoorOpen, Thermometer, Droplets, Satellite } from 'lucide-react-native';
+import { Sofa, Bed, Bath, Utensils, Monitor, Lamp, Lightbulb, Fan, GalleryVerticalEnd, DoorOpen, Thermometer, Droplets, Satellite } from 'lucide-react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { CF } from '../../utils/typography';
 import { inferSensorType } from '../../utils/roomHelpers';
@@ -25,7 +25,6 @@ function RoomsList({
     onRoomPress,
     overlayColor = '#000000',
     overlayOpacity = 0.4,
-    onSettingsPress,
     onAllRoomsPress,
     layout = 'horizontal', // 'horizontal' | 'grid' | 'tablet-home'
     columns = 2,
@@ -132,6 +131,8 @@ function RoomsList({
                             source={{ uri: imageUrl, headers: { Authorization: `Bearer ${haToken}` } }}
                             style={StyleSheet.absoluteFill}
                             contentFit="cover"
+                            cachePolicy="memory-disk"
+                            recyclingKey={room.area_id}
                         />
                         <View style={[
                             styles.darkOverlay,
@@ -252,9 +253,11 @@ function RoomsList({
         <View style={styles.container}>
             <View style={styles.headerRow}>
                 <Text style={styles.title}>ROOMS</Text>
-                <TouchableOpacity onPress={onAllRoomsPress || onSettingsPress} style={styles.allBtn}>
-                    <Text style={styles.allBtnText}>All Rooms</Text>
-                </TouchableOpacity>
+                {onAllRoomsPress ? (
+                    <TouchableOpacity onPress={onAllRoomsPress} style={styles.allBtn}>
+                        <Text style={styles.allBtnText}>All Rooms</Text>
+                    </TouchableOpacity>
+                ) : null}
             </View>
             <ScrollView
                 horizontal
