@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
+import { loadHaProfiles } from './storage';
 
 /**
  * Last-known Home snapshot (stale-while-revalidate).
@@ -321,12 +322,11 @@ export async function startBackgroundBoot() {
     if (bootPromise) return bootPromise;
     bootPromise = (async () => {
         try {
-            const [activeProfileId, profilesJson] = await Promise.all([
+            const [activeProfileId, profiles] = await Promise.all([
                 SecureStore.getItemAsync('ha_active_profile_id'),
-                SecureStore.getItemAsync('ha_profiles'),
+                loadHaProfiles(),
             ]);
-            if (!activeProfileId || !profilesJson) return null;
-            const profiles = JSON.parse(profilesJson);
+            if (!activeProfileId || !profiles.length) return null;
             const active = profiles.find((p) => p.id === activeProfileId);
             if (!active) return null;
             const normalizedHaUrl = active.haUrl?.replace(/^https?:\/\//i, (m) => m.toLowerCase()) || active.haUrl;

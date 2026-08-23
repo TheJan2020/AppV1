@@ -63,6 +63,7 @@ import {
     startBackgroundBoot,
     toHaHttpUrl,
 } from '../utils/dashboardCache';
+import { loadHaProfiles, saveHaProfiles } from '../utils/storage';
 
 export default function DashboardV2Tablet() {
     const router = useRouter();
@@ -148,11 +149,12 @@ export default function DashboardV2Tablet() {
     const loadConnectionConfig = async () => {
         try {
             // 1. Try to load from Profiles first
-            const activeProfileId = await SecureStore.getItemAsync('ha_active_profile_id');
-            const profilesJson = await SecureStore.getItemAsync('ha_profiles');
+            const [activeProfileId, profiles] = await Promise.all([
+                SecureStore.getItemAsync('ha_active_profile_id'),
+                loadHaProfiles(),
+            ]);
 
-            if (activeProfileId && profilesJson) {
-                const profiles = JSON.parse(profilesJson);
+            if (activeProfileId && profiles.length) {
                 const activeProfile = profiles.find(p => p.id === activeProfileId);
 
                 if (activeProfile) {
@@ -239,6 +241,9 @@ export default function DashboardV2Tablet() {
     }, [router]);
 
     const handleAddAccount = useCallback(() => {
+        loadHaProfiles()
+            .then((list) => { if (list.length) return saveHaProfiles(list); })
+            .catch(() => {});
         router.push({ pathname: '/login', params: { mode: 'addAccount' } });
     }, [router]);
 

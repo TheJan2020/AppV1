@@ -4,21 +4,93 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import { Colors } from '../constants/Colors';
-import { Scan, Lock, User, Server, ChevronDown, Check, Settings, Fingerprint, X, Plus, Trash2, Edit2, Shield } from 'lucide-react-native';
+import { Scan, Lock, User, ChevronDown, Check, Settings, Fingerprint, X, Plus, Trash2, Edit2, Shield } from 'lucide-react-native';
 import { scanNetwork } from '../utils/discovery';
 import { HAService } from '../services/ha';
 import { validateCredentials } from '../services/auth';
 import { registerForPushNotificationsAsync } from '../services/notifications';
-import { upsertAccountAndActivate } from '../services/accounts';
-import { preloadDashboardSnapshot } from '../utils/dashboardCache';
+import { upsertAccountAndActivate, listAccounts, normalizeHaUrl, normalizeUsername } from '../services/accounts';
+import { preloadDashboardSnapshot, peekBootProfile } from '../utils/dashboardCache';
+import { loadHaProfiles, saveHaProfiles, peekHaProfiles } from '../utils/storage';
 import ModalBackdrop from '../components/ModalBackdrop';
 
-const SETTINGS_KEY_PROFILES = 'ha_profiles';
 const SETTINGS_KEY_ACTIVE_PROFILE = 'ha_active_profile_id';
 const SETTINGS_KEY_MIGRATION_COMPLETED = 'ha_migration_completed_v1';
 
 // Helper to generate simple ID
 const generateId = () => Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+
+function toHaHttpBase(url) {
+    return normalizeHaUrl(url);
+}
+
+function mapPersonRecords(records) {
+    return (Array.isArray(records) ? records : [])
+        .map((p) => {
+            const id = p.entity_id || p.id;
+            if (!id) return null;
+            return {
+                id,
+                name: p.attributes?.friendly_name || p.name || id.replace(/^person\./, ''),
+                user_id: p.attributes?.user_id || p.user_id || '',
+                picture: p.attributes?.entity_picture || p.picture,
+            };
+        })
+        .filter(Boolean);
+}
+
+async function fetchJson(url, options, timeoutMs) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const res = await fetch(url, { ...options, signal: controller.signal });
+        const text = await res.text();
+        let data = null;
+        try { data = text ? JSON.parse(text) : null; } catch { data = text; }
+        return { ok: res.ok, status: res.status, data };
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
+/** Light person list first (template), then full /api/states. */
+async function fetchPersonsFromHaRest(haUrl, haToken) {
+    const baseUrl = toHaHttpBase(haUrl);
+    const headers = {
+        Authorization: `Bearer ${haToken}`,
+        'Content-Type': 'application/json',
+    };
+
+    const template = `[{% for s in states.person %}{"entity_id":{{ s.entity_id | tojson }},"name":{{ s.name | tojson }},"user_id":{{ s.attributes.user_id | default('') | tojson }}}{% if not loop.last %},{% endif %}{% endfor %}]`;
+
+    try {
+        const tpl = await fetchJson(`${baseUrl}/api/template`, {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({ template }),
+        }, 12000);
+        if (tpl.ok && tpl.data != null) {
+            let parsed = tpl.data;
+            if (typeof parsed === 'string') {
+                try { parsed = JSON.parse(parsed); } catch { parsed = []; }
+            }
+            const mapped = mapPersonRecords(parsed);
+            if (mapped.length > 0) return mapped;
+        }
+    } catch (e) {
+        console.log('[Login] Template person fetch failed:', e?.message || e);
+    }
+
+    const statesRes = await fetchJson(`${baseUrl}/api/states`, {
+        method: 'GET',
+        headers,
+    }, 20000);
+    if (!statesRes.ok) {
+        throw new Error(`HA states HTTP ${statesRes.status}`);
+    }
+    const states = Array.isArray(statesRes.data) ? statesRes.data : [];
+    return mapPersonRecords(states.filter((e) => e.entity_id?.startsWith('person.')));
+}
 
 export default function Login() {
     const router = useRouter();
@@ -66,6 +138,12 @@ export default function Login() {
     const [showSettings, setShowSettings] = useState(false);
     const [profiles, setProfiles] = useState([]);
     const [activeProfileId, setActiveProfileId] = useState(null);
+    const [savedAccounts, setSavedAccounts] = useState([]);
+    const usersFetchIdRef = useRef(0);
+    const [profilesReady, setProfilesReady] = useState(false);
+    const [pickingProfile, setPickingProfile] = useState(false);
+    const pickedProfileRef = useRef(false);
+    const activeProfileIdRef = useRef(null);
 
     // Profile Editing State
     const [editingProfile, setEditingProfile] = useState(null); // If null, showing list. If object, showing form.
@@ -73,6 +151,18 @@ export default function Login() {
     useEffect(() => {
         checkBiometrics();
         loadSettings();
+        listAccounts()
+            .then((list) => {
+                setSavedAccounts(Array.isArray(list) ? list : []);
+            })
+            .catch(() => {});
+        return () => {
+            usersFetchIdRef.current += 1;
+            if (service.current?.disconnect) {
+                service.current.disconnect();
+                service.current = null;
+            }
+        };
     }, []);
 
     // Sync active profile to connection state
@@ -95,28 +185,30 @@ export default function Login() {
     // Auto-connect when connection details change
     useEffect(() => {
         if (haUrl && haToken) {
-            // Always (re)fetch when URL/token are ready — don't rely on users.length,
-            // which can get stuck after a failed/partial load or add-account push.
             fetchUsersFromHa();
         } else if (haUrl && !haToken) {
-            // No token in profile — username/password login only
             setUsers([{ id: 'manual', name: 'Manual Login' }]);
             setSelectedUser({ id: 'manual', name: 'Manual Login' });
             setLoadingUsers(false);
         }
-    }, [haUrl, haToken]);
+    }, [haUrl, haToken, isAddAccount]);
 
-    // Add-account opens login while dashboard still holds a WebSocket — force a fresh fetch.
     useEffect(() => {
         if (!isAddAccount) return;
-        setUsername('');
         setPassword('');
-        if (haUrl && haToken) {
-            setUsers([]);
-            setSelectedUser(null);
-            fetchUsersFromHa();
+        if (profilesReady && profiles.length > 0 && !pickedProfileRef.current) {
+            setPickingProfile(true);
         }
-    }, [isAddAccount]);
+    }, [isAddAccount, profilesReady, profiles.length]);
+
+    useEffect(() => {
+        if (!showUserModal) return;
+        listAccounts()
+            .then((list) => {
+                setSavedAccounts(Array.isArray(list) ? list : []);
+            })
+            .catch(() => setSavedAccounts([]));
+    }, [showUserModal]);
 
     const checkBiometrics = async () => {
         const compatible = await LocalAuthentication.hasHardwareAsync();
@@ -143,16 +235,26 @@ export default function Login() {
             const hasLoggedInBefore = await SecureStore.getItemAsync('has_logged_in_before');
             if (hasLoggedInBefore === 'true') setIsReturningUser(true);
 
-            // Load Profiles
-            const profilesJson = await SecureStore.getItemAsync(SETTINGS_KEY_PROFILES);
+            // Load Profiles (AsyncStorage + SecureStore + in-memory from Home)
+            let loadedProfiles = await loadHaProfiles();
             const savedActiveId = await SecureStore.getItemAsync(SETTINGS_KEY_ACTIVE_PROFILE);
+            let recoveredFromMemory = false;
 
-            let loadedProfiles = [];
-            if (profilesJson) {
-                try {
-                    loadedProfiles = JSON.parse(profilesJson);
-                } catch (e) {
-                    console.log('Error parsing profiles:', e);
+            if (loadedProfiles.length === 0) {
+                const mem = peekHaProfiles();
+                const boot = peekBootProfile();
+                if (mem.length > 0) {
+                    loadedProfiles = mem;
+                    recoveredFromMemory = true;
+                } else if (boot?.profileId) {
+                    loadedProfiles = [{
+                        id: boot.profileId,
+                        name: 'Current Home',
+                        haUrl: boot.url || '',
+                        haToken: boot.token || '',
+                        adminUrl: boot.adminUrl || '',
+                    }];
+                    recoveredFromMemory = true;
                 }
             }
 
@@ -175,6 +277,7 @@ export default function Login() {
                     };
                     loadedProfiles = [defaultProfile];
                     await saveProfilesToStorage(loadedProfiles);
+                    activeProfileIdRef.current = defaultProfile.id;
                     await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, defaultProfile.id);
                     await SecureStore.setItemAsync(SETTINGS_KEY_MIGRATION_COMPLETED, 'true');
                     setActiveProfileId(defaultProfile.id);
@@ -186,9 +289,11 @@ export default function Login() {
                 setProfiles(loadedProfiles);
                 // Set active profile
                 if (savedActiveId && loadedProfiles.find(p => p.id === savedActiveId)) {
+                    activeProfileIdRef.current = savedActiveId;
                     setActiveProfileId(savedActiveId);
                 } else if (loadedProfiles.length > 0) {
                     // Fallback to first if active not found
+                    activeProfileIdRef.current = loadedProfiles[0].id;
                     setActiveProfileId(loadedProfiles[0].id);
                     await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, loadedProfiles[0].id);
                 }
@@ -206,15 +311,28 @@ export default function Login() {
                 await SecureStore.deleteItemAsync('admin_url');
             }
 
+            if (recoveredFromMemory && loadedProfiles.length > 0) {
+                await saveHaProfiles(loadedProfiles);
+            }
+
+            if (isAddAccount && loadedProfiles.length > 0) {
+                setEditingProfile(null);
+                setPickingProfile(true);
+            } else {
+                setPickingProfile(false);
+            }
+
         } catch (e) {
             console.log('Error loading settings:', e);
             setFaceIdReady(true);
+        } finally {
+            setProfilesReady(true);
         }
     };
 
     const saveProfilesToStorage = async (newProfiles) => {
         try {
-            await SecureStore.setItemAsync(SETTINGS_KEY_PROFILES, JSON.stringify(newProfiles));
+            await saveHaProfiles(newProfiles);
             setProfiles(newProfiles);
         } catch (e) {
             console.log('Error saving profiles:', e);
@@ -229,45 +347,85 @@ export default function Login() {
         }
 
         let newProfiles = [...profiles];
+        let createdId = null;
+        const incomingUrl = normalizeHaUrl(editingProfile.haUrl);
+        const incomingToken = String(editingProfile.haToken || '').trim();
 
         if (editingProfile.id) {
-            // Update existing
             const index = newProfiles.findIndex(p => p.id === editingProfile.id);
             if (index !== -1) {
                 newProfiles[index] = { ...editingProfile };
             }
         } else {
-            // Create new
+            const existingHome = newProfiles.find((p) => {
+                if (normalizeHaUrl(p.haUrl) !== incomingUrl) return false;
+                const token = String(p.haToken || '').trim();
+                if (incomingToken && token) return token === incomingToken;
+                return true;
+            });
+            if (existingHome) {
+                Alert.alert(
+                    'Home already saved',
+                    'This Home Assistant is already in your profiles. Opening it so you can sign in.',
+                );
+                setEditingProfile(null);
+                setShowSettings(false);
+                activeProfileIdRef.current = existingHome.id;
+                setActiveProfileId(existingHome.id);
+                await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, existingHome.id);
+                setHaUrl(existingHome.haUrl || '');
+                setHaToken(existingHome.haToken || '');
+                setAdminUrl(existingHome.adminUrl || '');
+                setUsers([]);
+                setSelectedUser(null);
+                setUsername('');
+                setPassword('');
+                pickedProfileRef.current = true;
+                setPickingProfile(false);
+                return;
+            }
             const newProfile = {
                 ...editingProfile,
                 id: generateId()
             };
             newProfiles.push(newProfile);
-
-            // If this is the first profile, make it active
-            if (newProfiles.length === 1) {
-                setActiveProfileId(newProfile.id);
-                await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, newProfile.id);
-            }
+            createdId = newProfile.id;
         }
 
         await saveProfilesToStorage(newProfiles);
 
-        // If we just edited the active profile, clear users to force re-fetch/re-connect
-        if (editingProfile.id === activeProfileId || newProfiles.length === 1) {
-            // FORCE DISCONNECT ALL instances to prevent zombies
-            HAService.disconnectAll();
+        const nextProfile = createdId
+            ? newProfiles.find((p) => p.id === createdId)
+            : newProfiles.find((p) => p.id === editingProfile.id) || editingProfile;
+        const shouldActivate = !!createdId || nextProfile?.id === activeProfileIdRef.current || nextProfile?.id === activeProfileId;
+
+        if (shouldActivate && nextProfile?.id) {
+            activeProfileIdRef.current = nextProfile.id;
+            setActiveProfileId(nextProfile.id);
+            await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, nextProfile.id);
+
+            if (!isAddAccount) {
+                HAService.disconnectAll();
+            } else if (service.current?.disconnect) {
+                service.current.disconnect();
+                service.current = null;
+            }
 
             setUsers([]);
             setSelectedUser(null);
             setUsername('');
             setPassword('');
-            setHaUrl(editingProfile.haUrl);
-            setHaToken(editingProfile.haToken);
-            setAdminUrl(editingProfile.adminUrl || '');
+            setHaUrl(nextProfile.haUrl || '');
+            setHaToken(nextProfile.haToken || '');
+            setAdminUrl(nextProfile.adminUrl || '');
         }
 
-        setEditingProfile(null); // Return to list
+        setEditingProfile(null);
+        setShowSettings(false);
+        if (createdId && isAddAccount) {
+            pickedProfileRef.current = true;
+            setPickingProfile(false);
+        }
     };
 
     const handleDeleteProfile = async (profileId) => {
@@ -303,15 +461,25 @@ export default function Login() {
     };
 
     const handleSelectProfile = async (profileId) => {
-        // FORCE DISCONNECT ALL when switching profiles
-        HAService.disconnectAll();
+        if (!isAddAccount) {
+            HAService.disconnectAll();
+        } else if (service.current?.disconnect) {
+            service.current.disconnect();
+            service.current = null;
+        }
 
         setActiveProfileId(profileId);
+        activeProfileIdRef.current = profileId;
         await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, profileId);
-        // Clear users when switching profiles to force re-fetch
         setUsers([]);
         setSelectedUser(null);
         setUsername('');
+        setPassword('');
+        setLoadingUsers(true);
+        if (isAddAccount) {
+            pickedProfileRef.current = true;
+            setPickingProfile(false);
+        }
     };
 
     const handleSaveFaceId = async (enabled) => {
@@ -333,82 +501,82 @@ export default function Login() {
         if (faceIdReady) handleSaveFaceId(next);
     };
 
+    const applyFetchedUsers = async (mappedUsers) => {
+        const list = mappedUsers.length > 0
+            ? mappedUsers
+            : [{ id: 'manual', name: 'Manual Login' }];
+        setUsers(list);
+        let accounts = [];
+        try { accounts = await listAccounts(); } catch { accounts = []; }
+        const currentHome = normalizeHaUrl(haUrl);
+        const isTaken = (uname) => accounts.some((a) => {
+            if (normalizeUsername(a.username) !== normalizeUsername(uname)) return false;
+            const aHome = normalizeHaUrl(a.haUrl);
+            if (aHome && currentHome) return aHome === currentHome;
+            return !!(a.profileId && a.profileId === (activeProfileIdRef.current || activeProfileId));
+        });
+        setSavedAccounts(accounts);
+        const pick = isAddAccount
+            ? (list.find((u) => u.id !== 'manual' && !isTaken(u.id.replace(/^person\./, ''))) || list[0])
+            : list[0];
+        setSelectedUser(pick);
+        if (pick?.id && pick.id !== 'manual') {
+            setUsername(pick.id.replace(/^person\./, ''));
+        }
+    };
+
     const fetchUsersFromHa = async () => {
         if (!haUrl || !haToken) return;
+        const fetchId = ++usersFetchIdRef.current;
         setLoadingUsers(true);
-
-        const baseUrl = String(haUrl)
-            .replace(/^wss:\/\//i, 'https://')
-            .replace(/^ws:\/\//i, 'http://')
-            .replace(/\/$/, '');
+        const stillCurrent = () => fetchId === usersFetchIdRef.current;
 
         try {
-            // Prefer REST — works even when dashboard already has a WebSocket open
-            // (add-account pushes login on top of dashboard-v2).
-            const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 15000);
-            const res = await fetch(`${baseUrl}/api/states`, {
-                method: 'GET',
-                headers: {
-                    Authorization: `Bearer ${haToken}`,
-                    'Content-Type': 'application/json',
-                },
-                signal: controller.signal,
-            });
-            clearTimeout(timeout);
-
-            if (!res.ok) {
-                throw new Error(`HA states HTTP ${res.status}`);
+            let mapped = [];
+            let lastErr = null;
+            for (let attempt = 0; attempt < 3 && stillCurrent(); attempt++) {
+                try {
+                    mapped = await fetchPersonsFromHaRest(haUrl, haToken);
+                    lastErr = null;
+                    break;
+                } catch (e) {
+                    lastErr = e;
+                    console.log(`[Login] Person REST attempt ${attempt + 1} failed:`, e?.message || e);
+                    if (attempt < 2) await new Promise((r) => setTimeout(r, 700 * (attempt + 1)));
+                }
             }
 
-            const states = await res.json();
-            const personEntities = (Array.isArray(states) ? states : []).filter((e) =>
-                e.entity_id?.startsWith('person.'),
-            );
+            if (!stillCurrent()) return;
 
-            console.log('[Login] REST persons:', personEntities.length);
-
-            const mappedUsers = personEntities.map((p) => ({
-                id: p.entity_id,
-                name: p.attributes?.friendly_name || p.entity_id,
-                user_id: p.attributes?.user_id,
-                picture: p.attributes?.entity_picture,
-            }));
-
-            if (mappedUsers.length > 0) {
-                setUsers(mappedUsers);
-                setSelectedUser(mappedUsers[0]);
-                setUsername(mappedUsers[0].id.replace('person.', ''));
-            } else {
-                setUsers([{ id: 'manual', name: 'Manual Login' }]);
-                setSelectedUser({ id: 'manual', name: 'Manual Login' });
+            if (mapped.length > 0) {
+                console.log('[Login] REST persons:', mapped.length);
+                await applyFetchedUsers(mapped);
+                setLoadingUsers(false);
+                return;
             }
-            setLoadingUsers(false);
-            return;
+            if (lastErr) {
+                console.log('[Login] REST user fetch failed, trying WebSocket:', lastErr?.message || lastErr);
+            }
         } catch (restErr) {
+            if (!stillCurrent()) return;
             console.log('[Login] REST user fetch failed, trying WebSocket:', restErr?.message || restErr);
         }
 
-        // Fallback: WebSocket (original path)
-        connectAndFetchUsers();
+        if (stillCurrent()) connectAndFetchUsers(fetchId);
     };
 
-    const connectAndFetchUsers = () => {
+    const connectAndFetchUsers = (fetchId = usersFetchIdRef.current) => {
         if (!haUrl || !haToken) {
             setLoadingUsers(false);
             return;
         }
+        const stillCurrent = () => fetchId === usersFetchIdRef.current;
         setLoadingUsers(true);
 
         try {
-            // Close existing login socket only (don't kill dashboard via disconnectAll)
             if (service.current) {
-                console.log('Closing existing socket before reconnecting...');
-                if (service.current.disconnect) {
-                    service.current.disconnect();
-                } else if (service.current.socket) {
-                    service.current.socket.close();
-                }
+                if (service.current.disconnect) service.current.disconnect();
+                else service.current.socket?.close();
                 service.current = null;
             }
 
@@ -416,6 +584,7 @@ export default function Login() {
             service.current.connect();
 
             const safetyTimer = setTimeout(() => {
+                if (!stillCurrent()) return;
                 setLoadingUsers((prev) => {
                     if (prev) {
                         console.log('[Login] WebSocket user fetch timed out');
@@ -429,46 +598,32 @@ export default function Login() {
             service.current.subscribe((data) => {
                 if (data.type === 'connected') {
                     clearTimeout(safetyTimer);
+                    if (!stillCurrent()) return;
                     service.current.getStates().then((states) => {
-                        console.log('DEBUG: Loaded States:', states?.length);
-                        const personEntities = (states || []).filter((e) => e.entity_id.startsWith('person.'));
-
-                        console.log('DEBUG: Found Persons:', personEntities.length);
-
-                        const mappedUsers = personEntities.map((p) => ({
-                            id: p.entity_id,
-                            name: p.attributes.friendly_name || p.entity_id,
-                            user_id: p.attributes.user_id,
-                            picture: p.attributes.entity_picture,
-                        }));
-
-                        if (mappedUsers.length > 0) {
-                            setUsers(mappedUsers);
-                            setSelectedUser(mappedUsers[0]);
-                            setUsername(mappedUsers[0].id.replace('person.', ''));
-                        } else {
-                            setUsers([{ id: 'manual', name: 'Manual Login' }]);
-                            setSelectedUser({ id: 'manual', name: 'Manual Login' });
-                        }
+                        if (!stillCurrent()) return;
+                        const mappedUsers = mapPersonRecords(
+                            (states || []).filter((e) => e.entity_id?.startsWith('person.')),
+                        );
+                        console.log('[Login] WS persons:', mappedUsers.length);
+                        applyFetchedUsers(mappedUsers);
                         setLoadingUsers(false);
                     }).catch((e) => {
+                        if (!stillCurrent()) return;
                         console.log('Error fetching states:', e);
-                        setUsers([{ id: 'manual', name: 'Manual Login' }]);
-                        setSelectedUser({ id: 'manual', name: 'Manual Login' });
+                        applyFetchedUsers([]);
                         setLoadingUsers(false);
                     });
                 } else if (data.type === 'auth_failed' || data.type === 'auth_invalid') {
                     clearTimeout(safetyTimer);
+                    if (!stillCurrent()) return;
                     Alert.alert('Error', 'Invalid HA Token');
-                    setUsers([{ id: 'manual', name: 'Manual Login' }]);
-                    setSelectedUser({ id: 'manual', name: 'Manual Login' });
+                    applyFetchedUsers([]);
                     setLoadingUsers(false);
                 }
             });
         } catch (e) {
             console.log('Connection error:', e);
-            setUsers([{ id: 'manual', name: 'Manual Login' }]);
-            setSelectedUser({ id: 'manual', name: 'Manual Login' });
+            applyFetchedUsers([]);
             setLoadingUsers(false);
         }
     };
@@ -540,26 +695,35 @@ export default function Login() {
             const isValid = await validateCredentials(normalizedUrl, username, password);
 
             if (isValid) {
-                // Persist session so user doesn't need to log in again
-                const activeProfileId = await SecureStore.getItemAsync(SETTINGS_KEY_ACTIVE_PROFILE);
-                const profilesJson = await SecureStore.getItemAsync(SETTINGS_KEY_PROFILES);
-                let profileName = '';
-                try {
-                    const profiles = JSON.parse(profilesJson || '[]');
-                    profileName = profiles.find((p) => p.id === activeProfileId)?.name || '';
-                } catch {
-                    // ignore
-                }
+                const resolvedId = activeProfileIdRef.current || activeProfileId;
+                const resolvedProfile = profiles.find((p) => p.id === resolvedId)
+                    || profiles.find((p) => toHaHttpBase(p.haUrl) === toHaHttpBase(haUrl));
+                const profileName = resolvedProfile?.name || '';
+                const profileIdToSave = resolvedProfile?.id || resolvedId || '';
 
-                // Always store in multi-account list (needed for homepage switching)
-                await upsertAccountAndActivate({
-                    username,
-                    password,
-                    name: selectedUser.name,
-                    userId: selectedUser.user_id || '',
-                    profileId: activeProfileId || '',
-                    profileName,
-                });
+                try {
+                    const result = await upsertAccountAndActivate({
+                        username,
+                        password,
+                        name: selectedUser.name,
+                        userId: selectedUser.user_id || selectedUser.userId || '',
+                        profileId: profileIdToSave,
+                        profileName,
+                        haUrl: normalizedUrl,
+                    });
+                    if (isAddAccount && result?.alreadyExisted) {
+                        Alert.alert(
+                            'Already added',
+                            'This user is already signed in for this home. Switching to that account.',
+                        );
+                    }
+                } catch (storeErr) {
+                    console.log('[Login] Failed to save account for switching:', storeErr);
+                    Alert.alert(
+                        'Account not saved',
+                        'You are signed in, but this user could not be added to the switch list. Try Add another account again.',
+                    );
+                }
 
                 if (faceIdEnabled) {
                     setHasSavedBiometricCreds(true);
@@ -570,7 +734,7 @@ export default function Login() {
                 // null and the token was never sent to the backend.
                 registerForPushNotificationsAsync().catch(() => {});
 
-                await preloadDashboardSnapshot(activeProfileId);
+                await preloadDashboardSnapshot(profileIdToSave);
 
                 if (isAddAccount) {
                     // Keep the existing dashboard underneath so both accounts stay signed in.
@@ -656,15 +820,7 @@ export default function Login() {
                 return guess === savedUser || u.name?.toLowerCase().replace(/\s+/g, '_') === savedUser;
             }) || { name: savedUser, user_id: '' };
 
-            const activeProfileId = await SecureStore.getItemAsync(SETTINGS_KEY_ACTIVE_PROFILE);
-            const profilesJson = await SecureStore.getItemAsync(SETTINGS_KEY_PROFILES);
-            let profileName = '';
-            try {
-                const profiles = JSON.parse(profilesJson || '[]');
-                profileName = profiles.find((p) => p.id === activeProfileId)?.name || '';
-            } catch {
-                // ignore
-            }
+            const profileName = profiles.find((p) => p.id === activeProfileId)?.name || '';
 
             await upsertAccountAndActivate({
                 username: savedUser,
@@ -673,6 +829,7 @@ export default function Login() {
                 userId: userObj.user_id || '',
                 profileId: activeProfileId || '',
                 profileName,
+                haUrl: normalizedUrl,
             });
 
             registerForPushNotificationsAsync().catch(() => {});
@@ -717,7 +874,10 @@ export default function Login() {
                             styles.profileItem,
                             activeProfileId === item.id && styles.activeProfileItem
                         ]}
-                        onPress={() => handleSelectProfile(item.id)}
+                        onPress={() => {
+                            handleSelectProfile(item.id);
+                            setShowSettings(false);
+                        }}
                     >
                         <View style={styles.profileInfo}>
                             <View style={styles.profileHeader}>
@@ -802,19 +962,24 @@ export default function Login() {
         }, Platform.OS === 'ios' ? 280 : 120);
     };
 
-    const renderProfileForm = () => (
-        <ScrollView
-            ref={profileFormScrollRef}
-            style={{ flex: 1 }}
-            contentContainerStyle={{
-                paddingBottom: 24 + (settingsKeyboardPad > 0 ? Math.min(settingsKeyboardPad, 320) : 0),
-                flexGrow: 1,
-            }}
-            keyboardShouldPersistTaps="handled"
-            keyboardDismissMode="on-drag"
-            showsVerticalScrollIndicator={false}
-            nestedScrollEnabled
-        >
+    const renderProfileForm = (inline = false) => {
+        const FormWrap = inline ? View : ScrollView;
+        const wrapProps = inline
+            ? { style: { width: '100%' } }
+            : {
+                ref: profileFormScrollRef,
+                style: { flex: 1 },
+                contentContainerStyle: {
+                    paddingBottom: 24 + (settingsKeyboardPad > 0 ? Math.min(settingsKeyboardPad, 320) : 0),
+                    flexGrow: 1,
+                },
+                keyboardShouldPersistTaps: 'handled',
+                keyboardDismissMode: 'on-drag',
+                showsVerticalScrollIndicator: false,
+                nestedScrollEnabled: true,
+            };
+        return (
+        <FormWrap {...wrapProps}>
             <TouchableOpacity
                 style={styles.backButton}
                 onPress={() => {
@@ -904,25 +1069,96 @@ export default function Login() {
             >
                 <Text style={styles.saveButtonText}>Save Profile</Text>
             </TouchableOpacity>
-        </ScrollView>
-    );
+        </FormWrap>
+        );
+    };
 
     return (
         <KeyboardAvoidingView
             behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
             style={{ flex: 1 }}
         >
-            <TouchableWithoutFeedback onPress={Keyboard.dismiss}>
+            <TouchableWithoutFeedback
+                onPress={Keyboard.dismiss}
+                disabled={!!(isAddAccount && editingProfile)}
+            >
                 <View style={styles.container}>
                     <ScrollView
                         ref={scrollViewRef}
                         style={{ flex: 1 }}
-                        contentContainerStyle={{ flexGrow: 1, justifyContent: 'center' }}
+                        contentContainerStyle={{ flexGrow: 1, justifyContent: (isAddAccount && editingProfile) ? 'flex-start' : 'center' }}
                         keyboardShouldPersistTaps="handled"
                         showsVerticalScrollIndicator={false}
                     >
                         <View style={styles.form}>
-                            {profiles.length === 0 ? (
+                            {!profilesReady ? (
+                                <ActivityIndicator color={Colors.primary} size="large" />
+                            ) : isAddAccount && editingProfile ? (
+                                <View style={{ width: '100%', minHeight: 420 }}>
+                                    <View style={styles.welcomeBlock}>
+                                        <Text style={styles.welcomeText}>
+                                            {editingProfile.id ? 'Edit Profile' : 'Create Profile'}
+                                        </Text>
+                                        <Text style={styles.welcomeSubText}>
+                                            Save this home, then sign in as a user
+                                        </Text>
+                                    </View>
+                                    {renderProfileForm(true)}
+                                </View>
+                            ) : isAddAccount && pickingProfile && profiles.length > 0 ? (
+                                <View style={{ width: '100%' }}>
+                                    <View style={styles.welcomeBlock}>
+                                        <Text style={styles.welcomeText}>Add Account</Text>
+                                        <Text style={styles.welcomeSubText}>
+                                            Choose a saved home, then sign in. If it is not listed, create a new profile.
+                                        </Text>
+                                        <TouchableOpacity
+                                            style={{ marginTop: 12 }}
+                                            onPress={() => router.back()}
+                                        >
+                                            <Text style={{ color: Colors.primary, fontWeight: '600' }}>Cancel</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                    {profiles.map((item) => (
+                                        <TouchableOpacity
+                                            key={item.id}
+                                            style={[
+                                                styles.profileItem,
+                                                activeProfileId === item.id && styles.activeProfileItem,
+                                            ]}
+                                            onPress={() => handleSelectProfile(item.id)}
+                                        >
+                                            <View style={styles.profileInfo}>
+                                                <View style={styles.profileHeader}>
+                                                    <Text style={styles.profileName}>{item.name}</Text>
+                                                    {activeProfileId === item.id && (
+                                                        <View style={styles.activeBadge}>
+                                                            <Text style={styles.activeBadgeText}>Current</Text>
+                                                        </View>
+                                                    )}
+                                                </View>
+                                                <Text style={styles.profileUrl} numberOfLines={1}>
+                                                    {item.haUrl}
+                                                </Text>
+                                            </View>
+                                            <ChevronDown
+                                                size={20}
+                                                color={Colors.textDim}
+                                                style={{ transform: [{ rotate: '-90deg' }] }}
+                                            />
+                                        </TouchableOpacity>
+                                    ))}
+                                    <TouchableOpacity
+                                        style={[styles.createProfileBtn, { marginTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, alignSelf: 'stretch' }]}
+                                        onPress={() => {
+                                            setEditingProfile({ name: '', haUrl: '', adminUrl: '', haToken: '' });
+                                        }}
+                                    >
+                                        <Plus size={18} color="#fff" />
+                                        <Text style={styles.createProfileBtnText}>Create new profile</Text>
+                                    </TouchableOpacity>
+                                </View>
+                            ) : profiles.length === 0 ? (
                                 <View style={styles.noProfileWarning}>
                                     <Shield size={40} color={Colors.primary} style={{ marginBottom: 10 }} />
                                     <Text style={styles.warningText}>No Connection Profiles</Text>
@@ -931,7 +1167,7 @@ export default function Login() {
                                         style={styles.createProfileBtn}
                                         onPress={() => {
                                             setEditingProfile({ name: 'My Home', haUrl: '', adminUrl: '', haToken: '' });
-                                            setShowSettings(true);
+                                            if (!isAddAccount) setShowSettings(true);
                                         }}
                                     >
                                         <Text style={styles.createProfileBtnText}>Create Profile</Text>
@@ -971,7 +1207,15 @@ export default function Login() {
                                                 {profiles.find(p => p.id === activeProfileId)?.name || 'Unknown Profile'}
                                             </Text>
                                         </View>
-                                        <TouchableOpacity onPress={() => { setEditingProfile(null); setShowSettings(true); }}>
+                                        <TouchableOpacity onPress={() => {
+                                            if (isAddAccount) {
+                                                pickedProfileRef.current = false;
+                                                setPickingProfile(true);
+                                                return;
+                                            }
+                                            setEditingProfile(null);
+                                            setShowSettings(true);
+                                        }}>
                                             <Settings size={20} color={Colors.primary} />
                                         </TouchableOpacity>
                                     </View>
@@ -979,7 +1223,12 @@ export default function Login() {
                                     {/* User Dropdown */}
                                     <TouchableOpacity
                                         style={styles.inputContainer}
-                                        onPress={() => setShowUserModal(true)}
+                                        onPress={() => {
+                                            setShowUserModal(true);
+                                            if (haUrl && haToken && !loadingUsers && (users.length === 0 || (users.length === 1 && users[0].id === 'manual'))) {
+                                                fetchUsersFromHa();
+                                            }
+                                        }}
                                     >
                                         <User size={20} color={Colors.textDim} style={styles.inputIcon} />
                                         <View style={{ flex: 1 }}>
@@ -1064,8 +1313,9 @@ export default function Login() {
                                 </>
                             )}
                         </View>
-
-
+                    </ScrollView>
+                </View>
+            </TouchableWithoutFeedback>
 
                         {/* User Selection Modal */}
                         <Modal
@@ -1078,32 +1328,88 @@ export default function Login() {
                                 <ModalBackdrop onPress={() => setShowUserModal(false)} />
                                 <View style={styles.modalContent}>
                                     <Text style={styles.modalTitle}>Select User</Text>
+                                    {isAddAccount ? (
+                                        <Text style={styles.userModalHint}>
+                                            Existing Home Assistant users are listed below. Already added accounts are marked.
+                                        </Text>
+                                    ) : null}
                                     <FlatList
                                         data={users}
                                         keyExtractor={item => item.id}
-                                        renderItem={({ item }) => (
+                                        renderItem={({ item }) => {
+                                            const uname = normalizeUsername(item.id);
+                                            const alreadyAdded = savedAccounts.some((a) => {
+                                                if (normalizeUsername(a.username) !== uname) return false;
+                                                const aHome = normalizeHaUrl(a.haUrl);
+                                                const currentHome = normalizeHaUrl(haUrl);
+                                                if (aHome && currentHome) return aHome === currentHome;
+                                                return !!(a.profileId && a.profileId === (activeProfileIdRef.current || activeProfileId));
+                                            });
+                                            return (
                                             <TouchableOpacity
                                                 style={styles.userItem}
                                                 onPress={() => {
+                                                    if (alreadyAdded && isAddAccount) {
+                                                        Alert.alert(
+                                                            'Already added',
+                                                            'This user is already signed in for this home. Switch accounts from the home screen.',
+                                                        );
+                                                        return;
+                                                    }
                                                     setSelectedUser(item);
-                                                    // Auto-guess username
-                                                    const guessed = item.id.replace('person.', '');
-                                                    setUsername(guessed);
+                                                    if (item.id !== 'manual') {
+                                                        setUsername(item.id.replace(/^person\./, ''));
+                                                    }
                                                     setShowUserModal(false);
                                                 }}
                                             >
                                                 <View style={styles.userRow}>
                                                     <View style={styles.userAvatar}>
-                                                        <Text style={styles.userInitials}>{item.name.substring(0, 2).toUpperCase()}</Text>
+                                                        <Text style={styles.userInitials}>{(item.name || 'U').substring(0, 2).toUpperCase()}</Text>
                                                     </View>
-                                                    <Text style={[styles.userItemText, selectedUser?.id === item.id && { color: '#8947ca', fontWeight: 'bold' }]}>
-                                                        {item.name}
-                                                    </Text>
+                                                    <View style={{ flex: 1 }}>
+                                                        <Text style={[styles.userItemText, selectedUser?.id === item.id && { color: '#8947ca', fontWeight: 'bold' }]}>
+                                                            {item.name}
+                                                        </Text>
+                                                        {alreadyAdded ? (
+                                                            <Text style={styles.alreadyAddedText}>Already added</Text>
+                                                        ) : null}
+                                                    </View>
                                                 </View>
                                                 {selectedUser?.id === item.id && <Check size={20} color="#8947ca" />}
                                             </TouchableOpacity>
-                                        )}
+                                            );
+                                        }}
+                                        ListEmptyComponent={
+                                            <View style={{ paddingVertical: 24, alignItems: 'center' }}>
+                                                <Text style={styles.emptyStateText}>
+                                                    {loadingUsers ? 'Loading users…' : 'No users loaded'}
+                                                </Text>
+                                                {!loadingUsers ? (
+                                                    <TouchableOpacity
+                                                        style={[styles.createProfileBtn, { marginTop: 14 }]}
+                                                        onPress={() => {
+                                                            setShowUserModal(false);
+                                                            fetchUsersFromHa();
+                                                        }}
+                                                    >
+                                                        <Text style={styles.createProfileBtnText}>Retry</Text>
+                                                    </TouchableOpacity>
+                                                ) : (
+                                                    <ActivityIndicator color={Colors.primary} style={{ marginTop: 12 }} />
+                                                )}
+                                            </View>
+                                        }
                                     />
+                                    <TouchableOpacity
+                                        style={styles.retryUsersBtn}
+                                        onPress={fetchUsersFromHa}
+                                        disabled={loadingUsers}
+                                    >
+                                        {loadingUsers
+                                            ? <ActivityIndicator color={Colors.primary} size="small" />
+                                            : <Text style={styles.retryUsersText}>Refresh users</Text>}
+                                    </TouchableOpacity>
                                     <TouchableOpacity style={styles.closeButton} onPress={() => setShowUserModal(false)}>
                                         <Text style={styles.closeButtonText}>Cancel</Text>
                                     </TouchableOpacity>
@@ -1179,10 +1485,7 @@ export default function Login() {
                                 </View>
                             </View>
                         </Modal>
-                    </ScrollView>
-                </View>
-            </TouchableWithoutFeedback >
-        </KeyboardAvoidingView >
+        </KeyboardAvoidingView>
     );
 }
 
@@ -1325,6 +1628,27 @@ const styles = StyleSheet.create({
     closeButtonText: {
         color: 'white',
         fontWeight: '600'
+    },
+    userModalHint: {
+        color: Colors.textDim,
+        fontSize: 13,
+        marginBottom: 12,
+        lineHeight: 18,
+    },
+    alreadyAddedText: {
+        color: Colors.primary,
+        fontSize: 11,
+        marginTop: 2,
+    },
+    retryUsersBtn: {
+        marginTop: 8,
+        paddingVertical: 12,
+        alignItems: 'center',
+    },
+    retryUsersText: {
+        color: Colors.primary,
+        fontWeight: '600',
+        fontSize: 14,
     },
     // FaceID
     bioButton: {

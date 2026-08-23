@@ -95,7 +95,13 @@ export default function AccountSwitcherModal({
                             {accounts.length === 0 ? (
                                 <Text style={styles.empty}>No saved accounts yet.</Text>
                             ) : (
-                                accounts.map((account) => {
+                                [...accounts]
+                                    .sort((a, b) => {
+                                        if (a.id === activeId) return -1;
+                                        if (b.id === activeId) return 1;
+                                        return (b.updatedAt || 0) - (a.updatedAt || 0);
+                                    })
+                                    .map((account) => {
                                     const selected = account.id === activeId;
                                     const busy = switchingId === account.id;
                                     return (

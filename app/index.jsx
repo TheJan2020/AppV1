@@ -5,6 +5,7 @@ import LottieView from 'lottie-react-native';
 import * as SplashScreen from 'expo-splash-screen';
 import * as SecureStore from 'expo-secure-store';
 import { preloadDashboardSnapshot, rememberBootProfile } from '../utils/dashboardCache';
+import { loadHaProfiles } from '../utils/storage';
 import { Colors } from '../constants/Colors';
 
 const MIN_SPLASH_MS = 2000;
@@ -25,16 +26,15 @@ export default function Splash() {
         let cancelled = false;
         (async () => {
             try {
-                const [isLoggedIn, activeProfileId, profilesJson, userJson] = await Promise.all([
+                const [isLoggedIn, activeProfileId, profiles, userJson] = await Promise.all([
                     SecureStore.getItemAsync('is_logged_in'),
                     SecureStore.getItemAsync('ha_active_profile_id'),
-                    SecureStore.getItemAsync('ha_profiles'),
+                    loadHaProfiles(),
                     SecureStore.getItemAsync('logged_in_user'),
                 ]);
                 if (cancelled) return;
 
-                if (isLoggedIn === 'true' && activeProfileId && profilesJson && userJson) {
-                    const profiles = JSON.parse(profilesJson);
+                if (isLoggedIn === 'true' && activeProfileId && profiles.length && userJson) {
                     const activeProfile = profiles.find(p => p.id === activeProfileId);
                     if (activeProfile) {
                         const normalizedHaUrl = activeProfile.haUrl?.replace(/^https?:\/\//i, (m) => m.toLowerCase()) || activeProfile.haUrl;
