@@ -1,6 +1,6 @@
 import { memo, useState, useEffect, useRef, useMemo } from 'react';
 import {
-    View, Text, StyleSheet, TouchableOpacity, Dimensions,
+    View, Text, StyleSheet, TouchableOpacity, Dimensions, Image,
     Modal, FlatList, ActivityIndicator, Alert, TextInput, Animated, PanResponder,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
@@ -9,6 +9,8 @@ import { Edit2, Check, X, Search } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
 import { formatCameraName } from '../../utils/formatDisplayName';
 import { authFetch } from '../../utils/authFetch';
+import { cameraKey, cameraUsesHaFeed, cameraKeysMatch, camerasFromBackendPayload } from '../../services/appRole';
+import * as SecureStore from 'expo-secure-store';
 import ModalBackdrop from '../ModalBackdrop';
 import CameraSensorOverlay, { buildEntityMap, resolveSensorIds } from './CameraSensorOverlay';
 
@@ -57,15 +59,38 @@ const STRIP_PAGE_JS = `
   true;
 `;
 
-// Camera card — live WebView stream
+const SNAPSHOT_MS = 2000;
+
+function withTick(url, tick) {
+    if (!url) return '';
+    return `${url}${url.includes('?') ? '&' : '?'}t=${tick}`;
+}
+
+// Camera card — Frigate live WebView, HA snapshot images (JPEG cannot load in WebView)
 const CameraCard = ({ cam, frigateService, onPress, sensorIds = [], entityMap = {}, cardWidth }) => {
     const [streamError, setStreamError] = useState(false);
-    const isHACamera = !!(cam.entity_id);
+    const [tick, setTick] = useState(0);
+    const [useFrigateFallback, setUseFrigateFallback] = useState(false);
+    const lastGoodRef = useRef(null);
+    const isHACamera = cameraUsesHaFeed(cam) && !useFrigateFallback;
+    const frigateName = String(cam?.name || cam?.id || '').replace(/^camera\./, '');
     const streamUrl = isHACamera
         ? frigateService?.getHASnapshotUrl(cam.entity_id || cam.id)
-        : frigateService?.getStreamUrl(cam.name || cam.id);
-
+        : frigateService?.getStreamUrl(frigateName);
+    const snapshotUri = withTick(streamUrl, tick);
     const headers = frigateService?.headers || {};
+
+    useEffect(() => {
+        if (!isHACamera) return undefined;
+        const id = setInterval(() => setTick((n) => n + 1), SNAPSHOT_MS);
+        return () => clearInterval(id);
+    }, [isHACamera]);
+
+    useEffect(() => {
+        setStreamError(false);
+        setUseFrigateFallback(false);
+        lastGoodRef.current = null;
+    }, [cam?.id, cam?.entity_id, cam?.name]);
 
     return (
         <TouchableOpacity
@@ -74,22 +99,47 @@ const CameraCard = ({ cam, frigateService, onPress, sensorIds = [], entityMap = 
             activeOpacity={0.85}
         >
             {streamUrl && !streamError ? (
-                <WebView
-                    source={{ uri: streamUrl, headers }}
-                    style={StyleSheet.absoluteFill}
-                    backgroundColor="black"
-                    scrollEnabled={false}
-                    allowsInlineMediaPlayback={true}
-                    mediaPlaybackRequiresUserAction={false}
-                    originWhitelist={['*']}
-                    scalesPageToFit={false}
-                    javaScriptEnabled={true}
-                    injectedJavaScriptBeforeContentLoaded={STRIP_PRE_JS}
-                    injectedJavaScript={STRIP_PAGE_JS}
-                    onError={() => setStreamError(true)}
-                    onHttpError={(e) => { if (e.nativeEvent.statusCode >= 400) setStreamError(true); }}
-                    onLoadStart={() => setStreamError(false)}
-                />
+                isHACamera ? (
+                    <>
+                        {lastGoodRef.current ? (
+                            <Image
+                                source={{ uri: lastGoodRef.current, headers }}
+                                style={StyleSheet.absoluteFill}
+                                resizeMode="cover"
+                            />
+                        ) : null}
+                        <Image
+                            source={{ uri: snapshotUri, headers }}
+                            style={StyleSheet.absoluteFill}
+                            resizeMode="cover"
+                            fadeDuration={0}
+                            onLoad={() => {
+                                lastGoodRef.current = snapshotUri;
+                                setStreamError(false);
+                            }}
+                            onError={() => {
+                                if (!lastGoodRef.current) setUseFrigateFallback(true);
+                            }}
+                        />
+                    </>
+                ) : (
+                    <WebView
+                        source={{ uri: streamUrl, headers }}
+                        style={StyleSheet.absoluteFill}
+                        backgroundColor="black"
+                        scrollEnabled={false}
+                        allowsInlineMediaPlayback={true}
+                        mediaPlaybackRequiresUserAction={false}
+                        originWhitelist={['*']}
+                        scalesPageToFit={false}
+                        javaScriptEnabled={true}
+                        injectedJavaScriptBeforeContentLoaded={STRIP_PRE_JS}
+                        injectedJavaScript={STRIP_PAGE_JS}
+                        onError={() => setStreamError(true)}
+                        onHttpError={(e) => { if (e.nativeEvent.statusCode >= 400) setStreamError(true); }}
+                        onLoadStart={() => setStreamError(false)}
+                    />
+                )
             ) : (
                 <View style={styles.placeholder}>
                     {streamError ? (
@@ -118,8 +168,16 @@ const CameraCard = ({ cam, frigateService, onPress, sensorIds = [], entityMap = 
     );
 };
 
-function cameraKey(id) {
-    return String(id || '').trim().toLowerCase().replace(/^camera\./, '');
+function cameraPickId(cam) {
+    return String(cam?.entity_id || cam?.id || cam?.name || '').trim();
+}
+
+function toPickerCameras(list) {
+    return (Array.isArray(list) ? list : []).map((c) => ({
+        entity_id: cameraPickId(c),
+        name: c.name || c.id || c.entity_id,
+        friendly_name: c.friendly_name || c.name || c.id || c.entity_id,
+    })).filter((c) => c.entity_id);
 }
 
 function normalizeSelectedIds(rawList, cameras) {
@@ -134,13 +192,24 @@ function normalizeSelectedIds(rawList, cameras) {
             || cameraKey(c.name) === key
             || cameraKey(c.friendly_name) === key
         ));
-        if (cam?.entity_id) matched.add(cam.entity_id);
+        if (cam) matched.add(cameraPickId(cam));
+        else matched.add(String(item).trim());
     }
     return matched;
 }
 
 // ── Edit Cameras Modal ────────────────────────────────────────────────────────
-function EditCamerasModal({ visible, onClose, adminUrl, onSave, initialSelected = [] }) {
+function EditCamerasModal({
+    visible,
+    onClose,
+    adminUrl,
+    onSave,
+    initialSelected = [],
+    availableCameras = null,
+    persistToServer = true,
+    userId = '',
+    username = '',
+}) {
     const [allCameras, setAllCameras] = useState([]);
     const [selected, setSelected]     = useState(new Set());
     const [loading, setLoading]       = useState(false);
@@ -189,20 +258,42 @@ function EditCamerasModal({ visible, onClose, adminUrl, onSave, initialSelected 
         setSelected(new Set());
         setLoading(true);
 
-        const base = adminUrl?.endsWith('/') ? adminUrl : `${adminUrl}/`;
-        authFetch(`${base}api/cameras`)
-            .then(async (res) => {
-                const data = await res.json();
-                const cams = (data.cameras || []).map(c => ({
-                    entity_id:     c.entity_id || c.name || c,
-                    name:          c.name,
-                    friendly_name: c.attributes?.friendly_name || c.name || c.entity_id || c,
-                }));
-                cams.sort((a, b) => a.friendly_name.localeCompare(b.friendly_name));
-                setAllCameras(cams);
+        const applyList = (cams) => {
+            const sorted = [...cams].sort((a, b) =>
+                String(a.friendly_name || '').localeCompare(String(b.friendly_name || ''))
+            );
+            setAllCameras(sorted);
+            const savedSet = normalizeSelectedIds(initialSelected, sorted);
+            savedIdsRef.current = savedSet;
+            setSelected(new Set(savedSet));
+            setLoading(false);
+        };
 
+        if (Array.isArray(availableCameras) && availableCameras.length) {
+            applyList(toPickerCameras(availableCameras));
+            return;
+        }
+
+        const base = adminUrl?.endsWith('/') ? adminUrl : `${adminUrl}/`;
+        const qs = new URLSearchParams({
+            userId: String(userId || ''),
+            username: String(username || ''),
+        });
+        authFetch(`${base}api/cameras?${qs}`)
+            .then(async (res) => {
+                if (!res.ok) throw new Error(`cameras ${res.status}`);
+                const data = await res.json();
+                const cams = camerasFromBackendPayload(data).map((c) => ({
+                    entity_id:     c.entity_id || c.name || c.id,
+                    name:          c.name,
+                    friendly_name: c.friendly_name || c.name || c.entity_id,
+                    feed:          c.feed,
+                }));
                 const fromConfig = Array.isArray(initialSelected) ? initialSelected : null;
-                const fromApi = Array.isArray(data.selected_cameras) ? data.selected_cameras : [];
+                const fromApi = Array.isArray(data.home_cameras) ? data.home_cameras
+                    : (Array.isArray(data.selected_cameras) ? data.selected_cameras : []);
+                cams.sort((a, b) => String(a.friendly_name).localeCompare(String(b.friendly_name)));
+                setAllCameras(cams);
                 const savedSet = normalizeSelectedIds(fromConfig ?? fromApi, cams);
                 savedIdsRef.current = savedSet;
                 setSelected(new Set(savedSet));
@@ -211,7 +302,7 @@ function EditCamerasModal({ visible, onClose, adminUrl, onSave, initialSelected 
                 console.warn('[HomeCameraStrip] fetch cameras skipped:', e?.message || e);
             })
             .finally(() => setLoading(false));
-    }, [visible, adminUrl]);
+    }, [visible, adminUrl, availableCameras, userId, username]);
 
     const toggleItem = (id) => {
         setSelected(prev => {
@@ -223,23 +314,32 @@ function EditCamerasModal({ visible, onClose, adminUrl, onSave, initialSelected 
 
     const handleSave = async () => {
         setSaving(true);
+        const ids = Array.from(selected);
         try {
-            const base = adminUrl?.endsWith('/') ? adminUrl : `${adminUrl}/`;
-            // Fetch current config, patch selected_cameras, save back
-            const cfgRes = await authFetch(`${base}api/config`);
-            const cfg    = await cfgRes.json();
-            const res    = await authFetch(`${base}api/config`, {
-                method:  'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ ...cfg, selected_cameras: Array.from(selected) }),
-            });
-            if (!res.ok) throw new Error('save failed');
+            if (persistToServer && adminUrl) {
+                const base = adminUrl?.endsWith('/') ? adminUrl : `${adminUrl}/`;
+                const camRes = await authFetch(`${base}api/cameras`, {
+                    method:  'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body:    JSON.stringify({
+                        home_cameras: ids,
+                        userId: String(userId || ''),
+                        username: String(username || ''),
+                    }),
+                });
+                if (!camRes.ok) {
+                    throw new Error(`save failed (${camRes.status})`);
+                }
+            }
             savedIdsRef.current = new Set(selected);
-            onSave(Array.from(selected));
+            onSave(ids);
             onClose();
         } catch (e) {
             console.warn('[HomeCameraStrip] save cameras error:', e);
-            Alert.alert('Error', 'Could not save cameras. Please try again.');
+            savedIdsRef.current = new Set(selected);
+            onSave(ids);
+            onClose();
+            Alert.alert('Saved on this device', 'Could not sync cameras to the server. They will still show on Home.');
         } finally {
             setSaving(false);
         }
@@ -272,7 +372,7 @@ function EditCamerasModal({ visible, onClose, adminUrl, onSave, initialSelected 
                         </TouchableOpacity>
                     </View>
                     <Text style={modal.subtitle}>
-                        {allCameras.length} available · {selected.size} selected
+                        {`${allCameras.length} cameras you can access · ${selected.size} on Home`}
                     </Text>
 
                     {/* Search */}
@@ -347,7 +447,7 @@ function EditCamerasModal({ visible, onClose, adminUrl, onSave, initialSelected 
 
 function HomeCameraStrip({
     frigateCameras = [],
-    selectedCameraNames = [],
+    selectedCameraNames = null,
     frigateService,
     onCameraPress,
     onAllCamerasPress,
@@ -356,13 +456,56 @@ function HomeCameraStrip({
     cameraSensors = {},
     haEntities = [],
     columns = 2,
+    canEdit = undefined,
+    availableCameras = null,
+    persistToServer = true,
+    selectionStorageKey = null,
+    userId = '',
+    username = '',
 }) {
     const [editVisible, setEditVisible] = useState(false);
     const [gridWidth, setGridWidth] = useState(0);
+    const [localSelected, setLocalSelected] = useState(null);
+    const [localReady, setLocalReady] = useState(!selectionStorageKey);
     const cardWidth =
         gridWidth > 0
             ? Math.floor((gridWidth - COL_GAP * (columns - 1)) / columns)
             : DEFAULT_CARD_W;
+
+    const pickerCameras = availableCameras || frigateCameras;
+    const showEdit = canEdit ?? (!!adminUrl || !!selectionStorageKey);
+
+    useEffect(() => {
+        if (!selectionStorageKey) {
+            setLocalSelected(null);
+            setLocalReady(true);
+            return;
+        }
+        let cancelled = false;
+        setLocalReady(false);
+        SecureStore.getItemAsync(selectionStorageKey)
+            .then((raw) => {
+                if (cancelled) return;
+                try {
+                    const parsed = raw ? JSON.parse(raw) : null;
+                    setLocalSelected(Array.isArray(parsed) ? parsed : null);
+                } catch {
+                    setLocalSelected(null);
+                }
+                setLocalReady(true);
+            })
+            .catch(() => {
+                if (!cancelled) {
+                    setLocalSelected(null);
+                    setLocalReady(true);
+                }
+            });
+        return () => { cancelled = true; };
+    }, [selectionStorageKey]);
+
+    const effectiveSelected = Array.isArray(selectedCameraNames)
+        ? selectedCameraNames
+        : ((selectionStorageKey && localReady && localSelected) ? localSelected : []);
 
     // Fast entity lookup map built from live HA entities (sensors only)
     const entityMap = useMemo(() => {
@@ -373,14 +516,18 @@ function HomeCameraStrip({
         return map;
     }, [haEntities]);
 
-    // selectedCameraNames may be HA entity IDs like "camera.doorstep"
-    // frigateCameras have name like "doorstep" (without prefix)
-    // Normalise both sides: strip "camera." prefix before comparing
-    const normalise = s => (s || '').toLowerCase().replace(/^camera\./, '');
-    const selectedNormalised = selectedCameraNames.map(normalise);
-    const cameras = frigateCameras.filter(c => selectedNormalised.includes(normalise(c.name || c.id)));
-    const canEdit = !!adminUrl;
-    const hasAnyCameras = frigateCameras.length > 0 || canEdit;
+    const cameras = useMemo(() => {
+        const selected = Array.isArray(effectiveSelected) ? effectiveSelected : [];
+        const pool = Array.isArray(pickerCameras) && pickerCameras.length
+            ? pickerCameras
+            : (frigateCameras || []);
+        if (!selected.length) return [];
+        return pool.filter((c) => {
+            const keys = [c.name, c.id, c.entity_id, c.friendly_name].filter(Boolean);
+            return selected.some((item) => keys.some((k) => cameraKeysMatch(k, item)));
+        });
+    }, [frigateCameras, pickerCameras, effectiveSelected]);
+    const hasAnyCameras = (frigateCameras.length > 0 || pickerCameras?.length > 0) || showEdit;
 
     if (!hasAnyCameras && cameras.length === 0 && !editVisible) return null;
 
@@ -389,7 +536,7 @@ function HomeCameraStrip({
             <View style={styles.headerRow}>
                 <Text style={styles.title}>CAMERAS</Text>
                 <View style={styles.headerActions}>
-                    {canEdit ? (
+                    {showEdit ? (
                         <TouchableOpacity onPress={() => setEditVisible(true)} style={styles.editBtn} activeOpacity={0.7}>
                             <Edit2 size={12} color="#9199BA" />
                             <Text style={styles.editText}>Edit</Text>
@@ -433,8 +580,22 @@ function HomeCameraStrip({
                 visible={editVisible}
                 onClose={() => setEditVisible(false)}
                 adminUrl={adminUrl}
-                initialSelected={selectedCameraNames}
-                onSave={(ids) => onCamerasUpdated && onCamerasUpdated(ids)}
+                initialSelected={effectiveSelected}
+                availableCameras={availableCameras}
+                persistToServer={persistToServer}
+                userId={userId}
+                username={username}
+                onSave={async (ids) => {
+                    if (selectionStorageKey) {
+                        try {
+                            await SecureStore.setItemAsync(selectionStorageKey, JSON.stringify(ids));
+                        } catch (e) {
+                            console.warn('[HomeCameraStrip] local save failed:', e?.message || e);
+                        }
+                        setLocalSelected(ids);
+                    }
+                    onCamerasUpdated && onCamerasUpdated(ids);
+                }}
             />
         </View>
     );

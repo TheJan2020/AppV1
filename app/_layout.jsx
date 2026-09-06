@@ -15,6 +15,7 @@ import { CF } from '../utils/typography';
 import * as SplashScreen from 'expo-splash-screen';
 import * as SecureStore from 'expo-secure-store';
 import { preloadDashboardSnapshot } from '../utils/dashboardCache';
+import { loadHaProfiles } from '../utils/storage';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -80,9 +81,19 @@ export default function RootLayout() {
 
     useEffect(() => {
         preloadLocalLightIcons().catch(() => {});
-        SecureStore.getItemAsync('ha_active_profile_id')
-            .then((id) => (id ? preloadDashboardSnapshot(id) : null))
-            .catch(() => {});
+        (async () => {
+            try {
+                const [id, profiles] = await Promise.all([
+                    SecureStore.getItemAsync('ha_active_profile_id'),
+                    loadHaProfiles(),
+                ]);
+                if (!id) return;
+                const active = (profiles || []).find((p) => p.id === id);
+                await preloadDashboardSnapshot(id, { haUrl: active?.haUrl });
+            } catch {
+                // ignore boot cache errors
+            }
+        })();
     }, []);
 
     useEffect(() => {
@@ -96,7 +107,7 @@ export default function RootLayout() {
         const isTablet = shortSide >= 768;
 
         if (!isTablet) {
-            ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
+            ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
         }
 
         // ── Cold start ────────────────────────────────────────────────────────

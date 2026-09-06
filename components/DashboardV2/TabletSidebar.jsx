@@ -1,12 +1,46 @@
 import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { Video, LayoutGrid, Home, Settings, Tablet } from 'lucide-react-native';
+import { Video, LayoutGrid, Home, Settings, Tablet, Lock } from 'lucide-react-native';
 import { BlurView } from 'expo-blur';
 
-import { memo } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { CF } from '../../utils/typography';
 import { ButlerIcon, TAB_ICON_SIZE } from './TabBarIcons';
 
-function TabletSidebar({ activeTab, onTabPress }) {
+const TAB_LABELS = {
+    cctv: 'Cameras',
+    rooms: 'Rooms',
+    butler: 'Butler',
+    settings: 'Settings',
+    tablet: 'Kids Tablet',
+};
+
+function tabIsAllowed(allowedTabs, tabId) {
+    if (tabId === 'home' || tabId === 'settings') return true;
+    if (!Array.isArray(allowedTabs)) return true;
+    if (allowedTabs.length === 0) return tabId === 'home' || tabId === 'settings';
+    return allowedTabs.includes(tabId);
+}
+
+function TabletSidebar({ activeTab, onTabPress, allowedTabs = null }) {
+    const [deniedLabel, setDeniedLabel] = useState('');
+    const deniedTimer = useRef(null);
+
+    useEffect(() => () => {
+        if (deniedTimer.current) clearTimeout(deniedTimer.current);
+    }, []);
+
+    const handlePress = (tabId) => {
+        if (tabId !== 'home' && !tabIsAllowed(allowedTabs, tabId)) {
+            setDeniedLabel(TAB_LABELS[tabId] || 'This screen');
+            if (deniedTimer.current) clearTimeout(deniedTimer.current);
+            deniedTimer.current = setTimeout(() => setDeniedLabel(''), 2200);
+            return;
+        }
+        if (deniedTimer.current) clearTimeout(deniedTimer.current);
+        setDeniedLabel('');
+        onTabPress(tabId);
+    };
+
     const tabs = [
         { id: 'home', label: 'Home', icon: Home },
         { id: 'rooms', label: 'Rooms', icon: LayoutGrid },
@@ -20,15 +54,18 @@ function TabletSidebar({ activeTab, onTabPress }) {
         <View style={styles.container}>
             <BlurView intensity={30} tint="dark" style={styles.blurContainer}>
                 {tabs.map((tab) => {
-                    const isActive = activeTab === tab.id;
+                    const isActive = tab.id === 'butler'
+                        ? activeTab === 'ai' || activeTab === 'butler'
+                        : activeTab === tab.id;
                     const Icon = tab.icon;
 
                     return (
                         <TouchableOpacity
                             key={tab.id}
                             style={[styles.tab, isActive && styles.activeTab]}
-                            onPress={() => onTabPress(tab.id)}
+                            onPress={() => handlePress(tab.id)}
                             activeOpacity={0.7}
+                            accessibilityState={{ selected: isActive }}
                         >
                             {tab.id === 'butler' ? (
                                 <ButlerIcon
@@ -49,6 +86,20 @@ function TabletSidebar({ activeTab, onTabPress }) {
                     );
                 })}
             </BlurView>
+
+            {deniedLabel ? (
+                <View style={styles.deniedToast} pointerEvents="none">
+                    <View style={styles.deniedCard}>
+                        <View style={styles.deniedIcon}>
+                            <Lock size={14} color="#E8D7FF" strokeWidth={2.2} />
+                        </View>
+                        <View>
+                            <Text style={styles.deniedTitle}>Permission denied</Text>
+                            <Text style={styles.deniedSub}>{deniedLabel}</Text>
+                        </View>
+                    </View>
+                </View>
+            ) : null}
         </View>
     );
 }
@@ -60,6 +111,7 @@ const styles = StyleSheet.create({
         left: 0,
         top: 0,
         bottom: 0,
+        overflow: 'visible',
         zIndex: 10000,
         elevation: 10000,
         borderRightWidth: 1,
@@ -94,6 +146,43 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontFamily: CF.semibold,
         fontSize: 10,
+    },
+    deniedToast: {
+        position: 'absolute',
+        left: 88,
+        bottom: 36,
+        zIndex: 4,
+    },
+    deniedCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        paddingVertical: 10,
+        paddingLeft: 10,
+        paddingRight: 16,
+        borderRadius: 18,
+        backgroundColor: 'rgba(18, 16, 28, 0.96)',
+        borderWidth: 1,
+        borderColor: 'rgba(201, 168, 240, 0.28)',
+    },
+    deniedIcon: {
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        backgroundColor: 'rgba(123, 47, 190, 0.35)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    deniedTitle: {
+        color: '#FFFFFF',
+        fontSize: 13,
+        fontFamily: CF.semibold,
+    },
+    deniedSub: {
+        color: 'rgba(255, 255, 255, 0.5)',
+        fontSize: 11,
+        fontFamily: CF.medium,
+        marginTop: 1,
     },
 });
 

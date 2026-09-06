@@ -1,6 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { loadHaProfiles } from './storage';
+import { coerceHttpUrl } from '../services/connectionEndpoints';
 
 /**
  * Last-known Home snapshot (stale-while-revalidate).
@@ -87,11 +88,47 @@ function isHomeEntity(entity) {
 }
 
 export function toHaHttpUrl(url) {
-    if (!url) return '';
-    return url
+    const clean = coerceHttpUrl(url);
+    if (!clean) return '';
+    return clean
         .replace(/^ws:\/\//i, 'http://')
         .replace(/^wss:\/\//i, 'https://')
         .replace(/\/api\/websocket\/?$/i, '');
+}
+
+function homeUrlKey(url) {
+    return toHaHttpUrl(url || '').replace(/\/+$/, '').toLowerCase();
+}
+
+export function snapshotBelongsToHome(snapshot, profileId, haUrl) {
+    if (!snapshot) return false;
+    if (profileId && snapshot.profileId && snapshot.profileId !== profileId) return false;
+    if (haUrl) {
+        const snapUrl = homeUrlKey(snapshot.haHttpUrl);
+        const wantUrl = homeUrlKey(haUrl);
+        if (!snapUrl || snapUrl !== wantUrl) return false;
+    }
+    return true;
+}
+
+/** Keep Floors & Rooms selection as the room list; drop cached rooms outside it. */
+export function alignSnapshotToHome(snapshot) {
+    if (!snapshot || typeof snapshot !== 'object') return snapshot;
+
+    const selected = snapshot.badgeConfig?.selected_areas;
+    const selectedIds = new Set(
+        (Array.isArray(selected) ? selected : []).map((a) => a?.area_id).filter(Boolean),
+    );
+    if (!selectedIds.size) return snapshot;
+
+    let rooms = snapshot.rooms;
+    if (Array.isArray(rooms) && rooms.length) {
+        const kept = rooms.filter((r) => !r?.area_id || selectedIds.has(r.area_id));
+        if (kept.length !== rooms.length) rooms = kept;
+    }
+
+    if (rooms === snapshot.rooms) return snapshot;
+    return { ...snapshot, rooms };
 }
 
 export function peekBootProfile() {
@@ -245,9 +282,15 @@ function mergeLoaded(ui, entities) {
     };
 }
 
-export async function loadDashboardSnapshot(profileId) {
+export async function loadDashboardSnapshot(profileId, { haUrl } = {}) {
     if (!profileId) return null;
-    if (memorySnapshot?.profileId === profileId) return memorySnapshot;
+        if (memorySnapshot?.profileId === profileId) {
+            if (!haUrl || snapshotBelongsToHome(memorySnapshot, profileId, haUrl)) {
+                memorySnapshot = alignSnapshotToHome(memorySnapshot);
+                return memorySnapshot;
+            }
+            memorySnapshot = null;
+        }
     try {
         const [uiRaw, entRaw, legacyRaw] = await Promise.all([
             AsyncStorage.getItem(uiKey(profileId)),
@@ -265,7 +308,11 @@ export async function loadDashboardSnapshot(profileId) {
             if (!entities.length && Array.isArray(ui?.entities)) entities = ui.entities;
         }
         if (!ui || ui.profileId !== profileId) return null;
-        memorySnapshot = mergeLoaded(ui, entities);
+        if (haUrl && !snapshotBelongsToHome(ui, profileId, haUrl)) {
+            await AsyncStorage.multiRemove([uiKey(profileId), entKey(profileId), cacheKey(profileId)]);
+            return null;
+        }
+        memorySnapshot = alignSnapshotToHome(mergeLoaded(ui, entities));
         return memorySnapshot;
     } catch (e) {
         console.log('[DashboardCache] load failed:', e?.message);
@@ -274,8 +321,87 @@ export async function loadDashboardSnapshot(profileId) {
 }
 
 /** Load snapshot into memory before Home mounts (splash / login). */
-export async function preloadDashboardSnapshot(profileId) {
-    return loadDashboardSnapshot(profileId);
+export async function preloadDashboardSnapshot(profileId, options) {
+    return loadDashboardSnapshot(profileId, options);
+}
+
+export function clearDashboardMemory() {
+    memorySnapshot = null;
+    memoryProfile = null;
+    bootPromise = null;
+}
+
+export async function clearDashboardSnapshot(profileId) {
+    if (memorySnapshot?.profileId === profileId || !profileId) {
+        memorySnapshot = null;
+    }
+    if (memoryProfile?.profileId === profileId || !profileId) {
+        memoryProfile = null;
+    }
+    if (!profileId) return;
+    try {
+        await AsyncStorage.multiRemove([uiKey(profileId), entKey(profileId), cacheKey(profileId)]);
+    } catch (e) {
+        console.log('[DashboardCache] clear failed:', e?.message);
+    }
+}
+
+export async function clearAllDashboardSnapshots() {
+    clearDashboardMemory();
+    try {
+        const keys = await AsyncStorage.getAllKeys();
+        const hit = (keys || []).filter((k) =>
+            k.startsWith(UI_PREFIX) || k.startsWith(ENT_PREFIX) || k.startsWith(LEGACY_PREFIX),
+        );
+        if (hit.length) await AsyncStorage.multiRemove(hit);
+    } catch (e) {
+        console.log('[DashboardCache] clear all failed:', e?.message);
+    }
+}
+
+/**
+ * Start a home session after login. RAM from another house is always dropped.
+ * When clearCache is true (new login), this profile's disk cache is removed too.
+ */
+export async function beginHomeSession({
+    profileId,
+    haUrl,
+    token,
+    adminUrl,
+    haUrlLive = '',
+    haUrlLocal = '',
+    adminUrlLive = '',
+    adminUrlLocal = '',
+    clearCache = false,
+} = {}) {
+    bootPromise = null;
+    memorySnapshot = null;
+    rememberBootProfile({
+        profileId,
+        url: haUrl,
+        token,
+        adminUrl,
+        haUrlLive,
+        haUrlLocal,
+        adminUrlLive,
+        adminUrlLocal,
+    });
+    if (!profileId) return null;
+    if (clearCache) {
+        await clearDashboardSnapshot(profileId);
+        rememberBootProfile({
+            profileId,
+            url: haUrl,
+            token,
+            adminUrl,
+            haUrlLive,
+            haUrlLocal,
+            adminUrlLive,
+            adminUrlLocal,
+        });
+        return null;
+    }
+    return loadDashboardSnapshot(profileId, { haUrl });
 }
 
 export function peekDashboardSnapshot() {
@@ -284,23 +410,43 @@ export function peekDashboardSnapshot() {
 
 export function bootValue(key, fallback) {
     const snap = memorySnapshot;
-    if (!snap || !Object.prototype.hasOwnProperty.call(snap, key)) return fallback;
+    const profile = memoryProfile;
+    if (!snap) return fallback;
+    if (profile?.profileId && snap.profileId && profile.profileId !== snap.profileId) {
+        return fallback;
+    }
+    if (profile?.url && !snapshotBelongsToHome(snap, profile.profileId, profile.url)) {
+        return fallback;
+    }
+    if (!Object.prototype.hasOwnProperty.call(snap, key)) return fallback;
     return snap[key];
 }
 
 export async function saveDashboardSnapshot(profileId, snapshot) {
     if (!profileId || !snapshot) return;
     try {
+        const haHttpUrl = snapshot.haHttpUrl || memoryProfile?.url || '';
+        if (memoryProfile?.profileId && memoryProfile.profileId !== profileId) {
+            console.log('[DashboardCache] skip save: active profile mismatch');
+            return;
+        }
+        if (snapshot.haHttpUrl && memoryProfile?.url
+            && homeUrlKey(snapshot.haHttpUrl) !== homeUrlKey(memoryProfile.url)) {
+            console.log('[DashboardCache] skip save: snapshot is for another home');
+            return;
+        }
         const prev = memorySnapshot?.profileId === profileId ? memorySnapshot : null;
-        const merged = {
-            ...prev,
+        const prevUsable = prev && snapshotBelongsToHome(prev, profileId, haHttpUrl);
+        const merged = alignSnapshotToHome({
+            ...(prevUsable ? prev : {}),
             ...snapshot,
             rooms: (Array.isArray(snapshot.rooms) && snapshot.rooms.length)
                 ? snapshot.rooms
-                : (prev?.rooms || []),
-            badgeConfig: snapshot.badgeConfig || prev?.badgeConfig || null,
-            haHttpUrl: snapshot.haHttpUrl || prev?.haHttpUrl || '',
-        };
+                : (prevUsable ? (prev?.rooms || []) : []),
+            badgeConfig: snapshot.badgeConfig || (prevUsable ? prev?.badgeConfig : null) || null,
+            haHttpUrl: haHttpUrl || (prevUsable ? (prev?.haHttpUrl || '') : ''),
+            profileId,
+        });
         const ui = buildUiPayload(profileId, merged);
         const homeEntities = compact(
             (Array.isArray(merged.entities) ? merged.entities : []).filter(isHomeEntity),
@@ -329,15 +475,15 @@ export async function startBackgroundBoot() {
             if (!activeProfileId || !profiles.length) return null;
             const active = profiles.find((p) => p.id === activeProfileId);
             if (!active) return null;
-            const normalizedHaUrl = active.haUrl?.replace(/^https?:\/\//i, (m) => m.toLowerCase()) || active.haUrl;
-            const normalizedAdminUrl = active.adminUrl?.replace(/^https?:\/\//i, (m) => m.toLowerCase()) || active.adminUrl;
+            const normalizedHaUrl = coerceHttpUrl(active.haUrl);
+            const normalizedAdminUrl = coerceHttpUrl(active.adminUrl);
             rememberBootProfile({
                 profileId: activeProfileId,
                 url: normalizedHaUrl,
                 token: active.haToken,
                 adminUrl: normalizedAdminUrl,
             });
-            await loadDashboardSnapshot(activeProfileId);
+            await loadDashboardSnapshot(activeProfileId, { haUrl: normalizedHaUrl });
             return peekDashboardSnapshot();
         } catch (e) {
             console.log('[DashboardCache] boot failed:', e?.message);
@@ -351,6 +497,7 @@ startBackgroundBoot();
 
 export function applyDashboardSnapshot(snapshot, setters) {
     if (!snapshot || !setters) return false;
+    snapshot = alignSnapshotToHome(snapshot);
     const {
         setEntities,
         setCityName,
@@ -439,4 +586,56 @@ export function applyDashboardSnapshot(snapshot, setters) {
         setCachedHomeRooms(snapshot.rooms);
     }
     return true;
+}
+
+/** Wipe Home UI so a new login cannot keep another house's rooms/cameras. */
+export function resetHomeDashboardState(setters) {
+    if (!setters) return;
+    const {
+        setEntities,
+        setCityName,
+        setRegistryDevices,
+        setRegistryEntities,
+        setRegistryAreas,
+        setRegistryFloors,
+        setBadgeConfig,
+        setAllowedQuickScenes,
+        setSelectedLockIds,
+        setSelectedCoverIds,
+        setLockPassageConfigs,
+        setLightMappings,
+        setMediaMappings,
+        setSensorMappings,
+        setCoverMappings,
+        setCoverWindows,
+        setClimateMappings,
+        setFrigateCameras,
+        setRoomTrackingLookup,
+        setMusicAssistantEntryIds,
+        setAlertRules,
+        setCachedHomeRooms,
+    } = setters;
+
+    setEntities?.([]);
+    setCityName?.('Home');
+    setRegistryDevices?.([]);
+    setRegistryEntities?.([]);
+    setRegistryAreas?.([]);
+    setRegistryFloors?.([]);
+    setBadgeConfig?.(null);
+    setAllowedQuickScenes?.([]);
+    setSelectedLockIds?.(null);
+    setSelectedCoverIds?.(null);
+    setLockPassageConfigs?.({});
+    setLightMappings?.([]);
+    setMediaMappings?.([]);
+    setSensorMappings?.([]);
+    setCoverMappings?.([]);
+    setCoverWindows?.([]);
+    setClimateMappings?.([]);
+    setFrigateCameras?.([]);
+    setRoomTrackingLookup?.({});
+    setMusicAssistantEntryIds?.([]);
+    setAlertRules?.([]);
+    setCachedHomeRooms?.([]);
 }

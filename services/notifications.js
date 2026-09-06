@@ -31,13 +31,19 @@ async function getCurrentUserId() {
 }
 
 // Configure how notifications behave when the app is in foreground
-Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-        shouldShowAlert: true,
-        shouldPlaySound: true,
-        shouldSetBadge: true,
-    }),
-});
+try {
+    Notifications.setNotificationHandler({
+        handleNotification: async () => ({
+            shouldShowAlert: true,
+            shouldShowBanner: true,
+            shouldShowList: true,
+            shouldPlaySound: true,
+            shouldSetBadge: true,
+        }),
+    });
+} catch (e) {
+    console.log('[Push] setNotificationHandler failed:', e?.message || e);
+}
 
 export async function registerForPushNotificationsAsync() {
     let token;

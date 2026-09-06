@@ -6,6 +6,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import * as SecureStore from 'expo-secure-store';
 import { preloadDashboardSnapshot, rememberBootProfile } from '../utils/dashboardCache';
 import { loadHaProfiles } from '../utils/storage';
+import { connectionConfigFromProfile } from '../services/connectionEndpoints';
 import { Colors } from '../constants/Colors';
 
 const MIN_SPLASH_MS = 2000;
@@ -37,15 +38,18 @@ export default function Splash() {
                 if (isLoggedIn === 'true' && activeProfileId && profiles.length && userJson) {
                     const activeProfile = profiles.find(p => p.id === activeProfileId);
                     if (activeProfile) {
-                        const normalizedHaUrl = activeProfile.haUrl?.replace(/^https?:\/\//i, (m) => m.toLowerCase()) || activeProfile.haUrl;
-                        const normalizedAdminUrl = activeProfile.adminUrl?.replace(/^https?:\/\//i, (m) => m.toLowerCase()) || activeProfile.adminUrl;
+                        const cfg = connectionConfigFromProfile(activeProfile);
                         rememberBootProfile({
                             profileId: activeProfileId,
-                            url: normalizedHaUrl,
-                            token: activeProfile.haToken,
-                            adminUrl: normalizedAdminUrl,
+                            url: cfg.url,
+                            token: cfg.token,
+                            adminUrl: cfg.adminUrl,
+                            haUrlLive: cfg.haUrlLive,
+                            haUrlLocal: cfg.haUrlLocal,
+                            adminUrlLive: cfg.adminUrlLive,
+                            adminUrlLocal: cfg.adminUrlLocal,
                         });
-                        await preloadDashboardSnapshot(activeProfileId);
+                        await preloadDashboardSnapshot(activeProfileId, { haUrl: cfg.url });
                         if (cancelled) return;
                         const user = JSON.parse(userJson);
                         navigationTarget.current = {

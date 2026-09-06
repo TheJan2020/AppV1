@@ -1,27 +1,24 @@
-import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
+import { AudioQuality, IOSOutputFormat } from 'expo-audio';
 import * as FileSystem from 'expo-file-system/legacy';
+import { createAudioRecorder, setAudioModeAsync } from '../expoAudio';
 import { extractPcmFromWavBase64 } from './pcmWav';
 
 const CHUNK_MS = 120;
 const SAMPLE_RATE = 16000;
 
 const RECORD_OPTS = {
+    extension: '.wav',
+    sampleRate: SAMPLE_RATE,
+    numberOfChannels: 1,
+    bitRate: SAMPLE_RATE * 16,
     isMeteringEnabled: false,
     android: {
-        extension: '.wav',
-        outputFormat: Audio.AndroidOutputFormat.DEFAULT,
-        audioEncoder: Audio.AndroidAudioEncoder.DEFAULT,
-        sampleRate: SAMPLE_RATE,
-        numberOfChannels: 1,
-        bitRate: SAMPLE_RATE * 16,
+        outputFormat: 'default',
+        audioEncoder: 'default',
     },
     ios: {
-        extension: '.wav',
-        outputFormat: Audio.IOSOutputFormat.LINEARPCM,
-        audioQuality: Audio.IOSAudioQuality.HIGH,
-        sampleRate: SAMPLE_RATE,
-        numberOfChannels: 1,
-        bitRate: SAMPLE_RATE * 16,
+        outputFormat: IOSOutputFormat.LINEARPCM,
+        audioQuality: AudioQuality.HIGH,
         linearPCMBitDepth: 16,
         linearPCMIsBigEndian: false,
         linearPCMIsFloat: false,
@@ -29,7 +26,7 @@ const RECORD_OPTS = {
     web: { mimeType: 'audio/webm', bitsPerSecond: 128000 },
 };
 
-/** Chunked expo-av mic for Expo Go (no live-audio-stream native module). */
+/** Chunked expo-audio mic for Expo Go (no live-audio-stream native module). */
 export class ExpoAvPcmRecorder {
     constructor() {
         this.started = false;
@@ -66,19 +63,20 @@ export class ExpoAvPcmRecorder {
         this.activeRecording = null;
         if (!rec) return;
         try {
-            await rec.stopAndUnloadAsync();
+            await rec.stop();
+        } catch (_) { /* ignore */ }
+        try {
+            rec.release?.();
         } catch (_) { /* ignore */ }
     }
 
     async _ensureAudioMode() {
-        await Audio.setAudioModeAsync({
-            allowsRecordingIOS: true,
-            playsInSilentModeIOS: true,
-            interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-            interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-            playThroughEarpieceAndroid: false,
-            staysActiveInBackground: false,
-            shouldDuckAndroid: true,
+        await setAudioModeAsync({
+            allowsRecording: true,
+            playsInSilentMode: true,
+            interruptionMode: 'doNotMix',
+            shouldRouteThroughEarpiece: false,
+            shouldPlayInBackground: false,
         });
         this.audioModeReady = true;
     }
@@ -93,7 +91,9 @@ export class ExpoAvPcmRecorder {
             let uri = null;
             try {
                 await this._ensureAudioMode();
-                const { recording } = await Audio.Recording.createAsync(RECORD_OPTS);
+                const recording = createAudioRecorder(RECORD_OPTS);
+                await recording.prepareToRecordAsync();
+                recording.record();
                 this.activeRecording = recording;
                 await new Promise((r) => setTimeout(r, CHUNK_MS));
                 if (!this.started) {
@@ -104,9 +104,12 @@ export class ExpoAvPcmRecorder {
                     await this._stopActiveRecording();
                     continue;
                 }
-                await recording.stopAndUnloadAsync();
+                await recording.stop();
                 this.activeRecording = null;
-                uri = recording.getURI();
+                uri = recording.uri;
+                try {
+                    recording.release?.();
+                } catch (_) { /* ignore */ }
                 if (uri && this.onChunk && !this.paused) {
                     const wavB64 = await FileSystem.readAsStringAsync(uri, {
                         encoding: FileSystem.EncodingType.Base64,

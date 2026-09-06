@@ -28,6 +28,7 @@ export default function RoomSheet({
     systemHealthBanner = null,
     canControlHa = true,
     badgeConfig = null,
+    appRole = null,
 }) {
     if (!room) return null;
 
@@ -44,6 +45,7 @@ export default function RoomSheet({
         cameras,
         sensors,
         doors,
+        windows,
         switches,
         automations,
         scripts,
@@ -59,6 +61,7 @@ export default function RoomSheet({
         climateMappings,
         musicAssistantEntryIds,
         badgeConfig,
+        appRole,
     });
 
     return (
@@ -77,6 +80,7 @@ export default function RoomSheet({
                         cameras={cameras}
                         sensors={sensors}
                         doors={doors}
+                        windows={windows}
                         switches={switches}
                         automations={automations}
                         scripts={scripts}
@@ -98,6 +102,7 @@ export default function RoomSheet({
                         callServiceWithResponse={callServiceWithResponse}
                         systemHealthBanner={systemHealthBanner}
                         canControlHa={canControlHa}
+                        appRole={appRole}
                     />
         </BottomSheetModal>
     );

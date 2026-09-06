@@ -1,12 +1,20 @@
 import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Animated } from 'react-native';
 import { useState, useEffect, useRef } from 'react';
-import { Audio } from 'expo-av';
 import { Mic, MicOff } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import * as SecureStore from 'expo-secure-store';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Colors } from '../constants/Colors';
 import { authFetch } from '../utils/authFetch';
+import {
+    RecordingPresets,
+    createAudioPlayer,
+    releaseAudioPlayer,
+    requestRecordingPermissionsAsync,
+    setAudioModeAsync,
+    startAudioRecording,
+    stopAudioRecording,
+} from '../services/expoAudio';
 
 export default function VoiceAssistantButton({ onCommand, context }) {
     const [isRecording, setIsRecording] = useState(false);
@@ -42,32 +50,27 @@ export default function VoiceAssistantButton({ onCommand, context }) {
 
     useEffect(() => {
         return () => {
-            // Cleanup
             if (recording) {
-                recording.stopAndUnloadAsync();
+                stopAudioRecording(recording);
             }
-            if (sound) {
-                sound.unloadAsync();
-            }
+            releaseAudioPlayer(sound);
         };
     }, [recording, sound]);
 
     const startRecording = async () => {
         try {
-            const permission = await Audio.requestPermissionsAsync();
+            const permission = await requestRecordingPermissionsAsync();
             if (!permission.granted) {
                 alert('Microphone permission required');
                 return;
             }
 
-            await Audio.setAudioModeAsync({
-                allowsRecordingIOS: true,
-                playsInSilentModeIOS: true,
+            await setAudioModeAsync({
+                allowsRecording: true,
+                playsInSilentMode: true,
             });
 
-            const { recording: newRecording } = await Audio.Recording.createAsync(
-                Audio.RecordingOptionsPresets.HIGH_QUALITY
-            );
+            const newRecording = await startAudioRecording(RecordingPresets.HIGH_QUALITY);
 
             setRecording(newRecording);
             setIsRecording(true);
@@ -87,8 +90,7 @@ export default function VoiceAssistantButton({ onCommand, context }) {
             setStatus('processing');
             setIsProcessing(true);
 
-            await recording.stopAndUnloadAsync();
-            const uri = recording.getURI();
+            const uri = await stopAudioRecording(recording);
             setRecording(null);
 
             // Process voice command
@@ -203,12 +205,12 @@ export default function VoiceAssistantButton({ onCommand, context }) {
     const playTTSAudio = async (base64Audio) => {
         try {
             // Set audio mode to play on speaker
-            await Audio.setAudioModeAsync({
-                allowsRecordingIOS: false,
-                playsInSilentModeIOS: true,
-                staysActiveInBackground: false,
-                shouldDuckAndroid: true,
-                playThroughEarpieceAndroid: false, // Use speaker, not earpiece
+            await setAudioModeAsync({
+                allowsRecording: false,
+                playsInSilentMode: true,
+                shouldPlayInBackground: false,
+                interruptionMode: 'duckOthers',
+                shouldRouteThroughEarpiece: false,
             });
 
             // Save base64 to temp file
@@ -218,19 +220,15 @@ export default function VoiceAssistantButton({ onCommand, context }) {
             });
 
             // Play audio
-            const { sound: newSound } = await Audio.Sound.createAsync(
-                { uri: fileUri },
-                { shouldPlay: true }
-            );
-
+            const newSound = createAudioPlayer({ uri: fileUri });
             setSound(newSound);
-
-            newSound.setOnPlaybackStatusUpdate((status) => {
+            newSound.addListener('playbackStatusUpdate', (status) => {
                 if (status.didJustFinish) {
-                    newSound.unloadAsync();
+                    releaseAudioPlayer(newSound);
                     setSound(null);
                 }
             });
+            newSound.play();
 
         } catch (error) {
             console.error('[VoiceAssistant] TTS playback error:', error);

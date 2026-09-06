@@ -179,26 +179,76 @@ export function primaryCoverForGroup(covers) {
     return covers[0];
 }
 
-/** Windows for a room (match area_id or area name loosely). */
-export function windowsForRoom(coverWindows, room) {
+/**
+ * Shared token so "Window C" can group HA names like "Curtain C"
+ * or entity ids like cover.men_majlis_curtain_c.
+ */
+export function coverWindowMatchKey(nameOrId) {
+    const s = String(nameOrId || '')
+        .toLowerCase()
+        .replace(/[_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    if (!s) return '';
+    const labeled = s.match(/\b(?:window|curtain|cover|blind)\s+([a-z0-9]+)\b/);
+    if (labeled?.[1]) return labeled[1];
+    return '';
+}
+
+function coverDisplayHaystack(cover) {
+    return normalizeAreaKey(
+        `${cover?.displayName || ''} ${cover?.name || ''} ${cover?.entity_id || ''}`,
+    );
+}
+
+/** True when this cover should sit in this named window (explicit id or name). */
+export function coverBelongsToWindow(cover, window, roomWindows = []) {
+    if (!cover || !window?.id) return false;
+    if (cover.windowId && cover.windowId === window.id) return true;
+
+    const windowName = normalizeAreaKey(window.name);
+    const hay = coverDisplayHaystack(cover);
+    if (windowName.length >= 4 && hay.includes(windowName)) return true;
+
+    const windowToken = coverWindowMatchKey(window.name);
+    if (!windowToken) return false;
+    const tokenPeers = (roomWindows.length ? roomWindows : [window])
+        .filter((w) => coverWindowMatchKey(w.name) === windowToken);
+    if (tokenPeers.length !== 1) return false;
+    const coverToken = coverWindowMatchKey(cover.displayName || cover.name)
+        || coverWindowMatchKey(cover.entity_id);
+    return coverToken === windowToken;
+}
+
+/**
+ * Windows for a room — exact area id or name (no substring leaks).
+ * Also keeps windows with no room ("Any area") when a cover or contact
+ * sensor in this room is linked to them.
+ */
+export function windowsForRoom(coverWindows, room, options = {}) {
     if (!Array.isArray(coverWindows) || !room) return [];
-    const areaId = normalizeAreaKey(room.area_id);
-    const areaName = normalizeAreaKey(room.name);
+    const keys = [room.area_id, room.name].map(normalizeAreaKey).filter(Boolean);
+    const covers = Array.isArray(options.covers) ? options.covers : [];
+    const roomEntityIds = new Set(options.roomEntityIds || []);
+
     return coverWindows.filter((w) => {
-        if (!w.area_id) return true;
+        if (!w?.id) return false;
         const wa = normalizeAreaKey(w.area_id);
-        if (!wa) return true;
-        return wa === areaId || wa === areaName || areaName.includes(wa) || wa.includes(areaName);
-    });
+        if (wa && keys.includes(wa)) return true;
+        if (covers.some((c) => c.windowId === w.id)) return true;
+        const sensorIds = Array.isArray(w.sensor_ids) ? w.sensor_ids : [];
+        if (sensorIds.some((id) => roomEntityIds.has(id))) return true;
+        return false;
+    }).sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
 }
 
 /**
  * Split room covers into window groups + ungrouped (no windowId).
  * @returns {{ windowGroups: Array<{ window, covers }>, ungrouped: object[] }}
  */
-export function groupCoversByWindow(covers, coverWindows, room) {
+export function groupCoversByWindow(covers, coverWindows, room, options = {}) {
     const allWindows = Array.isArray(coverWindows) ? coverWindows : [];
-    const roomWindows = windowsForRoom(allWindows, room);
+    const roomWindows = windowsForRoom(allWindows, room, { ...options, covers });
     const windowsById = new Map(allWindows.map((w) => [w.id, w]));
     const seenWindowIds = new Set(roomWindows.map((w) => w.id));
 
@@ -213,10 +263,22 @@ export function groupCoversByWindow(covers, coverWindows, room) {
         }
     }
 
+    const assigned = new Map();
+    for (const cover of covers) {
+        if (cover.windowId && seenWindowIds.has(cover.windowId)) {
+            assigned.set(cover.entity_id, cover.windowId);
+        }
+    }
+    for (const cover of covers) {
+        if (assigned.has(cover.entity_id)) continue;
+        const match = roomWindows.find((w) => coverBelongsToWindow(cover, w, roomWindows));
+        if (match) assigned.set(cover.entity_id, match.id);
+    }
+
     const windowGroups = roomWindows.map((window) => ({
         window,
-        covers: covers.filter((c) => c.windowId === window.id),
-    })).filter((g) => g.covers.length > 0);
+        covers: covers.filter((c) => assigned.get(c.entity_id) === window.id),
+    }));
 
     const groupedIds = new Set(windowGroups.flatMap(g => g.covers.map(c => c.entity_id)));
     const ungrouped = covers.filter(c => !groupedIds.has(c.entity_id));

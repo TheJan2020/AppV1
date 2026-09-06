@@ -240,8 +240,7 @@ export function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, 
 
     return (
         <GestureDetector gesture={pan}>
-            <Animated.View style={[styles.pill, { backgroundColor: pillBg }]} onLayout={onLayout}>
-                <View style={[styles.pillTrack, { borderColor: border }]} />
+            <Animated.View style={[styles.pill, { backgroundColor: pillBg, borderColor: border }]} onLayout={onLayout}>
 
                 {isPassage ? (
                     /* ── Passage mode — unlocked style, disabled, with badge ── */
@@ -499,8 +498,7 @@ function GaragePill({
 
     return (
         <GestureDetector gesture={pan}>
-            <Animated.View style={[styles.pill, { backgroundColor: pillBg }]} onLayout={onLayout}>
-                <View style={[styles.pillTrack, { borderColor: border }]} />
+            <Animated.View style={[styles.pill, { backgroundColor: pillBg, borderColor: border }]} onLayout={onLayout}>
 
                 {inTransit ? (
                     <View style={styles.garageTransitCenter} pointerEvents="none">
@@ -1190,11 +1188,8 @@ const styles = StyleSheet.create({
         justifyContent: 'center',
         overflow: 'visible',
         position: 'relative',
-    },
-    pillTrack: {
-        ...StyleSheet.absoluteFillObject,
-        borderRadius: HEIGHT / 2,
         borderWidth: 1,
+        borderColor: C_BORDER,
     },
     pillLabelWrap: {
         ...StyleSheet.absoluteFillObject,

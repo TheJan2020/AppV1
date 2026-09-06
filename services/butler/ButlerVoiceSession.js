@@ -1,4 +1,4 @@
-import { Audio } from 'expo-av';
+import { requestRecordingPermissionsAsync } from '../expoAudio';
 import { ButlerProxyClient } from './ButlerProxyClient';
 import { createButlerPcmPlayer, createButlerPcmRecorder } from './audioBackend';
 import { getNativeAudioStatus } from './nativeAudio';
@@ -92,7 +92,7 @@ export class ButlerVoiceSession {
             return { ok: false, error: native.message };
         }
 
-        const { status: perm } = await Audio.requestPermissionsAsync();
+        const { status: perm } = await requestRecordingPermissionsAsync();
         if (perm !== 'granted') {
             return { ok: false, error: 'Microphone permission is required.' };
         }

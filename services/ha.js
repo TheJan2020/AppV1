@@ -1,4 +1,5 @@
 import { AppState } from 'react-native';
+import { toWsUrl, httpUrlFromWs, stripSlash } from './connectionEndpoints';
 
 function hostFromWsUrl(url) {
     try {
@@ -8,12 +9,30 @@ function hostFromWsUrl(url) {
     }
 }
 
+function isLocalWs(url) {
+    return /^ws:/i.test(url) && !/^wss:/i.test(url);
+}
+
+function connectTimeoutFor(url) {
+    return /^wss:/i.test(url) ? 4500 : 2500;
+}
+
 export class HAService {
-    constructor(url, token) {
-        const cleanUrl = String(url || '').replace(/\/$/, '');
-        this.url = cleanUrl.replace(/^https/i, 'wss').replace(/^http(?!s)/i, 'ws') + '/api/websocket';
+    constructor(url, token, { fallbackUrl } = {}) {
+        const cleanUrl = stripSlash(url);
+        this.primaryUrl = toWsUrl(cleanUrl);
+        const fallbackHttp = stripSlash(fallbackUrl);
+        this.fallbackUrl = fallbackHttp && fallbackHttp !== cleanUrl ? toWsUrl(fallbackHttp) : '';
+        this.url = this.primaryUrl;
         this.token = token;
+        this.usingFallback = false;
+        this.ignoreClose = false;
+        this.connectTimer = null;
+        this.preferLocalTimer = null;
         this.socket = null;
+        this.race = [];
+        this.raceSettled = false;
+        this.pendingLiveWinner = null;
         this.id = 1;
         this.pending = new Map();
         this.listeners = new Set();
@@ -26,13 +45,15 @@ export class HAService {
             const wasBg = this.appState !== 'active';
             this.appState = nextState;
             if (wasBg && nextState === 'active') {
-                // Returning to foreground — reconnect if disconnected
+                if (this.usingFallback && this.primaryUrl) {
+                    this.tryPrimary();
+                    return;
+                }
                 if (!this.socket && !this.reconnectTimer) {
                     this.reconnectAttempts = 0;
                     this.connect();
                 }
             } else if (nextState !== 'active') {
-                // Going to background — stop reconnection attempts
                 if (this.reconnectTimer) {
                     clearTimeout(this.reconnectTimer);
                     this.reconnectTimer = null;
@@ -42,109 +63,380 @@ export class HAService {
         HAService.instances.add(this);
     }
 
-    connect() {
-        if (this.socket) return;
+    connectTimeoutMs() {
+        return connectTimeoutFor(this.url);
+    }
 
-        // Don't reconnect if app is backgrounded
+    clearConnectTimer() {
+        if (this.connectTimer) {
+            clearTimeout(this.connectTimer);
+            this.connectTimer = null;
+        }
+        if (this.preferLocalTimer) {
+            clearTimeout(this.preferLocalTimer);
+            this.preferLocalTimer = null;
+        }
+    }
+
+    candidateUrls() {
+        const urls = [];
+        if (this.primaryUrl) urls.push(this.primaryUrl);
+        if (this.fallbackUrl && this.fallbackUrl !== this.primaryUrl) urls.push(this.fallbackUrl);
+        return urls;
+    }
+
+    localRaceAlive() {
+        return this.race.some((entry) => isLocalWs(entry.url));
+    }
+
+    connect() {
+        if (this.socket || this.race.length) return;
+
+        this.ignoreClose = false;
+        this.raceSettled = false;
+        this.pendingLiveWinner = null;
+
         if (this.appState !== 'active') return;
 
-        if (!this.token || !String(this.url).startsWith('ws')) {
+        const urls = this.candidateUrls();
+        if (!this.token || !urls.length || !String(urls[0]).startsWith('ws')) {
             if (__DEV__) {
                 console.warn('[HAService] Skipping connect — missing token or invalid WebSocket URL');
             }
             return;
         }
 
-        this.socket = new WebSocket(this.url);
+        urls.forEach((url) => this.openRaceSocket(url));
+    }
 
-        this.socket.onopen = () => {
-            this.reconnectAttempts = 0; // Reset on successful connection
+    openRaceSocket(url) {
+        if (this.race.some((entry) => entry.url === url)) return;
+
+        const ws = new WebSocket(url);
+        const entry = { url, ws, timer: null };
+        this.race.push(entry);
+
+        entry.timer = setTimeout(() => {
+            if (this.raceSettled && this.socket === ws) return;
+            try { ws.close(); } catch { /* ignore */ }
+        }, connectTimeoutFor(url));
+
+        ws.onopen = () => {
+            this.reconnectAttempts = 0;
         };
 
-        this.socket.onmessage = (event) => {
+        ws.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
-                this.handleMessage(data);
+                if (!this.raceSettled) {
+                    this.handleRaceMessage(entry, data);
+                } else if (this.socket === ws) {
+                    this.handleMessage(data);
+                }
             } catch (e) {
                 console.error('[HAService] Failed to parse WebSocket message:', e.message);
             }
         };
 
-        this.socket.onclose = (event) => {
-            const closeCode = event?.code ?? 0;
-            const closeReason = (event?.reason || '').trim();
-            const host = hostFromWsUrl(this.url);
-
-            this.authenticated = false;
-            this.socket = null;
-            this.notifyListeners({
-                type: 'disconnected',
-                code: closeCode,
-                reason: closeReason || undefined,
-            });
-
-            // Silently resolve pending promises so callers don't get unhandled rejections.
-            this.pending.forEach(({ resolve }) => {
-                try { resolve(null); } catch (e) { /* ignore */ }
-            });
-            this.pending.clear();
-
-            const willRetry = this.appState === 'active' && this.reconnectAttempts < this.maxReconnectAttempts;
-
-            // RN WebSocket onerror often has no message; log once per close with code/reason.
-            if (__DEV__ && closeCode !== 1000) {
-                const retryNote = willRetry
-                    ? ` — retry ${this.reconnectAttempts + 1}/${this.maxReconnectAttempts}`
-                    : ' — not retrying';
-                console.warn(
-                    `[HAService] WebSocket closed (${host}, code ${closeCode}${closeReason ? `, ${closeReason}` : ''})${retryNote}`,
-                );
+        ws.onclose = (event) => {
+            this.clearEntryTimer(entry);
+            if (this.raceSettled) {
+                if (this.socket === ws) this.handleSettledClose(event);
+                return;
             }
-
-            if (willRetry) {
-                const delay = Math.min(5000 * Math.pow(2, this.reconnectAttempts), 60000);
-                this.reconnectAttempts++;
-                this.reconnectTimer = setTimeout(() => {
-                    this.reconnectTimer = null;
-                    this.connect();
-                }, delay);
-            } else if (__DEV__ && closeCode !== 1000 && this.reconnectAttempts >= this.maxReconnectAttempts) {
-                console.warn(`[HAService] WebSocket gave up reconnecting to ${host}`);
+            this.race = this.race.filter((item) => item !== entry);
+            if (isLocalWs(url) && this.pendingLiveWinner && !this.localRaceAlive()) {
+                this.settleRace(this.pendingLiveWinner);
+                return;
+            }
+            if (!this.race.length && !this.socket) {
+                this.handleAllRaceFailed(event);
             }
         };
 
-        // React Native does not populate error.message — details arrive via onclose.
-        this.socket.onerror = () => {};
+        ws.onerror = () => {};
+    }
+
+    clearEntryTimer(entry) {
+        if (entry?.timer) {
+            clearTimeout(entry.timer);
+            entry.timer = null;
+        }
+    }
+
+    handleRaceMessage(entry, data) {
+        if (data.type === 'auth_required') {
+            try {
+                entry.ws.send(JSON.stringify({ type: 'auth', access_token: this.token }));
+            } catch { /* ignore */ }
+            return;
+        }
+        if (data.type === 'auth_invalid') {
+            try { entry.ws.close(); } catch { /* ignore */ }
+            return;
+        }
+        if (data.type !== 'auth_ok') return;
+
+        if (isLocalWs(entry.url)) {
+            this.settleRace(entry);
+            return;
+        }
+        if (!this.localRaceAlive()) {
+            this.settleRace(entry);
+            return;
+        }
+        this.pendingLiveWinner = entry;
+        if (this.preferLocalTimer) clearTimeout(this.preferLocalTimer);
+        this.preferLocalTimer = setTimeout(() => {
+            this.preferLocalTimer = null;
+            if (!this.raceSettled && this.pendingLiveWinner) {
+                this.settleRace(this.pendingLiveWinner);
+            }
+        }, 250);
+    }
+
+    settleRace(entry) {
+        if (this.raceSettled || !entry?.ws) return;
+        this.raceSettled = true;
+        this.pendingLiveWinner = null;
+        if (this.preferLocalTimer) {
+            clearTimeout(this.preferLocalTimer);
+            this.preferLocalTimer = null;
+        }
+
+        this.socket = entry.ws;
+        this.url = entry.url;
+        this.usingFallback = !!this.fallbackUrl && this.fallbackUrl === entry.url;
+        this.authenticated = true;
+        this.clearEntryTimer(entry);
+
+        for (const other of this.race) {
+            if (other === entry) continue;
+            this.clearEntryTimer(other);
+            try {
+                other.ws.onclose = null;
+                other.ws.onmessage = null;
+                other.ws.onerror = null;
+                other.ws.close();
+            } catch { /* ignore */ }
+        }
+        this.race = [entry];
+
+        entry.ws.onmessage = (event) => {
+            try {
+                this.handleMessage(JSON.parse(event.data));
+            } catch (e) {
+                console.error('[HAService] Failed to parse WebSocket message:', e.message);
+            }
+        };
+        entry.ws.onclose = (event) => this.handleSettledClose(event);
+
+        if (__DEV__) {
+            console.log(`[HAService] Connected via ${isLocalWs(entry.url) ? 'local HTTP' : 'live HTTPS'} (${hostFromWsUrl(entry.url)})`);
+        }
+        this.notifyListeners({ type: 'connected' });
+        if (this.usingFallback) {
+            this.notifyListeners({
+                type: 'endpoint_switched',
+                via: 'local',
+                httpUrl: httpUrlFromWs(this.url),
+            });
+        }
+        this.sendMessage({ type: 'subscribe_events', event_type: 'state_changed' });
+    }
+
+    handleAllRaceFailed(event) {
+        const closeCode = event?.code ?? 0;
+        const closeReason = (event?.reason || '').trim();
+        const host = hostFromWsUrl(this.url);
+        this.authenticated = false;
+        this.socket = null;
+        this.race = [];
+        this.raceSettled = false;
+        this.notifyListeners({
+            type: 'disconnected',
+            code: closeCode,
+            reason: closeReason || undefined,
+        });
+        this.pending.forEach(({ resolve }) => {
+            try { resolve(null); } catch { /* ignore */ }
+        });
+        this.pending.clear();
+        this.scheduleReconnect(closeCode, closeReason, host);
+    }
+
+    handleSettledClose(event) {
+        this.clearConnectTimer();
+        if (this.ignoreClose) {
+            this.ignoreClose = false;
+            this.socket = null;
+            this.authenticated = false;
+            this.race = [];
+            this.raceSettled = false;
+            return;
+        }
+
+        const closeCode = event?.code ?? 0;
+        const closeReason = (event?.reason || '').trim();
+        const host = hostFromWsUrl(this.url);
+        const wasFallback = this.usingFallback;
+
+        this.authenticated = false;
+        this.socket = null;
+        this.race = [];
+        this.raceSettled = false;
+        this.notifyListeners({
+            type: 'disconnected',
+            code: closeCode,
+            reason: closeReason || undefined,
+        });
+
+        this.pending.forEach(({ resolve }) => {
+            try { resolve(null); } catch { /* ignore */ }
+        });
+        this.pending.clear();
+
+        if (this.appState === 'active' && this.fallbackUrl && this.primaryUrl) {
+            if (!wasFallback) {
+                if (__DEV__) {
+                    console.warn(`[HAService] Live HTTPS dropped (${host}) — trying local HTTP`);
+                }
+                this.switchToFallback();
+                return;
+            }
+            if (__DEV__) {
+                console.warn(`[HAService] Local HTTP dropped (${host}) — trying live HTTPS`);
+            }
+            this.tryPrimary();
+            return;
+        }
+
+        this.scheduleReconnect(closeCode, closeReason, host);
+    }
+
+    scheduleReconnect(closeCode, closeReason, host) {
+        const willRetry = this.appState === 'active' && this.reconnectAttempts < this.maxReconnectAttempts;
+
+        if (__DEV__ && closeCode !== 1000) {
+            const retryNote = willRetry
+                ? ` — retry ${this.reconnectAttempts + 1}/${this.maxReconnectAttempts}`
+                : ' — not retrying';
+            console.warn(
+                `[HAService] WebSocket closed (${host}, code ${closeCode}${closeReason ? `, ${closeReason}` : ''})${retryNote}`,
+            );
+        }
+
+        if (willRetry) {
+            const delay = Math.min(5000 * Math.pow(2, this.reconnectAttempts), 60000);
+            this.reconnectAttempts++;
+            this.reconnectTimer = setTimeout(() => {
+                this.reconnectTimer = null;
+                this.connect();
+            }, delay);
+        } else if (this.appState === 'active') {
+            this.notifyListeners({ type: 'reconnect_exhausted' });
+            if (__DEV__ && closeCode !== 1000) {
+                console.warn(`[HAService] WebSocket gave up reconnecting to ${host}`);
+            }
+        }
+    }
+
+    setFallbackUrl(httpUrl) {
+        const fallbackHttp = stripSlash(httpUrl);
+        const ws = fallbackHttp ? toWsUrl(fallbackHttp) : '';
+        this.fallbackUrl = ws && ws !== this.primaryUrl ? ws : '';
+        if (!this.fallbackUrl || this.authenticated || this.appState !== 'active') return;
+        if (this.raceSettled) return;
+        if (this.race.length) {
+            this.openRaceSocket(this.fallbackUrl);
+            return;
+        }
+        this.connect();
+    }
+
+    switchToFallback() {
+        if (!this.fallbackUrl) return;
+        this.usingFallback = true;
+        this.url = this.fallbackUrl;
+        this.reconnectAttempts = 0;
+        this.notifyListeners({
+            type: 'endpoint_switched',
+            via: 'local',
+            httpUrl: httpUrlFromWs(this.url),
+        });
+        this.dropSocketsForSwitch();
+        this.reconnectTimer = setTimeout(() => {
+            this.reconnectTimer = null;
+            this.connect();
+        }, 50);
+    }
+
+    tryPrimary() {
+        if (!this.primaryUrl || !this.usingFallback) {
+            if (!this.socket && !this.reconnectTimer && !this.race.length) {
+                this.reconnectAttempts = 0;
+                this.connect();
+            }
+            return;
+        }
+        this.usingFallback = false;
+        this.url = this.primaryUrl;
+        this.authenticated = false;
+        this.reconnectAttempts = 0;
+        this.notifyListeners({
+            type: 'endpoint_switched',
+            via: 'live',
+            httpUrl: httpUrlFromWs(this.url),
+        });
+        this.dropSocketsForSwitch();
+        this.connect();
+    }
+
+    dropSocketsForSwitch() {
+        this.ignoreClose = true;
+        this.clearConnectTimer();
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        for (const entry of this.race) {
+            this.clearEntryTimer(entry);
+            try {
+                entry.ws.onclose = null;
+                entry.ws.close();
+            } catch { /* ignore */ }
+        }
+        this.race = [];
+        this.raceSettled = false;
+        if (this.socket) {
+            try {
+                this.socket.onclose = null;
+                this.socket.close();
+            } catch { /* ignore */ }
+            this.socket = null;
+        }
+        this.ignoreClose = false;
     }
 
     disconnect() {
-        // Clear any pending reconnect timer
+        this.clearConnectTimer();
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;
         }
 
-        // Remove AppState listener
         if (this.appStateSubscription) {
             this.appStateSubscription.remove();
             this.appStateSubscription = null;
         }
 
-        // Silently resolve pending promises — reject() causes unhandled rejection errors
-        // on call sites (e.g. callService) that don't chain .catch(). Since disconnect()
-        // is called during component cleanup, the result is discarded anyway.
         this.pending.forEach(({ resolve }) => {
-            try { resolve(null); } catch (e) { /* ignore */ }
+            try { resolve(null); } catch { /* ignore */ }
         });
         this.pending.clear();
 
-        if (this.socket) {
-            // Prevent auto-reconnect logic
-            this.socket.onclose = null;
-            this.socket.close();
-            this.socket = null;
-            this.authenticated = false;
-        }
+        this.dropSocketsForSwitch();
+        this.authenticated = false;
         HAService.instances.delete(this);
     }
 
@@ -156,7 +448,6 @@ export class HAService {
         } else if (data.type === 'auth_ok') {
             this.authenticated = true;
             this.notifyListeners({ type: 'connected' });
-            // Subscribe to events
             this.sendMessage({ type: 'subscribe_events', event_type: 'state_changed' });
         } else if (data.type === 'event' && data.event && data.event.event_type === 'state_changed') {
             this.notifyListeners({ type: 'state_changed', event: data.event });
@@ -270,9 +561,6 @@ export class HAService {
     }
 
     async getStates() {
-        // If we are not authenticated yet, wait? Or just try?
-        // For simplicity, we assume auth happens fast.
-        // In a real app we'd wait for 'connected' state.
         return this.sendMessage({ type: 'get_states' });
     }
 
@@ -286,7 +574,6 @@ export class HAService {
     }
 }
 
-// Static registry to track all instances
 HAService.instances = new Set();
 
 HAService.disconnectAll = () => {
@@ -299,7 +586,3 @@ HAService.disconnectAll = () => {
     });
     HAService.instances.clear();
 };
-
-// Singleton or Factory?
-// We'll export a generic helper for now, but usually we need the URL from discovery.
-// So we will instantiate this in the Dashboard.

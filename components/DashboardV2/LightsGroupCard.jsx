@@ -928,6 +928,7 @@ export default function LightsGroupCard({
     // Same rule as room card badge / home header: skip Master Controller only;
     // named groups count as 1; individuals (incl. master members) count each.
     const onLightsCount = countActiveCountableLights(lights);
+    const gridLights = useMemo(() => filterCountableLights(lights), [lights]);
 
     const handleBrightnessRelease = useCallback((rounded) => {
         blockSync(brightnessBlocked, brightnessBlockTimer);
@@ -1220,7 +1221,7 @@ export default function LightsGroupCard({
             </View>
 
             {/* Dots — same units as grid / badge count */}
-            <DotsRow lights={filterCountableLights(lights)} />
+            <DotsRow lights={gridLights} />
 
             {/* Collapsed — brightness only */}
             {hasDimmableLights && (
@@ -1281,7 +1282,7 @@ export default function LightsGroupCard({
             )}
 
                 <View style={styles.grid}>
-                    {filterCountableLights(lights).map(l => (
+                    {gridLights.map(l => (
                         <View key={l.entity_id} style={[styles.cell, lightCellWidth > 0 && { width: lightCellWidth }]}>
                             <ExpandedLightCard
                                 light={l}

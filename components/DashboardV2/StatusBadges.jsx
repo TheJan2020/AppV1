@@ -113,7 +113,7 @@ const styles = StyleSheet.create({
     row: {
         flexDirection: 'row',
         alignItems: 'center',
-        marginBottom: 10,
+        marginBottom: 16,
         gap: 8,
     },
     pill: {

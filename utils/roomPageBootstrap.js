@@ -26,3 +26,8 @@ export function peekRoomPageBootstrap(area_id, name) {
     if (!slot) return null;
     return slot.key === slotKey(area_id, name) ? slot.payload : null;
 }
+
+/** Drop the in-memory room handoff so a new home cannot open the previous house's room. */
+export function clearRoomPageBootstrap() {
+    slot = null;
+}

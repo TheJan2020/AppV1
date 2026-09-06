@@ -9,6 +9,7 @@
 import { inferCoverLayer, findCoverMapping, isMasterCover } from './coverWindows';
 import { findLinkedRemote } from './tvRemote';
 import { attachAcPowerSwitches } from './acPowerSwitch';
+import { sortByNaturalName } from './naturalSort';
 
 export function isMusicAssistantMediaPlayer(re, stateObj, musicAssistantConfigEntryIds = null) {
     const ids =
@@ -94,7 +95,22 @@ export const getRoomEntities = (
     musicAssistantConfigEntryIds = null,
     climateMappings = [],
 ) => {
-    if (!room) return { lights: [], fans: [], climates: [], covers: [], medias: [], musicMedias: [], switches: [] };
+    if (!room) {
+        return {
+            lights: [],
+            fans: [],
+            climates: [],
+            covers: [],
+            cameras: [],
+            sensors: [],
+            doors: [],
+            switches: [],
+            automations: [],
+            scripts: [],
+            medias: [],
+            musicMedias: [],
+        };
+    }
 
     const safeRegistryDevices = Array.isArray(registryDevices) ? registryDevices : [];
     const safeRegistryEntities = Array.isArray(registryEntities) ? registryEntities : [];
@@ -244,7 +260,7 @@ export const getRoomEntities = (
     ];
 
     return {
-        lights: [...lightEntries.map(mapEntity), ...mappedLocks],
+        lights: [...sortByNaturalName(lightEntries.map(mapEntity)), ...mappedLocks],
         fans: fanEntries.map(mapEntity),
         climates: climatesWithPower,
         covers: (() => {

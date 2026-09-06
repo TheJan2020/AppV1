@@ -1,8 +1,13 @@
-import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as SecureStore from 'expo-secure-store';
 import { getActiveProfileConfig } from './profile';
 import { authFetch } from '../utils/authFetch';
+import {
+    RecordingPresets,
+    setAudioModeAsync,
+    startAudioRecording,
+    stopAudioRecording,
+} from './expoAudio';
 
 /**
  * Simple Wake Word Manager
@@ -26,10 +31,10 @@ export class WakeWordManager {
         console.log('[WakeWord] Starting continuous listening for "Hey Butler"...');
 
         // Set audio mode for background listening
-        await Audio.setAudioModeAsync({
-            allowsRecordingIOS: true,
-            playsInSilentModeIOS: true,
-            staysActiveInBackground: true,
+        await setAudioModeAsync({
+            allowsRecording: true,
+            playsInSilentMode: true,
+            shouldPlayInBackground: true,
         });
 
         // Start continuous recording loop
@@ -42,7 +47,7 @@ export class WakeWordManager {
                 // Ensure previous recording is unloaded
                 if (this.recording) {
                     try {
-                        await this.recording.stopAndUnloadAsync();
+                        await stopAudioRecording(this.recording);
                     } catch (e) {
                         // Ignore already unloaded errors
                     }
@@ -50,17 +55,14 @@ export class WakeWordManager {
                 }
 
                 // Record 2 seconds chunks (Faster checking)
-                const { recording } = await Audio.Recording.createAsync(
-                    Audio.RecordingOptionsPresets.HIGH_QUALITY
-                );
+                const recording = await startAudioRecording(RecordingPresets.HIGH_QUALITY);
                 this.recording = recording;
 
                 // Wait 2 seconds
                 await new Promise(resolve => setTimeout(resolve, 2000));
 
                 // Stop and process
-                await recording.stopAndUnloadAsync();
-                const uri = recording.getURI();
+                const uri = await stopAudioRecording(recording);
                 this.recording = null; // Mark as null immediately
 
                 // Check for wake word
@@ -78,7 +80,7 @@ export class WakeWordManager {
                 // Ensure cleanup on error
                 if (this.recording) {
                     try {
-                        await this.recording.stopAndUnloadAsync();
+                        await stopAudioRecording(this.recording);
                     } catch (e) { }
                     this.recording = null;
                 }
@@ -140,7 +142,7 @@ export class WakeWordManager {
         this.isListening = false;
         if (this.recording) {
             try {
-                await this.recording.stopAndUnloadAsync();
+                await stopAudioRecording(this.recording);
             } catch (e) {
                 // Ignore
             }

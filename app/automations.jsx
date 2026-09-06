@@ -8,6 +8,7 @@ import * as SecureStore from 'expo-secure-store';
 import { HAService } from '../services/ha';
 import { Colors } from '../constants/Colors';
 import * as Haptics from 'expo-haptics';
+import { connectionConfigFromProfile } from '../services/connectionEndpoints';
 
 export default function AutomationsPage() {
     const router = useRouter();
@@ -28,10 +29,7 @@ export default function AutomationsPage() {
                     const profiles = JSON.parse(profilesJson);
                     const activeProfile = profiles.find(p => p.id === activeProfileId);
                     if (activeProfile) {
-                        setConnectionConfig({
-                            url: activeProfile.haUrl,
-                            token: activeProfile.haToken
-                        });
+                        setConnectionConfig(connectionConfigFromProfile(activeProfile));
                         return;
                     }
                 }
@@ -49,7 +47,9 @@ export default function AutomationsPage() {
     useEffect(() => {
         if (!connectionConfig) return;
 
-        service.current = new HAService(connectionConfig.url, connectionConfig.token);
+        service.current = new HAService(connectionConfig.haUrlLive || connectionConfig.url, connectionConfig.token, {
+            fallbackUrl: connectionConfig.haUrlLocal,
+        });
         service.current.connect();
 
         const onStateChanged = (data) => {

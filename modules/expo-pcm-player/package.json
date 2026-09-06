@@ -7,7 +7,6 @@
   "author": "Primewave",
   "homepage": "https://primewave.ai",
   "peerDependencies": {
-    "expo": "*",
-    "expo-modules-core": "*"
+    "expo": "*"
   }
 }

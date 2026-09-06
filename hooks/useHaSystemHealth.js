@@ -104,14 +104,14 @@ export function useHaSystemHealth({ entities = [], haStatus, adminStatus }) {
                 variant: 'ha_down',
                 shortLabel: 'HA is down',
                 title: 'Home Assistant is offline',
-                body: 'Cannot reach your Home Assistant server. Controls are disabled until it reconnects. If this persists, please contact support.',
+                body: 'Cannot reach Home Assistant over the internet. If you are at home, join the same Wi-Fi as Home Assistant so the app can use the local connection. If this persists, contact support.',
             };
         } else if (shouldShowBanner && adminDown) {
             banner = {
                 variant: 'admin_down',
                 shortLabel: 'Admin server down',
                 title: 'System issue detected',
-                body: 'The admin dashboard is unreachable. Scenes, mappings, and some features may not work. Please contact support if this continues.',
+                body: 'The dashboard is unreachable over HTTPS and locally. Your phone may not be on the same network as Home Assistant. Join the home Wi-Fi and try again.',
             };
         } else if (shouldShowBanner && entityHealth.isDegraded) {
             const pct = Math.round(entityHealth.badPct * 100);

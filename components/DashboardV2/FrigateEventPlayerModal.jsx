@@ -10,7 +10,7 @@ import {
     Modal, View, Text, StyleSheet, TouchableOpacity, Image, ActivityIndicator,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
-import { Audio } from 'expo-av';
+import { setAudioModeAsync } from '../../services/expoAudio';
 import { X, Clock } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
 import {
@@ -289,10 +289,10 @@ export default function FrigateEventPlayerModal({
 
     useEffect(() => {
         if (!visible) return undefined;
-        Audio.setAudioModeAsync({
-            playsInSilentModeIOS: true,
-            staysActiveInBackground: false,
-            shouldDuckAndroid: true,
+        setAudioModeAsync({
+            playsInSilentMode: true,
+            shouldPlayInBackground: false,
+            interruptionMode: 'duckOthers',
         }).catch(() => {});
         return undefined;
     }, [visible]);

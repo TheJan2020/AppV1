@@ -48,18 +48,45 @@ export function getSubAreaIds(badgeConfig = null) {
 }
 
 /**
- * Selected areas from backend, merged with live HA registry metadata.
- * Includes sub-areas (used for stats); filter with filterParentRoomsForDashboard for the grid.
+ * True when cached home rooms all belong to this house's admin-selected areas.
+ * Never treat the full Home Assistant area registry as the room list.
+ */
+export function roomsBelongToCurrentHome(rooms = [], registryAreas = [], badgeConfig = null) {
+    if (!Array.isArray(rooms) || rooms.length === 0) return false;
+    const selectedIds = new Set(
+        (Array.isArray(badgeConfig?.selected_areas) ? badgeConfig.selected_areas : [])
+            .map((a) => a?.area_id)
+            .filter(Boolean),
+    );
+    if (!selectedIds.size) return false;
+    return rooms.every((r) => !r?.area_id || selectedIds.has(r.area_id));
+}
+
+/** Cached rooms that are in the admin Floors & Rooms selection for this house. */
+export function cachedRoomsForHome(rooms = [], badgeConfig = null) {
+    const selectedIds = new Set(
+        (Array.isArray(badgeConfig?.selected_areas) ? badgeConfig.selected_areas : [])
+            .map((a) => a?.area_id)
+            .filter(Boolean),
+    );
+    if (!selectedIds.size || !Array.isArray(rooms) || rooms.length === 0) return [];
+    return rooms.filter((r) => r?.area_id && selectedIds.has(r.area_id));
+}
+
+/**
+ * Only rooms chosen in the admin dashboard (selected_areas).
+ * Never fall back to every Home Assistant area. Registry data is used to
+ * enrich names/pictures when present, but a selected room is not dropped
+ * just because the HA registry has not loaded yet.
  */
 export function getSelectedAreasForDashboard(registryAreas = [], badgeConfig = null) {
     const allAreas = Array.isArray(registryAreas) ? registryAreas : [];
     const selected = badgeConfig?.selected_areas;
 
     if (!Array.isArray(selected) || selected.length === 0) {
-        return allAreas;
+        return [];
     }
 
-    // Show selected rooms even before the HA area registry arrives (cached Home).
     return selected
         .filter((sa) => sa?.area_id)
         .map((sa) => {
@@ -79,7 +106,8 @@ export function filterParentRoomsForDashboard(rooms = [], _allAreas = [], badgeC
 export function getRoomAreaGroup(parentRoom, allAreas = [], badgeConfig = null) {
     if (!parentRoom) return [];
     const parentMap = buildExplicitParentMap(badgeConfig);
-    const children = allAreas.filter((a) => parentMap.get(a.area_id) === parentRoom.area_id);
+    const pool = getSelectedAreasForDashboard(allAreas, badgeConfig);
+    const children = pool.filter((a) => parentMap.get(a.area_id) === parentRoom.area_id);
     return [parentRoom, ...children];
 }
 
@@ -103,7 +131,8 @@ export function getRoomAreaTabs(parentRoom, allAreas = [], resolveDisplayName, b
     if (!parentRoom) return [];
 
     const parentMap = buildExplicitParentMap(badgeConfig);
-    const children = allAreas
+    const pool = getSelectedAreasForDashboard(allAreas, badgeConfig);
+    const children = pool
         .filter((a) => parentMap.get(a.area_id) === parentRoom.area_id)
         .sort((a, b) => String(a.name || a.area_id).localeCompare(String(b.name || b.area_id)));
 

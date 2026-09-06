@@ -1,3 +1,5 @@
+import { sortByNaturalName } from './naturalSort';
+
 /** HA color modes that imply brightness control (not plain on/off). */
 const BRIGHTNESS_COLOR_MODES = new Set([
     'brightness',
@@ -136,7 +138,7 @@ export function isLightCountableUnit(light, groupedMemberIds) {
 
 export function filterCountableLights(lights = []) {
     const memberIds = collectGroupedLightMemberIds(lights);
-    return lights.filter((l) => isLightCountableUnit(l, memberIds));
+    return sortByNaturalName(lights.filter((l) => isLightCountableUnit(l, memberIds)));
 }
 
 /** On + countable units within a light list (room-scoped). */

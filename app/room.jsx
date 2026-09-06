@@ -10,6 +10,7 @@ import { applyHaStateChangedEvent, applyClimateServiceToEntity } from '../utils/
 import { HA_STATUS, ADMIN_STATUS } from '../utils/haEntityHealth';
 import { useHaSystemHealth } from '../hooks/useHaSystemHealth';
 import { fetchEnrichedLightMappings } from '../utils/lightMappingsClient';
+import { fetchAppRole, areaVisibleForRole } from '../services/appRole';
 import { StatusBar } from 'expo-status-bar';
 
 /** Expo Router may pass repeated query keys as string[]. Normalize for area matching. */
@@ -34,6 +35,7 @@ export default function RoomPage() {
         () => initialPayload?.musicAssistantEntryIds ?? []
     );
     const [badgeConfig, setBadgeConfig] = useState(() => initialPayload?.badgeConfig ?? null);
+    const [appRole, setAppRole] = useState(() => initialPayload?.appRole ?? null);
     const [registryAreas, setRegistryAreas] = useState(() => initialPayload?.registryAreas ?? []);
     const [registryDevices, setRegistryDevices] = useState(() => initialPayload?.registryDevices ?? []);
     const [registryEntities, setRegistryEntities] = useState(() => initialPayload?.registryEntities ?? []);
@@ -184,6 +186,38 @@ export default function RoomPage() {
     }, [connectionConfig.loaded, connectionConfig.adminUrl, badgeConfig]);
 
     useEffect(() => {
+        if (appRole || !connectionConfig.loaded || !connectionConfig.adminUrl) return undefined;
+        let cancelled = false;
+        (async () => {
+            let userId = '';
+            let username = '';
+            try {
+                const raw = await SecureStore.getItemAsync('logged_in_user');
+                const user = raw ? JSON.parse(raw) : null;
+                userId = user?.userId || user?.id || '';
+                username = user?.username || user?.name || '';
+            } catch {
+                // ignore
+            }
+            const role = await fetchAppRole({
+                adminUrl: connectionConfig.adminUrl,
+                token: connectionConfig.token,
+                userId,
+                username,
+            });
+            if (!cancelled) setAppRole(role);
+        })();
+        return () => { cancelled = true; };
+    }, [appRole, connectionConfig.loaded, connectionConfig.adminUrl, connectionConfig.token]);
+
+    useEffect(() => {
+        if (!appRole || !area_id) return;
+        if (!areaVisibleForRole(area_id, appRole, badgeConfig)) {
+            router.back();
+        }
+    }, [appRole, area_id, badgeConfig, router]);
+
+    useEffect(() => {
         if (!connectionConfig.loaded || !connectionConfig.adminUrl) return;
 
         const adminUrl = connectionConfig.adminUrl;
@@ -250,6 +284,7 @@ export default function RoomPage() {
         climateMappings,
         musicAssistantEntryIds,
         badgeConfig,
+        appRole,
     });
 
     if (loading) {
@@ -301,6 +336,7 @@ export default function RoomPage() {
                 }
                 systemHealthBanner={systemHealth.banner}
                 canControlHa={systemHealth.canControlHa}
+                appRole={appRole}
             />
         </View>
     );

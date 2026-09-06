@@ -8,18 +8,27 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
 import { loadHaProfiles } from '../utils/storage';
+import {
+    clearAllDashboardSnapshots,
+    clearDashboardMemory,
+    clearDashboardSnapshot,
+} from '../utils/dashboardCache';
 
 const ACCOUNTS_KEY = 'saved_accounts_v2';
 const LEGACY_SECURE_KEY = 'saved_accounts';
 const ACTIVE_ACCOUNT_KEY = 'active_account_id';
 
 export function normalizeHaUrl(url) {
-    return String(url || '')
-        .trim()
-        .replace(/^wss:\/\//i, 'https://')
-        .replace(/^ws:\/\//i, 'http://')
-        .replace(/\/+$/, '')
-        .toLowerCase();
+    if (url && typeof url === 'object') {
+        url = url.haUrlLive || url.ha_url_live || url.haUrl || url.url || '';
+    }
+    let s = String(url || '').trim();
+    if (/\[object object\]/i.test(s)) s = '';
+    s = s.replace(/^wss:\/\//i, 'https://').replace(/^ws:\/\//i, 'http://');
+    // Pasted hosts like "abuturki-ha primewave2.tech" (space instead of a dot)
+    s = s.replace(/([a-z0-9-])\s+([a-z0-9-]+\.[a-z]{2,})/i, '$1.$2');
+    s = s.replace(/\s+/g, '');
+    return s.replace(/\/+$/, '').toLowerCase();
 }
 
 export function normalizeUsername(username) {
@@ -232,20 +241,38 @@ export async function activateAccount(accountId) {
  */
 export async function removeAccount(accountId) {
     const accounts = await listAccounts();
+    const removed = accounts.find((a) => a.id === accountId) || null;
     const remaining = accounts.filter((a) => a.id !== accountId);
     await saveAccounts(remaining);
+
+    const stillUsingHome = remaining.some(
+        (a) => a.profileId && removed?.profileId && a.profileId === removed.profileId,
+    );
+    if (removed?.profileId && !stillUsingHome) {
+        await clearDashboardSnapshot(removed.profileId);
+    }
+    clearDashboardMemory();
 
     const activeId = await getActiveAccountId();
     if (activeId === accountId || !activeId) {
         if (remaining.length > 0) {
-            const next = await activateAccount(remaining[0].id);
-            return { nextAccount: next };
+            try {
+                const next = await activateAccount(remaining[0].id);
+                return { nextAccount: next };
+            } catch (e) {
+                console.log('[Accounts] Failed to activate next account:', e?.message || e);
+                await SecureStore.deleteItemAsync(ACTIVE_ACCOUNT_KEY);
+                await SecureStore.deleteItemAsync('is_logged_in');
+                await SecureStore.deleteItemAsync('logged_in_user');
+                return { nextAccount: null };
+            }
         }
         await SecureStore.deleteItemAsync(ACTIVE_ACCOUNT_KEY);
         await SecureStore.deleteItemAsync('is_logged_in');
         await SecureStore.deleteItemAsync('logged_in_user');
         await SecureStore.deleteItemAsync('saved_username');
         await SecureStore.deleteItemAsync('saved_password');
+        await clearAllDashboardSnapshots();
         return { nextAccount: null };
     }
 
@@ -266,6 +293,7 @@ export async function logoutActiveAccount() {
         await SecureStore.deleteItemAsync('saved_username');
         await SecureStore.deleteItemAsync('saved_password');
     }
+    await clearAllDashboardSnapshots();
     return { nextAccount: null };
 }
 
@@ -314,6 +342,11 @@ export async function ensureAccountsMigrated() {
         sameAccount(a, { username: uname, userId, profileId, name, haUrl }),
     );
     if (already) return existing;
+
+    // Session is already in the switcher — do not create a second row just
+    // because add-account temporarily changed the active profile and then cancelled.
+    const activeId = await getActiveAccountId();
+    if (activeId && existing.some((a) => a.id === activeId)) return existing;
 
     await upsertAccountAndActivate({
         username: uname,

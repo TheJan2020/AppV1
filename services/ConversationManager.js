@@ -1,9 +1,16 @@
-import { Audio } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as SecureStore from 'expo-secure-store';
 import * as Haptics from 'expo-haptics';
 import { getActiveProfileConfig } from './profile';
 import { authFetch } from '../utils/authFetch';
+import {
+    RecordingPresets,
+    createAudioPlayer,
+    createAudioRecorder,
+    releaseAudioPlayer,
+    setAudioModeAsync,
+    stopAudioRecording,
+} from './expoAudio';
 
 /**
  * Conversation Session Manager
@@ -18,6 +25,7 @@ export class ConversationManager {
         this.onStatusChange = null;
         this.onCommand = null;
         this.silenceTimer = null;
+        this.meterTimer = null;
         this.silenceStart = null;
         this.isSpeaking = false;
         this.lastMetering = -160;
@@ -50,47 +58,26 @@ export class ConversationManager {
             this.onStatusChange?.('listening');
 
             // Set audio mode for recording
-            await Audio.setAudioModeAsync({
-                allowsRecordingIOS: true,
-                playsInSilentModeIOS: true,
+            await setAudioModeAsync({
+                allowsRecording: true,
+                playsInSilentMode: true,
             });
 
-            // Prepare recording options with metering enabled
             const recordingOptions = {
-                android: {
-                    ...Audio.RecordingOptionsPresets.HIGH_QUALITY.android,
-                    extension: '.m4a',
-                    outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-                    audioEncoder: Audio.AndroidAudioEncoder.AAC,
-                    sampleRate: 44100,
-                    numberOfChannels: 2,
-                    bitRate: 128000,
-                    isMeteringEnabled: true,
-                },
-                ios: {
-                    ...Audio.RecordingOptionsPresets.HIGH_QUALITY.ios,
-                    extension: '.m4a',
-                    outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
-                    audioQuality: Audio.IOSAudioQuality.MAX,
-                    sampleRate: 44100,
-                    numberOfChannels: 2,
-                    bitRate: 128000,
-                    linearPCMBitDepth: 16,
-                    linearPCMIsBigEndian: false,
-                    linearPCMIsFloat: false,
-                    isMeteringEnabled: true,
-                },
-                web: {
-                    mimeType: 'audio/webm',
-                    bitsPerSecond: 128000,
-                },
+                ...RecordingPresets.HIGH_QUALITY,
+                isMeteringEnabled: true,
             };
 
-            const { recording } = await Audio.Recording.createAsync(
-                recordingOptions,
-                this.onRecordingStatusUpdate
-            );
+            const recording = createAudioRecorder(recordingOptions);
+            await recording.prepareToRecordAsync();
+            recording.record();
             this.recording = recording;
+            this.meterTimer = setInterval(() => {
+                if (!this.recording) return;
+                try {
+                    this.onRecordingStatusUpdate(this.recording.getStatus());
+                } catch (_) { /* ignore */ }
+            }, 100);
 
             // Reset VAD state
             this.silenceStart = Date.now();
@@ -149,10 +136,13 @@ export class ConversationManager {
 
         try {
             clearTimeout(this.silenceTimer);
+            if (this.meterTimer) {
+                clearInterval(this.meterTimer);
+                this.meterTimer = null;
+            }
             this.onStatusChange?.('processing');
 
-            await this.recording.stopAndUnloadAsync();
-            const uri = this.recording.getURI();
+            const uri = await stopAudioRecording(this.recording);
             this.recording = null;
 
             // Process the command
@@ -295,12 +285,12 @@ export class ConversationManager {
             }
 
             // Set audio mode for playback
-            await Audio.setAudioModeAsync({
-                allowsRecordingIOS: false,
-                playsInSilentModeIOS: true,
-                staysActiveInBackground: false,
-                shouldDuckAndroid: true,
-                playThroughEarpieceAndroid: false,
+            await setAudioModeAsync({
+                allowsRecording: false,
+                playsInSilentMode: true,
+                shouldPlayInBackground: false,
+                interruptionMode: 'duckOthers',
+                shouldRouteThroughEarpiece: false,
             });
 
             // Save and play
@@ -309,21 +299,19 @@ export class ConversationManager {
                 encoding: 'base64',
             });
 
-            const { sound } = await Audio.Sound.createAsync(
-                { uri: fileUri },
-                { shouldPlay: true }
-            );
-
+            const sound = createAudioPlayer({ uri: fileUri });
             this.sound = sound;
 
             // Wait for playback to finish
             await new Promise((resolve) => {
-                sound.setOnPlaybackStatusUpdate((status) => {
+                sound.addListener('playbackStatusUpdate', (status) => {
                     if (status.didJustFinish) {
-                        sound.unloadAsync();
+                        releaseAudioPlayer(sound);
+                        this.sound = null;
                         resolve();
                     }
                 });
+                sound.play();
             });
 
         } catch (error) {
@@ -374,14 +362,18 @@ export class ConversationManager {
     async endSession() {
         this.isActive = false;
         clearTimeout(this.silenceTimer);
+        if (this.meterTimer) {
+            clearInterval(this.meterTimer);
+            this.meterTimer = null;
+        }
 
         if (this.recording) {
-            await this.recording.stopAndUnloadAsync();
+            await stopAudioRecording(this.recording);
             this.recording = null;
         }
 
         if (this.sound) {
-            await this.sound.unloadAsync();
+            releaseAudioPlayer(this.sound);
             this.sound = null;
         }
 

@@ -7,6 +7,9 @@ import { applyHaStateChangedEvent, applyClimateServiceToEntity } from '../utils/
 import { HA_STATUS, ADMIN_STATUS } from '../utils/haEntityHealth';
 import { useHaSystemHealth } from './useHaSystemHealth';
 import * as SecureStore from 'expo-secure-store';
+import { connectionConfigFromProfile, withFailoverUrls } from '../services/connectionEndpoints';
+import { probeDashboard, applyBootstrapHaToConfig } from '../services/homeBootstrap';
+import { mergeActiveProfileUrls } from '../utils/storage';
 
 /**
  * Reusable hook that manages the full HA WebSocket lifecycle:
@@ -67,12 +70,7 @@ export default function useHAConnection() {
                 const activeProfile = profiles.find(p => p.id === activeProfileId);
 
                 if (activeProfile) {
-                    setConnectionConfig({
-                        url: activeProfile.haUrl,
-                        token: activeProfile.haToken,
-                        adminUrl: activeProfile.adminUrl,
-                        loaded: true,
-                    });
+                    setConnectionConfig(connectionConfigFromProfile(activeProfile));
                     return;
                 }
             }
@@ -120,6 +118,26 @@ export default function useHAConnection() {
         const { url: haUrl, token: haToken, adminUrl } = connectionConfig;
         const configAbort = new AbortController();
 
+        void probeDashboard(
+            connectionConfig.adminUrlLive || adminUrl,
+            connectionConfig.adminUrlLocal,
+        ).then((boot) => {
+            if (configAbort.signal.aborted || !boot) return;
+            setConnectionConfig((prev) => {
+                const next = applyBootstrapHaToConfig(prev, boot);
+                if (next !== prev && service.current?.setFallbackUrl && next.haUrlLocal) {
+                    service.current.setFallbackUrl(next.haUrlLocal);
+                }
+                return next;
+            });
+            mergeActiveProfileUrls({
+                haUrlLive: boot.haUrlLive,
+                haUrlLocal: boot.haUrlLocal,
+                haToken: boot.haToken,
+                haUrl: boot.haUrlLive || boot.haUrlLocal,
+            });
+        }).catch(() => {});
+
         // Fetch admin config
         if (adminUrl) {
             const baseUrl = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
@@ -145,7 +163,7 @@ export default function useHAConnection() {
                                 const cams = Object.keys(config.cameras).map(key => ({
                                     id: key,
                                     name: key,
-                                    ...config.cameras[key],
+                                    feed: 'frigate',
                                 }));
                                 setFrigateCameras(cams);
                                 console.log('[useHAConnection] Frigate cameras loaded:', cams.length);
@@ -156,7 +174,16 @@ export default function useHAConnection() {
                 .catch(err => {
                     if (err.name !== 'AbortError') {
                         console.log('[useHAConnection] Config error:', err);
-                        setAdminStatus(ADMIN_STATUS.ERROR);
+                        const localAdmin = connectionConfig.adminUrlLocal;
+                        if (localAdmin && localAdmin !== adminUrl) {
+                            setConnectionConfig((prev) => (
+                                prev.adminUrl === localAdmin
+                                    ? prev
+                                    : { ...prev, adminUrl: localAdmin }
+                            ));
+                        } else {
+                            setAdminStatus(ADMIN_STATUS.ERROR);
+                        }
                     }
                 });
 
@@ -170,9 +197,15 @@ export default function useHAConnection() {
         // Connect to Home Assistant WebSocket
         if (haUrl && haToken) {
             setHaStatus(HA_STATUS.LOADING);
-            service.current = new HAService(haUrl, haToken);
+            service.current = new HAService(connectionConfig.haUrlLive || haUrl, haToken, {
+                fallbackUrl: connectionConfig.haUrlLocal,
+            });
             service.current.connect();
             service.current.subscribe(data => {
+                if (data.type === 'endpoint_switched') {
+                    setConnectionConfig((prev) => withFailoverUrls(prev, data));
+                    return;
+                }
                 if (data.type === 'connected') {
                     setHaStatus(HA_STATUS.CONNECTED);
                     service.current.getStates().then(states => {
@@ -228,7 +261,7 @@ export default function useHAConnection() {
                 }
             }
         };
-    }, [connectionConfig.loaded]);
+    }, [connectionConfig.loaded, connectionConfig.token, connectionConfig.haUrlLive, connectionConfig.haUrlLocal]);
 
     // ─── Convenience wrappers ────────────────────────────────────
     const systemHealth = useHaSystemHealth({ entities, haStatus, adminStatus });

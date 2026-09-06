@@ -1,0 +1,69 @@
+diff --git a/node_modules/expo-modules-core/ios/Core/Events/EventEmitter.swift b/node_modules/expo-modules-core/ios/Core/Events/EventEmitter.swift
+index 3046568..a6db428 100644
+--- a/node_modules/expo-modules-core/ios/Core/Events/EventEmitter.swift
++++ b/node_modules/expo-modules-core/ios/Core/Events/EventEmitter.swift
+@@ -23,6 +23,15 @@ public protocol EventEmitter: AnyObject {
+   func withEventTarget<R>(_ body: (borrowing JavaScriptObject) throws -> R) rethrows -> R?
+ }
+ 
++/// Xcode 26.1–26.3 (Swift 6.2) treats capturing `nonisolated(unsafe) weak var emitter`
++/// into `runtime.schedule` as sending a non-Sendable value. Box the weak ref instead.
++private final class UnsafeWeakEventEmitter: @unchecked Sendable {
++  weak var value: (any EventEmitter)?
++  init(_ value: any EventEmitter) {
++    self.value = value
++  }
++}
++
+ public extension EventEmitter {
+   /**
+    Schedules an event with the given name to be emitted to the associated JavaScript object.
+@@ -42,14 +51,12 @@ public extension EventEmitter {
+       return
+     }
+     // The emitter is not necessarily `Sendable` - some modules hold non-sendable state — so we can't let
+-    // the compiler send `self` into the `@JavaScriptActor` region. Capturing it as `nonisolated(unsafe)` is
+-    // safe here because the scheduled closure only calls `withEventTarget`, which touches `@JavaScriptActor`-
+-    // isolated or `Sendable` state (the JS object, the registry, `appContext`) and the emitter's identity -
+-    // never the module's own mutable state.
+-    nonisolated(unsafe) weak let emitter = self
++    // the compiler send `self` into the `@JavaScriptActor` region. Boxing the weak ref as
++    // `@unchecked Sendable` is safe here because the scheduled closure only calls `withEventTarget`.
++    let emitter = UnsafeWeakEventEmitter(self)
+ 
+     runtime.schedule {
+-      guard let emitter else {
++      guard let emitter = emitter.value else {
+         return
+       }
+       let dispatched = emitter.withEventTarget { target in
+@@ -70,13 +77,11 @@ public extension EventEmitter {
+       log.warn("Trying to send event '\(event)' to \(type(of: self)), but the JS runtime has been lost")
+       return
+     }
+-    // See the note in `emit(event:payload:)` above - the emitter is captured as `nonisolated(unsafe)`
+-    // because it isn't necessarily `Sendable`, and the scheduled closure only reaches `@JavaScriptActor`-
+-    // isolated or `Sendable` state through it.
+-    nonisolated(unsafe) weak let emitter = self
++    // See the note in `emit(event:payload:)` above.
++    let emitter = UnsafeWeakEventEmitter(self)
+ 
+     runtime.schedule { [weak appContext] in
+-      guard let emitter, let appContext else {
++      guard let emitter = emitter.value, let appContext else {
+         return
+       }
+       let jsPayload: JavaScriptValue
+diff --git a/node_modules/expo-modules-core/ios/Core/SharedObjects/SharedObjectRegistry.swift b/node_modules/expo-modules-core/ios/Core/SharedObjects/SharedObjectRegistry.swift
+index 00ed407..68f0fef 100644
+--- a/node_modules/expo-modules-core/ios/Core/SharedObjects/SharedObjectRegistry.swift
++++ b/node_modules/expo-modules-core/ios/Core/SharedObjects/SharedObjectRegistry.swift
+@@ -19,7 +19,7 @@ public final class SharedObjectRegistry: Sendable {
+   /**
+    Weak reference to the app context for the registry.
+    */
+-  private weak let appContext: AppContext?
++  private nonisolated(unsafe) weak var appContext: AppContext?
+ 
+   // `@unchecked` because `SharedObjectNativeState` isn't `Sendable` (its JSI base class isn't), yet a
+   // value escapes `withLock` whenever `get`/the lookups return it. Access is always serialized through

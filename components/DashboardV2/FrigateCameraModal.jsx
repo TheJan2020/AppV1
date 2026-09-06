@@ -6,6 +6,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { CF } from '../../utils/typography';
 import { formatCameraName } from '../../utils/formatDisplayName';
 import CameraSensorOverlay, { isSensorActive, buildEntityMap, resolveSensorIds } from './CameraSensorOverlay';
+import { cameraUsesHaFeed } from '../../services/appRole';
 import { dedupeEventsById, paginationBeforeCursor } from '../../utils/frigateEvents';
 import FrigateEventImageModal from './FrigateEventImageModal';
 
@@ -109,8 +110,23 @@ function EventCard({ event, adminUrl, authHeaders, onPress }) {
 
 // ── Live Stream ───────────────────────────────────────────────────────────────
 
-function LiveStream({ service, cameraName, sensorIds, entityMap }) {
+function LiveStream({ service, camera, sensorIds, entityMap }) {
     const webViewRef = useRef(null);
+    const [tick, setTick] = useState(0);
+    const [useFrigateFallback, setUseFrigateFallback] = useState(false);
+    const isHACamera = cameraUsesHaFeed(camera) && !useFrigateFallback;
+    const cameraName = String(camera?.name || camera?.id || '').replace(/^camera\./, '');
+
+    useEffect(() => {
+        setUseFrigateFallback(false);
+    }, [camera?.id, camera?.entity_id, camera?.name]);
+
+    useEffect(() => {
+        if (!isHACamera) return undefined;
+        const id = setInterval(() => setTick((n) => n + 1), 2000);
+        return () => clearInterval(id);
+    }, [isHACamera]);
+
     if (!service || !cameraName) {
         return (
             <View style={[styles.streamContainer, { alignItems: 'center', justifyContent: 'center' }]}>
@@ -118,20 +134,34 @@ function LiveStream({ service, cameraName, sensorIds, entityMap }) {
             </View>
         );
     }
-    const streamUrl = service.getStreamUrl(cameraName);
+    const streamUrl = isHACamera
+        ? service.getHASnapshotUrl(camera.entity_id || camera.id || cameraName)
+        : service.getStreamUrl(cameraName);
+    const uri = isHACamera
+        ? `${streamUrl}${streamUrl.includes('?') ? '&' : '?'}t=${tick}`
+        : streamUrl;
     return (
         <View style={styles.streamContainer}>
-            <WebView
-                ref={webViewRef}
-                source={{ uri: streamUrl, headers: service?.headers || {} }}
-                style={{ flex: 1, backgroundColor: 'black' }}
-                scrollEnabled={false}
-                allowsInlineMediaPlayback={true}
-                mediaPlaybackRequiresUserAction={false}
-                originWhitelist={['*']}
-                scalesPageToFit={true}
-                javaScriptEnabled={true}
-            />
+            {isHACamera ? (
+                <Image
+                    source={{ uri, headers: service?.headers || {} }}
+                    style={StyleSheet.absoluteFill}
+                    resizeMode="cover"
+                    onError={() => setUseFrigateFallback(true)}
+                />
+            ) : (
+                <WebView
+                    ref={webViewRef}
+                    source={{ uri: streamUrl, headers: service?.headers || {} }}
+                    style={{ flex: 1, backgroundColor: 'black' }}
+                    scrollEnabled={false}
+                    allowsInlineMediaPlayback={true}
+                    mediaPlaybackRequiresUserAction={false}
+                    originWhitelist={['*']}
+                    scalesPageToFit={true}
+                    javaScriptEnabled={true}
+                />
+            )}
             <CameraSensorOverlay sensorIds={sensorIds} entityMap={entityMap} position="bl" />
         </View>
     );
@@ -221,12 +251,12 @@ export default function FrigateCameraModal({ visible, camera, service, onClose, 
     };
 
     useEffect(() => {
-        if (!visible || !ready) {
+        if (!visible || !ready || cameraUsesHaFeed(camera)) {
             setEvents([]);
             setSelectedLabel(null);
             setSelectedEvent(null);
-            setHasMore(true);
-            setEventsLoaded(false);
+            setHasMore(false);
+            setEventsLoaded(true);
             return;
         }
         fetchGenRef.current += 1;
@@ -234,9 +264,10 @@ export default function FrigateCameraModal({ visible, camera, service, onClose, 
         dedupeTrackerRef.current = { seenIds: new Set(), seenFingerprints: new Set() };
         setEventsLoaded(false);
         setEvents([]);
+        setHasMore(true);
         fetchEvents(false);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [visible, camera?.name, service?.baseUrl, selectedLabel]);
+    }, [visible, camera?.name, camera?.entity_id, service?.baseUrl, selectedLabel]);
 
     const labelPills = [
         { value: null, label: 'All' },
@@ -308,7 +339,7 @@ export default function FrigateCameraModal({ visible, camera, service, onClose, 
                 {/* Live stream lives OUTSIDE FlatList so it never remounts */}
                 <LiveStream
                     service={service}
-                    cameraName={camera?.name}
+                    camera={camera}
                     sensorIds={assignedSensorIds}
                     entityMap={entityMap}
                 />

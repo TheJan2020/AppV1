@@ -9,7 +9,7 @@ import {
     Alert,
     ScrollView,
 } from 'react-native';
-import { Check, Plus, UserRound, ChevronRight } from 'lucide-react-native';
+import { Check, Plus, UserRound, ChevronRight, Pencil } from 'lucide-react-native';
 import ModalBackdrop from '../ModalBackdrop';
 import { Colors } from '../../constants/Colors';
 import { CF } from '../../utils/typography';
@@ -30,6 +30,7 @@ export default function AccountSwitcherModal({
     onClose,
     onSwitched,
     onAddAccount,
+    onEditHome,
 }) {
     const [accounts, setAccounts] = useState([]);
     const [activeId, setActiveId] = useState(null);
@@ -123,6 +124,11 @@ export default function AccountSwitcherModal({
                                                     {account.username}
                                                     {account.profileName ? ` · ${account.profileName}` : ''}
                                                 </Text>
+                                                {!!account.haUrl && (
+                                                    <Text style={styles.host} numberOfLines={1}>
+                                                        {String(account.haUrl).replace(/^https?:\/\//i, '')}
+                                                    </Text>
+                                                )}
                                             </View>
                                             {busy ? (
                                                 <ActivityIndicator size="small" color={Colors.primary} />
@@ -149,6 +155,19 @@ export default function AccountSwitcherModal({
                         <Plus size={18} color="#fff" />
                         <Text style={styles.addText}>Add another account</Text>
                     </TouchableOpacity>
+                    {onEditHome ? (
+                        <TouchableOpacity
+                            style={styles.editHomeBtn}
+                            onPress={() => {
+                                onClose?.();
+                                onEditHome?.();
+                            }}
+                            activeOpacity={0.8}
+                        >
+                            <Pencil size={16} color={Colors.primary} />
+                            <Text style={styles.editHomeText}>Edit home URLs</Text>
+                        </TouchableOpacity>
+                    ) : null}
                 </View>
             </View>
         </Modal>
@@ -232,6 +251,11 @@ const styles = StyleSheet.create({
         fontFamily: CF.regular,
         fontSize: 12,
     },
+    host: {
+        color: 'rgba(237,237,245,0.32)',
+        fontFamily: CF.regular,
+        fontSize: 11,
+    },
     addBtn: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -245,5 +269,18 @@ const styles = StyleSheet.create({
         color: '#fff',
         fontFamily: CF.semibold,
         fontSize: 15,
+    },
+    editHomeBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        paddingVertical: 12,
+        marginTop: 8,
+    },
+    editHomeText: {
+        color: Colors.primary,
+        fontFamily: CF.semibold,
+        fontSize: 14,
     },
 });

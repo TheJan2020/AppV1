@@ -27,7 +27,7 @@ import {
     View, Text, StyleSheet, TouchableOpacity,
     LayoutAnimation, Platform, UIManager, useWindowDimensions,
 } from 'react-native';
-import { LayoutGrid, ChevronDown, ChevronUp, ChevronLeft, ChevronRight } from 'lucide-react-native';
+import { LayoutGrid, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, DoorClosed, DoorOpen } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import CoverCard, { AllLayersCoverCard } from './CoverCard';
 import CoverLayerFilter from './CoverLayerFilter';
@@ -58,6 +58,42 @@ function isActive(cover) {
 function isCurtainType(cover) {
     const t = cover.coverType || '';
     return t === 'curtain_middle' || t === 'curtain_left' || t === 'curtain_right' || t === 'curtain_roll';
+}
+
+const SENSOR_SIDE_ORDER = { left: 0, middle: 1, center: 1, right: 2 };
+
+function windowSensorFriendlyName(entity, entityId) {
+    return (
+        entity?.attributes?.friendly_name
+        || entity?.stateObj?.attributes?.friendly_name
+        || entity?.displayName
+        || entity?.name
+        || String(entityId || '').replace(/^binary_sensor\./, '').replace(/_/g, ' ')
+    );
+}
+
+/** "Window C Right Sensor" → "Right" so each chip is Left / Right next to the window name. */
+function windowSensorSideLabel(rawLabel, windowName) {
+    const hay = String(rawLabel || '').toLowerCase();
+    if (/\bright\b/.test(hay)) return 'Right';
+    if (/\bleft\b/.test(hay)) return 'Left';
+    if (/\bmiddle\b|\bcenter\b/.test(hay)) return 'Middle';
+
+    let rest = String(rawLabel || '').trim();
+    const win = String(windowName || '').trim();
+    if (win && rest.toLowerCase().startsWith(win.toLowerCase())) {
+        rest = rest.slice(win.length).replace(/^[\s\-–_:]+/, '');
+    }
+    rest = rest.replace(/\bsensors?\b/gi, '').replace(/\s+/g, ' ').trim();
+    return rest || rawLabel || 'Sensor';
+}
+
+function windowSensorSideKey(label) {
+    const hay = String(label || '').toLowerCase();
+    if (/\bleft\b/.test(hay)) return 'left';
+    if (/\bright\b/.test(hay)) return 'right';
+    if (/\bmiddle\b|\bcenter\b/.test(hay)) return 'middle';
+    return 'other';
 }
 
 // ── Adaptive dots row ─────────────────────────────────────────────────────
@@ -163,6 +199,18 @@ function WindowCoverSection({
 
     const showAllTab = layers.some(l => l.id === ALL_LAYERS_ID);
     const windowIsOpen = covers.some(isActive);
+    const windowContactSensors = useMemo(() => {
+        const ids = Array.isArray(window?.sensor_ids) ? window.sensor_ids : [];
+        if (!ids.length) return [];
+        return ids.map((id) => {
+            const entity = allEntities?.find((e) => e.entity_id === id);
+            const state = String(entity?.state || entity?.stateObj?.state || '').toLowerCase();
+            const open = state === 'on' || state === 'open' || state === 'true' || state === '1';
+            const rawLabel = windowSensorFriendlyName(entity, id);
+            const side = windowSensorSideLabel(rawLabel, window?.name);
+            return { id, side, open, sortKey: windowSensorSideKey(side) };
+        }).sort((a, b) => (SENSOR_SIDE_ORDER[a.sortKey] ?? 9) - (SENSOR_SIDE_ORDER[b.sortKey] ?? 9));
+    }, [window?.sensor_ids, window?.name, allEntities]);
 
     const handleWindowToggle = async () => {
         if (toggling) return;
@@ -198,7 +246,29 @@ function WindowCoverSection({
                     <LayoutGrid size={ROOM_GROUP_ICON_GLYPH_SIZE} color="#fff" strokeWidth={1.2} />
                 </RoomGroupIconButton>
                 <Text style={styles.windowTitle}>{window.name}</Text>
+                {windowContactSensors.length > 0 ? (
+                    <View style={styles.windowSensorRow}>
+                        {windowContactSensors.map((s) => {
+                            const Icon = s.open ? DoorOpen : DoorClosed;
+                            const iconColor = s.open ? '#EF5350' : '#4CAF50';
+                            return (
+                                <View
+                                    key={s.id}
+                                    style={[styles.windowSensorChip, s.open && styles.windowSensorChipOpen]}
+                                    accessibilityLabel={`${s.side} ${s.open ? 'open' : 'closed'}`}
+                                >
+                                    <Icon size={14} color={iconColor} strokeWidth={2.2} />
+                                    <Text style={styles.windowSensorSide}>{s.side}</Text>
+                                </View>
+                            );
+                        })}
+                    </View>
+                ) : null}
             </View>
+            {covers.length === 0 ? (
+                <Text style={styles.windowEmpty}>No curtains assigned yet. Add them on Cover Mapping → Windows.</Text>
+            ) : (
+                <>
             <CoverLayerFilter
                 options={layers}
                 value={activeLayer}
@@ -234,6 +304,8 @@ function WindowCoverSection({
                     </WindowTabPanel>
                 ))}
             </View>
+                </>
+            )}
         </View>
     );
 }
@@ -242,6 +314,7 @@ function WindowCoverSection({
 export default function CoversGroupCard({
     covers = [], allEntities = [], onUpdate, onSliderDragStart, onSliderDragEnd,
     gridColumns = 2, variant = 'default', coverWindows = [], room = null, contentWidth,
+    roomEntityIds = [],
 }) {
     const isTabletSplit = variant === 'tabletSplit';
     const [expanded, setExpanded] = useState(false);
@@ -275,8 +348,8 @@ export default function CoversGroupCard({
     const [groupToggling, setGroupToggling] = useState(false);
 
     const { windowGroups, ungrouped } = useMemo(
-        () => groupCoversByWindow(individualCovers, coverWindows, room),
-        [individualCovers, coverWindows, room],
+        () => groupCoversByWindow(individualCovers, coverWindows, room, { roomEntityIds }),
+        [individualCovers, coverWindows, room, roomEntityIds],
     );
     const hasWindowGroups = windowGroups.length > 0;
 
@@ -328,12 +401,12 @@ export default function CoversGroupCard({
                     active={groupIsOpen}
                     onPress={handleMasterToggle}
                     disabled={groupToggling || !(masterCover || individualCovers.length)}
-                    accessibilityLabel="Toggle all covers"
+                    accessibilityLabel="Toggle all windows"
                 >
                     <LayoutGrid size={ROOM_GROUP_ICON_GLYPH_SIZE} color="#fff" strokeWidth={1.2} />
                 </RoomGroupIconButton>
                 <View style={styles.headerTextBlock}>
-                    <Text style={styles.headerTitle}>Covers</Text>
+                    <Text style={styles.headerTitle}>Windows</Text>
                     <Text style={[styles.headerStatus, openCount > 0 && styles.headerStatusOn]}>
                         {openCount > 0 ? `${openCount} OPEN` : 'CLOSED'}
                     </Text>
@@ -391,8 +464,10 @@ export default function CoversGroupCard({
 
                     {(() => {
                         const coversToShow = hasWindowGroups ? ungrouped : individualCovers;
-                        const ungroupedCurtains = coversToShow.filter(isCurtainType);
-                        const ungroupedOther    = coversToShow.filter(c => !isCurtainType(c));
+                        const ungroupedCurtains = hasWindowGroups
+                            ? []
+                            : coversToShow.filter(isCurtainType);
+                        const ungroupedOther = coversToShow.filter(c => !isCurtainType(c) && c.coverType);
 
                         return (
                             <>
@@ -569,14 +644,41 @@ const styles = StyleSheet.create({
     windowHeader: {
         flexDirection: 'row',
         alignItems: 'center',
+        flexWrap: 'wrap',
         marginBottom: 10,
-        gap: 12,
+        gap: 10,
     },
     windowTitle: {
         color: 'rgba(255,255,255,0.85)',
         fontSize: 15,
         fontFamily: CF.semibold,
-        flex: 1,
+        flexGrow: 1,
+        flexShrink: 1,
+        minWidth: 72,
+    },
+    windowSensorRow: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        alignItems: 'center',
+        gap: 6,
+        marginLeft: 'auto',
+    },
+    windowSensorChip: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 5,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        borderRadius: 999,
+        paddingHorizontal: 9,
+        paddingVertical: 4,
+    },
+    windowSensorChipOpen: {
+        backgroundColor: 'rgba(239,83,80,0.12)',
+    },
+    windowSensorSide: {
+        color: 'rgba(255,255,255,0.9)',
+        fontSize: 12,
+        fontFamily: CF.semibold,
     },
     windowGrid: {
         marginTop: 12,

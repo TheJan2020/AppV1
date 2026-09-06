@@ -1,13 +1,13 @@
-import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 import * as FileSystem from 'expo-file-system/legacy';
 import { Buffer } from 'buffer';
+import { createAudioPlayer, releaseAudioPlayer, setAudioModeAsync } from '../expoAudio';
 import { wrapPcm16InWav } from './pcmWav';
 
 const PLAY_SAMPLE_RATE = 24000;
 const BATCH_MS = 100;
 const MIN_BATCH_BYTES = 5760;
 
-/** expo-av playback for Expo Go — batches PCM to reduce gaps between chunks. */
+/** expo-audio playback for Expo Go — batches PCM to reduce gaps between chunks. */
 export class ExpoAvPcmPlayer {
     constructor() {
         this.prepared = false;
@@ -23,14 +23,12 @@ export class ExpoAvPcmPlayer {
     }
 
     async _setAudioMode() {
-        await Audio.setAudioModeAsync({
-            allowsRecordingIOS: true,
-            playsInSilentModeIOS: true,
-            interruptionModeIOS: InterruptionModeIOS.DoNotMix,
-            interruptionModeAndroid: InterruptionModeAndroid.DoNotMix,
-            playThroughEarpieceAndroid: this.route !== 'SPEAKER',
-            staysActiveInBackground: false,
-            shouldDuckAndroid: true,
+        await setAudioModeAsync({
+            allowsRecording: true,
+            playsInSilentMode: true,
+            interruptionMode: 'doNotMix',
+            shouldRouteThroughEarpiece: this.route !== 'SPEAKER',
+            shouldPlayInBackground: false,
         });
     }
 
@@ -99,19 +97,21 @@ export class ExpoAvPcmPlayer {
         const durationMs = Math.max(40, (Buffer.from(pcmB64, 'base64').length / 2 / PLAY_SAMPLE_RATE) * 1000 + 80);
         try {
             await FileSystem.writeAsStringAsync(uri, wavB64, { encoding: FileSystem.EncodingType.Base64 });
-            const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: true, volume: 1.0 });
+            const sound = createAudioPlayer({ uri }, { updateInterval: 100 });
+            sound.volume = 1.0;
             this.currentSound = sound;
             const advance = () => {
                 if (this.currentSound !== sound) return;
                 this._clearPlayTimeout();
-                sound.unloadAsync().catch(() => {});
+                releaseAudioPlayer(sound);
                 this.currentSound = null;
                 FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => {});
                 this._playNext();
             };
-            sound.setOnPlaybackStatusUpdate((status) => {
+            sound.addListener('playbackStatusUpdate', (status) => {
                 if (status.didJustFinish) advance();
             });
+            sound.play();
             this.playTimeout = setTimeout(advance, durationMs);
         } catch (e) {
             console.warn('[ExpoAvPcmPlayer] play', e?.message ?? e);
@@ -170,10 +170,7 @@ export class ExpoAvPcmPlayer {
         this.playing = false;
         this.turnEnded = false;
         if (this.currentSound) {
-            try {
-                await this.currentSound.stopAsync();
-                await this.currentSound.unloadAsync();
-            } catch (_) { /* ignore */ }
+            releaseAudioPlayer(this.currentSound);
             this.currentSound = null;
         }
     }

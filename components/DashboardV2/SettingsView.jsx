@@ -1,13 +1,16 @@
 import { useState, useEffect, memo } from 'react';
 import { View, Text, TouchableOpacity, Pressable, StyleSheet, ScrollView, FlatList, TextInput, Alert, ActivityIndicator, Switch } from 'react-native';
 import { Colors } from '../../constants/Colors';
-import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles, Monitor, LayoutGrid, Timer } from 'lucide-react-native';
+import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles, Monitor, LayoutGrid, Timer, Home } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { AIService } from '../../services/ai';
 import * as SecureStore from 'expo-secure-store';
 import { authFetch } from '../../utils/authFetch';
 import { unregisterPushTokenAsync } from '../../services/notifications';
 import { logoutActiveAccount } from '../../services/accounts';
+import { HAService } from '../../services/ha';
+import { beginHomeSession } from '../../utils/dashboardCache';
+import { loadHaProfiles } from '../../utils/storage';
 import MonitoredEntitiesModal from './MonitoredEntitiesModal';
 import AlertEntitiesModal from './AlertEntitiesModal';
 import MyPreferencesModal from './MyPreferencesModal';
@@ -29,6 +32,7 @@ function SettingsView({
     registryEntities = [],
     onSettingChange,
     onNetwork,
+    onEditHome,
     showFamily, // Prop from parent
     autoRoomVisit, // Prop from parent
     autoRoomResume, // Prop from parent
@@ -36,6 +40,8 @@ function SettingsView({
     showPreferenceButton, // Prop from parent
     adminUrl, // From SecureStore profile
     userName = '',
+    roleName = '',
+    settingsAllowed = true,
     onEntitiesChanged, // Called after monitored-entity changes so dashboard refreshes refs
 }) {
     const { isTablet } = useDeviceType();
@@ -43,6 +49,7 @@ function SettingsView({
     const [selectedArea, setSelectedArea] = useState(null);
     const [faceIdEnabled, setFaceIdEnabled] = useState(false);
     const [storedUserName, setStoredUserName] = useState('');
+    const [loggingOut, setLoggingOut] = useState(false);
 
     useEffect(() => {
         SecureStore.getItemAsync('face_id_enabled').then(val => {
@@ -64,6 +71,67 @@ function SettingsView({
     }, [userName]);
 
     const displayName = capitalizeWords(userName || storedUserName) || 'User';
+
+    const handleLogout = async () => {
+        if (loggingOut) return;
+        setLoggingOut(true);
+        try {
+            unregisterPushTokenAsync().catch(() => {});
+            HAService.disconnectAll();
+            try {
+                await SecureStore.deleteItemAsync('room_reorder_config');
+            } catch {
+                // ignore
+            }
+            const { nextAccount } = await logoutActiveAccount();
+            if (nextAccount) {
+                let profiles = [];
+                try {
+                    profiles = await loadHaProfiles();
+                } catch {
+                    profiles = [];
+                }
+                const profile = profiles.find((p) => p.id === nextAccount.profileId);
+                await beginHomeSession({
+                    profileId: nextAccount.profileId,
+                    haUrl: nextAccount.haUrl || profile?.haUrl,
+                    token: profile?.haToken,
+                    adminUrl: profile?.adminUrl,
+                    haUrlLive: profile?.haUrlLive,
+                    haUrlLocal: profile?.haUrlLocal,
+                    adminUrlLive: profile?.adminUrlLive || profile?.dashboardUrl,
+                    adminUrlLocal: profile?.adminUrlLocal || profile?.dashboardUrlLocal,
+                    clearCache: false,
+                });
+                router.replace({
+                    pathname: '/dashboard-v2',
+                    params: {
+                        userName: nextAccount.name || '',
+                        userId: nextAccount.userId || '',
+                        switchKey: String(Date.now()),
+                    },
+                });
+            } else {
+                router.replace('/login');
+            }
+        } catch (e) {
+            console.log('[Settings] Logout failed:', e?.message || e);
+            router.replace('/login');
+        } finally {
+            setLoggingOut(false);
+        }
+    };
+
+    const logoutButton = (
+        <TouchableOpacity
+            style={[styles.logoutBtn, loggingOut && { opacity: 0.6 }]}
+            disabled={loggingOut}
+            onPress={handleLogout}
+        >
+            <LogOut size={20} color={Colors.error} />
+            <Text style={styles.logoutText}>{loggingOut ? 'Signing out…' : 'Log Out of This Account'}</Text>
+        </TouchableOpacity>
+    );
 
     // Modals
     const [monitoredModalVisible, setMonitoredModalVisible] = useState(false);
@@ -691,6 +759,25 @@ function SettingsView({
             <View style={styles.section}>
                 <Text style={styles.sectionHeader}>Quick Actions</Text>
 
+                <TouchableOpacity
+                    style={styles.listItem}
+                    onPress={() => {
+                        if (onEditHome) onEditHome();
+                        else router.push({ pathname: '/login', params: { mode: 'editHome' } });
+                    }}
+                >
+                    <View style={styles.itemInfo}>
+                        <View style={styles.iconContainer}>
+                            <Home size={20} color={Colors.text} />
+                        </View>
+                        <View>
+                            <Text style={styles.itemName}>Home connection</Text>
+                            <Text style={styles.itemSub}>Dashboard URL and local backup IP</Text>
+                        </View>
+                    </View>
+                    <ChevronRight size={20} color={Colors.textDim} />
+                </TouchableOpacity>
+
                 <TouchableOpacity style={styles.listItem} onPress={onNetwork}>
                     <View style={styles.itemInfo}>
                         <View style={styles.iconContainer}>
@@ -774,7 +861,7 @@ function SettingsView({
                     <User size={40} color={Colors.text} />
                 </View>
                 <Text style={styles.profileName}>{displayName}</Text>
-                <Text style={styles.profileRole}>Administrator</Text>
+                <Text style={styles.profileRole}>{roleName || 'User'}</Text>
             </View>
 
             <View style={styles.section}>
@@ -816,29 +903,7 @@ function SettingsView({
                 <Text style={styles.testPushText}>Test Push Notification</Text>
             </TouchableOpacity>
 
-            <TouchableOpacity
-                style={styles.logoutBtn}
-                onPress={async () => {
-                    await unregisterPushTokenAsync();
-                    const { nextAccount } = await logoutActiveAccount();
-                    if (nextAccount) {
-                        // Still signed in as another saved account — reload dashboard as them.
-                        router.replace({
-                            pathname: '/dashboard-v2',
-                            params: {
-                                userName: nextAccount.name,
-                                userId: nextAccount.userId || '',
-                                switchKey: String(Date.now()),
-                            },
-                        });
-                    } else {
-                        router.replace('/login');
-                    }
-                }}
-            >
-                <LogOut size={20} color={Colors.error} />
-                <Text style={styles.logoutText}>Log Out of This Account</Text>
-            </TouchableOpacity>
+            {logoutButton}
         </ScrollView>
     );
 
@@ -846,9 +911,23 @@ function SettingsView({
     return (
         <View style={styles.container}>
             <View style={styles.header}>
-                <Text style={styles.title}>Settings</Text>
+                <Text style={styles.title}>{settingsAllowed ? 'Settings' : 'Account'}</Text>
             </View>
 
+            {!settingsAllowed ? (
+                <ScrollView contentContainerStyle={styles.accountContent}>
+                    <View style={styles.profileSection}>
+                        <View style={[styles.iconContainer, { width: 80, height: 80, borderRadius: 40, marginBottom: 16 }]}>
+                            <User size={40} color={Colors.text} />
+                        </View>
+                        <Text style={styles.profileName}>{displayName}</Text>
+                        <Text style={styles.profileRole}>{roleName || 'User'}</Text>
+                        <Text style={styles.restrictedHint}>Settings are restricted for this role.</Text>
+                    </View>
+                    {logoutButton}
+                </ScrollView>
+            ) : (
+                <>
             <View style={styles.tabs} collapsable={false}>
                 {[
                     { id: 'general', label: 'General' },
@@ -895,7 +974,8 @@ function SettingsView({
                 {activeTab === 'ai' && renderAIConfig()}
                 {activeTab === 'account' && renderAccount()}
             </View>
-
+                </>
+            )}
 
             <MonitoredEntitiesModal
                 visible={monitoredModalVisible}
@@ -1200,6 +1280,14 @@ const styles = StyleSheet.create({
     profileRole: {
         fontSize: 16,
         color: Colors.textDim,
+    },
+    restrictedHint: {
+        marginTop: 12,
+        fontSize: 13,
+        fontFamily: CF.medium,
+        color: 'rgba(255,255,255,0.45)',
+        textAlign: 'center',
+        paddingHorizontal: 24,
     },
     testPushBtn: {
         flexDirection: 'row',

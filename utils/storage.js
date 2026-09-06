@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
+import { endpointsFromProfile, getAdminUrlOverride } from '../services/connectionEndpoints';
 
 const SETTINGS_KEY_PROFILES = 'ha_profiles';
 const SETTINGS_KEY_ACTIVE_PROFILE = 'ha_active_profile_id';
@@ -86,6 +87,9 @@ export async function saveHaProfiles(profiles) {
  */
 export const getAdminUrl = async () => {
     try {
+        const override = getAdminUrlOverride();
+        if (override) return override;
+
         const activeProfileId = await SecureStore.getItemAsync(SETTINGS_KEY_ACTIVE_PROFILE);
         if (!activeProfileId) {
             console.log('[Storage] No active profile ID found.');
@@ -99,7 +103,8 @@ export const getAdminUrl = async () => {
             return null;
         }
 
-        const adminUrl = activeProfile.adminUrl;
+        const ep = endpointsFromProfile(activeProfile);
+        const adminUrl = ep.startAdminUrl || ep.adminLive || ep.adminLocal || activeProfile.adminUrl;
         if (adminUrl) {
             const normalizedUrl = adminUrl.replace(/^https?:\/\//i, (m) => m.toLowerCase());
             console.log('[Storage] Retrieved Admin URL from profile:', normalizedUrl);
@@ -112,6 +117,31 @@ export const getAdminUrl = async () => {
         return null;
     }
 };
+
+/** Merge live/local URL updates into the active home profile (e.g. add local later). */
+export async function mergeActiveProfileUrls(patch = {}) {
+    try {
+        const activeProfileId = await SecureStore.getItemAsync(SETTINGS_KEY_ACTIVE_PROFILE);
+        if (!activeProfileId) return;
+        const profiles = await loadHaProfiles();
+        let changed = false;
+        const next = profiles.map((profile) => {
+            if (profile.id !== activeProfileId) return profile;
+            const merged = { ...profile };
+            for (const [key, value] of Object.entries(patch)) {
+                if (value == null || value === '') continue;
+                if (merged[key] !== value) {
+                    merged[key] = value;
+                    changed = true;
+                }
+            }
+            return merged;
+        });
+        if (changed) await saveHaProfiles(next);
+    } catch (error) {
+        console.log('[Storage] mergeActiveProfileUrls skipped:', error?.message || error);
+    }
+}
 
 /**
  * Retrieves the HA token from the active profile.

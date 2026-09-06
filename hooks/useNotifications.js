@@ -14,7 +14,7 @@
 
 import { useState, useCallback, useEffect, useRef } from 'react';
 
-export default function useNotifications(adminUrl, haToken) {
+export default function useNotifications(adminUrl, haToken, { enabled = false } = {}) {
     const [notifications, setNotifications] = useState([]);
     const [unreadCount,   setUnreadCount]   = useState(0);
     const loadedRef = useRef(false);
@@ -72,13 +72,12 @@ export default function useNotifications(adminUrl, haToken) {
         });
     }, []);
 
-    // Load once on mount
+    // Load when the notification sheet opens — not on Home start.
     useEffect(() => {
+        if (!enabled) return;
         if (!adminUrl || !haToken) return;
-        if (loadedRef.current) return;
-        loadedRef.current = true;
         fetchNotifications();
-    }, [adminUrl, haToken]);
+    }, [enabled, adminUrl, haToken, fetchNotifications]);
 
     // ── Optimistic add (foreground socket events appear instantly) ────────────
     const addNotification = useCallback((title, body, category = 'default') => {

@@ -21,6 +21,7 @@ import { CF } from '../../utils/typography';
 import { getClimateTempBounds, isClimateTemperatureValid } from '../../utils/haEntityMerge';
 import { formatDisplayName } from '../../utils/formatDisplayName';
 import { applyClimatePower, isClimatePoweredOn } from '../../utils/acPowerSwitch';
+import { compareNaturalNames } from '../../utils/naturalSort';
 
 const C_PRIMARY = '#8947ca';
 const UNASSIGNED = '__unassigned__';
@@ -346,7 +347,7 @@ export default function DevicesToggleModal({
 
         return orderedIds.map((id) => {
             const data = [...(byRoom.get(id) || [])].sort((a, b) =>
-                deviceName(a).localeCompare(deviceName(b)),
+                compareNaturalNames(deviceName(a), deviceName(b)),
             );
             return {
                 areaId: id,
@@ -376,7 +377,7 @@ export default function DevicesToggleModal({
         // Stable alpha order — sorting by on/off would jump rows on toggle
         // and make the switch look like it didn't flip.
         list = [...list];
-        list.sort((a, b) => deviceName(a).localeCompare(deviceName(b)));
+        list.sort((a, b) => compareNaturalNames(deviceName(a), deviceName(b)));
         return list;
     }, [listDevices, onLights, roomFilter, entityAreaMap, isLights]);
 

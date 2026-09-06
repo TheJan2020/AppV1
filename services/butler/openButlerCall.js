@@ -41,8 +41,8 @@ export function canOpenButlerCall() {
 /** Ask for mic access before opening the call UI so Android permission dialogs don't hang up the session. */
 export async function requestButlerMicPermission() {
     try {
-        const { Audio } = require('expo-av');
-        const { status } = await Audio.requestPermissionsAsync();
+        const { requestRecordingPermissionsAsync } = require('../expoAudio');
+        const { status } = await requestRecordingPermissionsAsync();
         return status === 'granted';
     } catch (err) {
         console.warn('[Butler] mic permission:', err?.message ?? err);

@@ -1,16 +1,19 @@
 import { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Modal, FlatList, KeyboardAvoidingView, Platform, ScrollView, Keyboard, TouchableWithoutFeedback, Linking, Dimensions } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import { Colors } from '../constants/Colors';
-import { Scan, Lock, User, ChevronDown, Check, Settings, Fingerprint, X, Plus, Trash2, Edit2, Shield } from 'lucide-react-native';
+import { Scan, Lock, User, ChevronDown, Check, Settings, Fingerprint, X, Plus, Trash2, Edit2, Shield, Link2, Wifi, Home } from 'lucide-react-native';
 import { scanNetwork } from '../utils/discovery';
 import { HAService } from '../services/ha';
-import { validateCredentials } from '../services/auth';
+import { validateCredentials, fetchHaLoginUsernames, usernameForPerson, mergePersonsWithAuthUsers } from '../services/auth';
 import { registerForPushNotificationsAsync } from '../services/notifications';
 import { upsertAccountAndActivate, listAccounts, normalizeHaUrl, normalizeUsername } from '../services/accounts';
-import { preloadDashboardSnapshot, peekBootProfile } from '../utils/dashboardCache';
+import { beginHomeSession, peekBootProfile } from '../utils/dashboardCache';
+import { bootstrapHomeFromDashboard } from '../services/homeBootstrap';
+import { allowLocalUrlFallback } from '../services/connectionEndpoints';
 import { loadHaProfiles, saveHaProfiles, peekHaProfiles } from '../utils/storage';
 import ModalBackdrop from '../components/ModalBackdrop';
 
@@ -33,21 +36,69 @@ function mapPersonRecords(records) {
                 id,
                 name: p.attributes?.friendly_name || p.name || id.replace(/^person\./, ''),
                 user_id: p.attributes?.user_id || p.user_id || '',
+                username: p.username || '',
                 picture: p.attributes?.entity_picture || p.picture,
             };
         })
         .filter(Boolean);
 }
 
+function describeUsersFetchError(err, extra = {}) {
+    if (extra.missingUrl) {
+        return 'This profile has no Home Assistant URL. Edit the profile and add it.';
+    }
+    if (extra.missingToken) {
+        return 'This profile has no access token. Edit the profile and paste a long-lived token.';
+    }
+    if (extra.authFailed) {
+        return 'The access token was rejected. Edit the profile and paste a valid long-lived token.';
+    }
+    if (extra.empty) {
+        return 'Home Assistant returned no person users. Add people in Home Assistant, then retry.';
+    }
+    const msg = String(err?.message || err || '');
+    const lower = msg.toLowerCase();
+    if (err?.name === 'AbortError' || lower.includes('abort') || lower.includes('timeout')) {
+        return 'Timed out reaching Home Assistant. Check the URL and your network, then retry.';
+    }
+    if (lower.includes('network request failed') || lower.includes('failed to fetch') || lower.includes('network')) {
+        return 'Could not reach Home Assistant. Check the URL, token, and that the server is online.';
+    }
+    if (lower.includes('http 401') || lower.includes('http 403')) {
+        return 'Home Assistant refused the token. Update the long-lived access token in the profile.';
+    }
+    if (lower.includes('http 404')) {
+        return 'Home Assistant URL looks wrong (not found). Check the URL in the profile.';
+    }
+    const http = msg.match(/HTTP\s+(\d+)/i);
+    if (http) {
+        return `Home Assistant returned HTTP ${http[1]}. Check the URL and token, then retry.`;
+    }
+    if (msg) return `Could not load users: ${msg}`;
+    return 'Could not load users from Home Assistant. Check the URL and token, then retry.';
+}
+
 async function fetchJson(url, options, timeoutMs) {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
-        const res = await fetch(url, { ...options, signal: controller.signal });
+        const res = await fetch(url, {
+            ...options,
+            signal: controller.signal,
+            headers: {
+                Accept: 'application/json',
+                'User-Agent': 'HomeAssistant/2024.1 (AppV1; React Native)',
+                ...(options?.headers || {}),
+            },
+        });
         const text = await res.text();
         let data = null;
         try { data = text ? JSON.parse(text) : null; } catch { data = text; }
         return { ok: res.ok, status: res.status, data };
+    } catch (e) {
+        const err = new Error(`${e?.message || e} (${url})`);
+        err.name = e?.name || 'FetchError';
+        throw err;
     } finally {
         clearTimeout(timeout);
     }
@@ -76,6 +127,8 @@ async function fetchPersonsFromHaRest(haUrl, haToken) {
             }
             const mapped = mapPersonRecords(parsed);
             if (mapped.length > 0) return mapped;
+        } else if (tpl.status === 401 || tpl.status === 403) {
+            throw new Error(`HA template HTTP ${tpl.status}`);
         }
     } catch (e) {
         console.log('[Login] Template person fetch failed:', e?.message || e);
@@ -94,9 +147,11 @@ async function fetchPersonsFromHaRest(haUrl, haToken) {
 
 export default function Login() {
     const router = useRouter();
+    const insets = useSafeAreaInsets();
     const params = useLocalSearchParams();
     const modeParam = Array.isArray(params?.mode) ? params.mode[0] : params?.mode;
     const isAddAccount = modeParam === 'addAccount';
+    const isEditHome = modeParam === 'editHome';
     const service = useRef(null);
     const passwordInputRef = useRef(null);
     const scrollViewRef = useRef(null);
@@ -124,6 +179,7 @@ export default function Login() {
     const [selectedUser, setSelectedUser] = useState(null);
     const [showUserModal, setShowUserModal] = useState(false);
     const [loadingUsers, setLoadingUsers] = useState(false);
+    const [usersError, setUsersError] = useState('');
 
     // UI/Auth State
     const [isScanning, setIsScanning] = useState(false);
@@ -144,9 +200,15 @@ export default function Login() {
     const [pickingProfile, setPickingProfile] = useState(false);
     const pickedProfileRef = useRef(false);
     const activeProfileIdRef = useRef(null);
+    const originalProfileIdRef = useRef(null);
+    const loginSucceededRef = useRef(false);
+    const editHomeOpenedRef = useRef(false);
+    const haUrlRef = useRef('');
+    const haTokenRef = useRef('');
 
     // Profile Editing State
     const [editingProfile, setEditingProfile] = useState(null); // If null, showing list. If object, showing form.
+    const [savingProfile, setSavingProfile] = useState(false);
 
     useEffect(() => {
         checkBiometrics();
@@ -170,28 +232,33 @@ export default function Login() {
         if (activeProfileId && profiles.length > 0) {
             const profile = profiles.find(p => p.id === activeProfileId);
             if (profile) {
-                setHaUrl(profile.haUrl || '');
+                setHaUrl(normalizeHaUrl(profile.haUrl || ''));
                 setHaToken(profile.haToken || '');
-                setAdminUrl(profile.adminUrl || '');
+                setAdminUrl(normalizeHaUrl(profile.adminUrl || '') || profile.adminUrl || '');
             }
         } else if (profiles.length === 0) {
-            // No profiles, clear connection state
             setHaUrl('');
             setHaToken('');
             setAdminUrl('');
         }
     }, [activeProfileId, profiles]);
 
-    // Auto-connect when connection details change
     useEffect(() => {
+        haUrlRef.current = haUrl;
+        haTokenRef.current = haToken;
+    }, [haUrl, haToken]);
+
+    useEffect(() => {
+        if (isAddAccount && pickingProfile) return;
         if (haUrl && haToken) {
-            fetchUsersFromHa();
-        } else if (haUrl && !haToken) {
-            setUsers([{ id: 'manual', name: 'Manual Login' }]);
-            setSelectedUser({ id: 'manual', name: 'Manual Login' });
+            fetchUsersFromHa(haUrl, haToken);
+        } else {
+            setUsers([]);
+            setSelectedUser(null);
+            setUsersError('');
             setLoadingUsers(false);
         }
-    }, [haUrl, haToken, isAddAccount]);
+    }, [haUrl, haToken, isAddAccount, pickingProfile]);
 
     useEffect(() => {
         if (!isAddAccount) return;
@@ -202,13 +269,17 @@ export default function Login() {
     }, [isAddAccount, profilesReady, profiles.length]);
 
     useEffect(() => {
-        if (!showUserModal) return;
-        listAccounts()
-            .then((list) => {
-                setSavedAccounts(Array.isArray(list) ? list : []);
-            })
-            .catch(() => setSavedAccounts([]));
-    }, [showUserModal]);
+        if (!isEditHome || !profilesReady || editHomeOpenedRef.current) return;
+        const active = profiles.find((p) => p.id === activeProfileId) || profiles[0];
+        if (!active) return;
+        editHomeOpenedRef.current = true;
+        setShowSettings(true);
+        setEditingProfile({
+            ...active,
+            dashboardUrl: active.dashboardUrl || active.adminUrlLive || active.adminUrl || '',
+            dashboardUrlLocal: active.dashboardUrlLocal || active.adminUrlLocal || '',
+        });
+    }, [isEditHome, profilesReady, profiles, activeProfileId]);
 
     const checkBiometrics = async () => {
         const compatible = await LocalAuthentication.hasHardwareAsync();
@@ -237,7 +308,13 @@ export default function Login() {
 
             // Load Profiles (AsyncStorage + SecureStore + in-memory from Home)
             let loadedProfiles = await loadHaProfiles();
+            loadedProfiles = loadedProfiles.map((p) => ({
+                ...p,
+                haUrl: normalizeHaUrl(p.haUrl || ''),
+                adminUrl: p.adminUrl ? normalizeHaUrl(p.adminUrl) : (p.adminUrl || ''),
+            }));
             const savedActiveId = await SecureStore.getItemAsync(SETTINGS_KEY_ACTIVE_PROFILE);
+            originalProfileIdRef.current = savedActiveId || null;
             let recoveredFromMemory = false;
 
             if (loadedProfiles.length === 0) {
@@ -341,90 +418,138 @@ export default function Login() {
     };
 
     const handleSaveProfile = async () => {
-        if (!editingProfile.name || !editingProfile.haUrl) {
-            Alert.alert('Error', 'Name and Home Assistant URL are required');
+        const dashboardLive = String(
+            editingProfile.dashboardUrl || editingProfile.adminUrl || '',
+        ).trim();
+        const dashboardLocal = String(editingProfile.dashboardUrlLocal || '').trim();
+        if (!String(editingProfile.name || '').trim()) {
+            Alert.alert('Error', 'Profile name is required');
+            return;
+        }
+        if (!dashboardLive) {
+            Alert.alert('Error', 'Dashboard URL is required. Local URL is optional.');
             return;
         }
 
-        let newProfiles = [...profiles];
-        let createdId = null;
-        const incomingUrl = normalizeHaUrl(editingProfile.haUrl);
-        const incomingToken = String(editingProfile.haToken || '').trim();
+        setSavingProfile(true);
+        try {
+            const boot = await bootstrapHomeFromDashboard(dashboardLive, dashboardLocal);
+            const keepLocal = allowLocalUrlFallback(dashboardLive, dashboardLocal);
+            const cleanedProfile = {
+                ...editingProfile,
+                dashboardUrl: dashboardLive,
+                dashboardUrlLocal: keepLocal ? dashboardLocal : '',
+                haUrl: boot.haUrl,
+                haUrlLive: boot.haUrlLive,
+                haUrlLocal: boot.haUrlLocal,
+                adminUrl: boot.adminUrl,
+                adminUrlLive: boot.adminUrlLive || dashboardLive,
+                adminUrlLocal: boot.adminUrlLocal || (keepLocal ? dashboardLocal : ''),
+                haToken: boot.haToken,
+            };
 
-        if (editingProfile.id) {
-            const index = newProfiles.findIndex(p => p.id === editingProfile.id);
-            if (index !== -1) {
-                newProfiles[index] = { ...editingProfile };
+            let newProfiles = [...profiles];
+            let createdId = null;
+            const incomingAdmin = normalizeHaUrl(boot.adminUrl);
+            const incomingHa = normalizeHaUrl(boot.haUrl);
+
+            if (editingProfile.id) {
+                const index = newProfiles.findIndex(p => p.id === editingProfile.id);
+                if (index !== -1) {
+                    newProfiles[index] = { ...cleanedProfile };
+                }
+            } else {
+                const existingHome = newProfiles.find((p) => {
+                    const admin = normalizeHaUrl(p.adminUrl || '');
+                    const ha = normalizeHaUrl(p.haUrl || '');
+                    return (incomingAdmin && admin === incomingAdmin) || (incomingHa && ha === incomingHa);
+                });
+                if (existingHome) {
+                    Alert.alert(
+                        'Home already saved',
+                        'This dashboard is already in your profiles. Opening it so you can sign in.',
+                    );
+                    setEditingProfile(null);
+                    setShowSettings(false);
+                    activeProfileIdRef.current = existingHome.id;
+                    setActiveProfileId(existingHome.id);
+                    if (!isAddAccount) {
+                        await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, existingHome.id);
+                    }
+                    setHaUrl(existingHome.haUrl || '');
+                    setHaToken(existingHome.haToken || '');
+                    setAdminUrl(existingHome.adminUrl || '');
+                    haUrlRef.current = existingHome.haUrl || '';
+                    haTokenRef.current = existingHome.haToken || '';
+                    setUsers([]);
+                    setSelectedUser(null);
+                    setUsername('');
+                    setPassword('');
+                    pickedProfileRef.current = true;
+                    setPickingProfile(false);
+                    return;
+                }
+                const newProfile = {
+                    ...cleanedProfile,
+                    id: generateId()
+                };
+                newProfiles.push(newProfile);
+                createdId = newProfile.id;
             }
-        } else {
-            const existingHome = newProfiles.find((p) => {
-                if (normalizeHaUrl(p.haUrl) !== incomingUrl) return false;
-                const token = String(p.haToken || '').trim();
-                if (incomingToken && token) return token === incomingToken;
-                return true;
-            });
-            if (existingHome) {
-                Alert.alert(
-                    'Home already saved',
-                    'This Home Assistant is already in your profiles. Opening it so you can sign in.',
-                );
-                setEditingProfile(null);
-                setShowSettings(false);
-                activeProfileIdRef.current = existingHome.id;
-                setActiveProfileId(existingHome.id);
-                await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, existingHome.id);
-                setHaUrl(existingHome.haUrl || '');
-                setHaToken(existingHome.haToken || '');
-                setAdminUrl(existingHome.adminUrl || '');
+
+            await saveProfilesToStorage(newProfiles);
+
+            const nextProfile = createdId
+                ? newProfiles.find((p) => p.id === createdId)
+                : newProfiles.find((p) => p.id === editingProfile.id) || cleanedProfile;
+            const shouldActivate = !!createdId || nextProfile?.id === activeProfileIdRef.current || nextProfile?.id === activeProfileId;
+
+            if (shouldActivate && nextProfile?.id) {
+                activeProfileIdRef.current = nextProfile.id;
+                setActiveProfileId(nextProfile.id);
+                if (!isAddAccount) {
+                    await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, nextProfile.id);
+                }
+
+                if (!isAddAccount) {
+                    HAService.disconnectAll();
+                } else if (service.current?.disconnect) {
+                    service.current.disconnect();
+                    service.current = null;
+                }
+
                 setUsers([]);
                 setSelectedUser(null);
                 setUsername('');
                 setPassword('');
-                pickedProfileRef.current = true;
-                setPickingProfile(false);
+                setHaUrl(nextProfile.haUrl || '');
+                setHaToken(nextProfile.haToken || '');
+                setAdminUrl(nextProfile.adminUrl || '');
+                haUrlRef.current = nextProfile.haUrl || '';
+                haTokenRef.current = nextProfile.haToken || '';
+            }
+
+            setEditingProfile(null);
+            setShowSettings(false);
+            if (isEditHome) {
+                router.back();
                 return;
             }
-            const newProfile = {
-                ...editingProfile,
-                id: generateId()
-            };
-            newProfiles.push(newProfile);
-            createdId = newProfile.id;
-        }
-
-        await saveProfilesToStorage(newProfiles);
-
-        const nextProfile = createdId
-            ? newProfiles.find((p) => p.id === createdId)
-            : newProfiles.find((p) => p.id === editingProfile.id) || editingProfile;
-        const shouldActivate = !!createdId || nextProfile?.id === activeProfileIdRef.current || nextProfile?.id === activeProfileId;
-
-        if (shouldActivate && nextProfile?.id) {
-            activeProfileIdRef.current = nextProfile.id;
-            setActiveProfileId(nextProfile.id);
-            await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, nextProfile.id);
-
-            if (!isAddAccount) {
-                HAService.disconnectAll();
-            } else if (service.current?.disconnect) {
-                service.current.disconnect();
-                service.current = null;
+            if (createdId && isAddAccount) {
+                pickedProfileRef.current = true;
+                setPickingProfile(false);
             }
-
-            setUsers([]);
-            setSelectedUser(null);
-            setUsername('');
-            setPassword('');
-            setHaUrl(nextProfile.haUrl || '');
-            setHaToken(nextProfile.haToken || '');
-            setAdminUrl(nextProfile.adminUrl || '');
-        }
-
-        setEditingProfile(null);
-        setShowSettings(false);
-        if (createdId && isAddAccount) {
-            pickedProfileRef.current = true;
-            setPickingProfile(false);
+        } catch (e) {
+            const msg = String(e?.message || e || 'Could not reach the dashboard.');
+            const needsHaConfig = /no Home Assistant token|not configured/i.test(msg);
+            Alert.alert(
+                'Could not connect',
+                needsHaConfig
+                    ? `${msg}\n\nIn the admin dashboard, open Home Assistant and save the live HTTPS URL, local HTTP URL, and token.`
+                    : msg,
+            );
+        } finally {
+            setSavingProfile(false);
         }
     };
 
@@ -460,6 +585,25 @@ export default function Login() {
         );
     };
 
+    const cancelAddAccount = async () => {
+        if (!loginSucceededRef.current && originalProfileIdRef.current) {
+            try {
+                await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, originalProfileIdRef.current);
+            } catch {
+                // ignore
+            }
+        }
+        router.back();
+    };
+
+    useEffect(() => {
+        if (!isAddAccount) return undefined;
+        return () => {
+            if (loginSucceededRef.current || !originalProfileIdRef.current) return;
+            SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, originalProfileIdRef.current).catch(() => {});
+        };
+    }, [isAddAccount]);
+
     const handleSelectProfile = async (profileId) => {
         if (!isAddAccount) {
             HAService.disconnectAll();
@@ -468,14 +612,23 @@ export default function Login() {
             service.current = null;
         }
 
+        const profile = profiles.find((p) => p.id === profileId);
         setActiveProfileId(profileId);
         activeProfileIdRef.current = profileId;
-        await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, profileId);
+        if (!isAddAccount) {
+            await SecureStore.setItemAsync(SETTINGS_KEY_ACTIVE_PROFILE, profileId);
+        }
+        const nextUrl = normalizeHaUrl(profile?.haUrl || '');
+        const nextToken = (profile?.haToken || '').trim();
+        setHaUrl(nextUrl);
+        setHaToken(nextToken);
+        setAdminUrl(normalizeHaUrl(profile?.adminUrl || '') || profile?.adminUrl || '');
+        haUrlRef.current = nextUrl;
+        haTokenRef.current = nextToken;
         setUsers([]);
         setSelectedUser(null);
         setUsername('');
         setPassword('');
-        setLoadingUsers(true);
         if (isAddAccount) {
             pickedProfileRef.current = true;
             setPickingProfile(false);
@@ -501,14 +654,29 @@ export default function Login() {
         if (faceIdReady) handleSaveFaceId(next);
     };
 
-    const applyFetchedUsers = async (mappedUsers) => {
-        const list = mappedUsers.length > 0
-            ? mappedUsers
-            : [{ id: 'manual', name: 'Manual Login' }];
+    const applyFetchedUsers = async (mappedUsers, errorMessage = '') => {
+        let list = Array.isArray(mappedUsers) ? mappedUsers : [];
+        const url = haUrlRef.current || haUrl;
+        const token = haTokenRef.current || haToken;
+        if (url && token) {
+            try {
+                const authUsers = await fetchHaLoginUsernames(url, token);
+                if (authUsers.length) {
+                    list = mergePersonsWithAuthUsers(list, authUsers);
+                }
+            } catch (e) {
+                console.log('[Login] Auth user list skipped:', e?.message || e);
+            }
+        }
         setUsers(list);
+        setUsersError(list.length > 0 ? '' : (errorMessage || describeUsersFetchError(null, { empty: true })));
+        if (list.length === 0) {
+            setSelectedUser(null);
+            return;
+        }
         let accounts = [];
         try { accounts = await listAccounts(); } catch { accounts = []; }
-        const currentHome = normalizeHaUrl(haUrl);
+        const currentHome = normalizeHaUrl(haUrlRef.current || haUrl);
         const isTaken = (uname) => accounts.some((a) => {
             if (normalizeUsername(a.username) !== normalizeUsername(uname)) return false;
             const aHome = normalizeHaUrl(a.haUrl);
@@ -517,32 +685,44 @@ export default function Login() {
         });
         setSavedAccounts(accounts);
         const pick = isAddAccount
-            ? (list.find((u) => u.id !== 'manual' && !isTaken(u.id.replace(/^person\./, ''))) || list[0])
+            ? (list.find((u) => !isTaken(u.username || u.id.replace(/^person\./, ''))) || list[0])
             : list[0];
         setSelectedUser(pick);
-        if (pick?.id && pick.id !== 'manual') {
-            setUsername(pick.id.replace(/^person\./, ''));
+        if (pick) {
+            setUsername(usernameForPerson(pick) || pick.username || pick.id.replace(/^person\./, ''));
         }
     };
 
-    const fetchUsersFromHa = async () => {
-        if (!haUrl || !haToken) return;
+    const fetchUsersFromHa = async (urlOverride, tokenOverride) => {
+        const url = urlOverride || haUrlRef.current || haUrl;
+        const token = tokenOverride || haTokenRef.current || haToken;
+        if (!url || !token) {
+            setUsers([]);
+            setSelectedUser(null);
+            setUsersError(describeUsersFetchError(null, {
+                missingUrl: !url,
+                missingToken: !!url && !token,
+            }));
+            setLoadingUsers(false);
+            return;
+        }
         const fetchId = ++usersFetchIdRef.current;
+        setUsersError('');
         setLoadingUsers(true);
         const stillCurrent = () => fetchId === usersFetchIdRef.current;
+        let lastErr = null;
 
         try {
             let mapped = [];
-            let lastErr = null;
-            for (let attempt = 0; attempt < 3 && stillCurrent(); attempt++) {
+            for (let attempt = 0; attempt < 4 && stillCurrent(); attempt++) {
                 try {
-                    mapped = await fetchPersonsFromHaRest(haUrl, haToken);
+                    mapped = await fetchPersonsFromHaRest(url, token);
                     lastErr = null;
                     break;
                 } catch (e) {
                     lastErr = e;
                     console.log(`[Login] Person REST attempt ${attempt + 1} failed:`, e?.message || e);
-                    if (attempt < 2) await new Promise((r) => setTimeout(r, 700 * (attempt + 1)));
+                    if (attempt < 3) await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
                 }
             }
 
@@ -559,14 +739,21 @@ export default function Login() {
             }
         } catch (restErr) {
             if (!stillCurrent()) return;
+            lastErr = restErr;
             console.log('[Login] REST user fetch failed, trying WebSocket:', restErr?.message || restErr);
         }
 
-        if (stillCurrent()) connectAndFetchUsers(fetchId);
+        if (stillCurrent()) connectAndFetchUsers(fetchId, url, token, lastErr);
     };
 
-    const connectAndFetchUsers = (fetchId = usersFetchIdRef.current) => {
-        if (!haUrl || !haToken) {
+    const connectAndFetchUsers = (fetchId = usersFetchIdRef.current, urlOverride, tokenOverride, priorErr = null) => {
+        const url = urlOverride || haUrlRef.current || haUrl;
+        const token = tokenOverride || haTokenRef.current || haToken;
+        if (!url || !token) {
+            setUsersError(describeUsersFetchError(null, {
+                missingUrl: !url,
+                missingToken: !!url && !token,
+            }));
             setLoadingUsers(false);
             return;
         }
@@ -580,7 +767,7 @@ export default function Login() {
                 service.current = null;
             }
 
-            service.current = new HAService(haUrl, haToken);
+            service.current = new HAService(url, token);
             service.current.connect();
 
             const safetyTimer = setTimeout(() => {
@@ -588,8 +775,7 @@ export default function Login() {
                 setLoadingUsers((prev) => {
                     if (prev) {
                         console.log('[Login] WebSocket user fetch timed out');
-                        setUsers((u) => (u.length ? u : [{ id: 'manual', name: 'Manual Login' }]));
-                        setSelectedUser((s) => s || { id: 'manual', name: 'Manual Login' });
+                        applyFetchedUsers([], describeUsersFetchError(priorErr || new Error('Timed out connecting to Home Assistant')));
                     }
                     return false;
                 });
@@ -610,20 +796,19 @@ export default function Login() {
                     }).catch((e) => {
                         if (!stillCurrent()) return;
                         console.log('Error fetching states:', e);
-                        applyFetchedUsers([]);
+                        applyFetchedUsers([], describeUsersFetchError(e));
                         setLoadingUsers(false);
                     });
                 } else if (data.type === 'auth_failed' || data.type === 'auth_invalid') {
                     clearTimeout(safetyTimer);
                     if (!stillCurrent()) return;
-                    Alert.alert('Error', 'Invalid HA Token');
-                    applyFetchedUsers([]);
+                    applyFetchedUsers([], describeUsersFetchError(null, { authFailed: true }));
                     setLoadingUsers(false);
                 }
             });
         } catch (e) {
             console.log('Connection error:', e);
-            applyFetchedUsers([]);
+            applyFetchedUsers([], describeUsersFetchError(priorErr || e));
             setLoadingUsers(false);
         }
     };
@@ -662,18 +847,13 @@ export default function Login() {
     };
 
     const handleLogin = async (route = '/dashboard-v2') => {
-        if (!selectedUser) {
-            Alert.alert('Error', 'Please select a user');
+        if (!username) {
+            Alert.alert('Error', 'Please enter a username');
             return;
         }
 
         if (password.length === 0) {
             Alert.alert('Error', 'Please enter password');
-            return;
-        }
-
-        if (!username) {
-            Alert.alert('Error', 'Please enter a username');
             return;
         }
 
@@ -692,7 +872,8 @@ export default function Login() {
                 .replace(/\/$/, '');
 
             console.log('Trying auth with username:', username, 'URL:', normalizedUrl);
-            const isValid = await validateCredentials(normalizedUrl, username, password);
+            const authResult = await validateCredentials(normalizedUrl, username, password);
+            const isValid = authResult === true || authResult?.ok === true;
 
             if (isValid) {
                 const resolvedId = activeProfileIdRef.current || activeProfileId;
@@ -705,8 +886,8 @@ export default function Login() {
                     const result = await upsertAccountAndActivate({
                         username,
                         password,
-                        name: selectedUser.name,
-                        userId: selectedUser.user_id || selectedUser.userId || '',
+                        name: selectedUser?.name || username,
+                        userId: selectedUser?.user_id || selectedUser?.userId || '',
                         profileId: profileIdToSave,
                         profileName,
                         haUrl: normalizedUrl,
@@ -734,10 +915,23 @@ export default function Login() {
                 // null and the token was never sent to the backend.
                 registerForPushNotificationsAsync().catch(() => {});
 
-                await preloadDashboardSnapshot(profileIdToSave);
+                HAService.disconnectAll();
+                await beginHomeSession({
+                    profileId: profileIdToSave,
+                    haUrl: normalizedUrl,
+                    token: resolvedProfile?.haToken,
+                    adminUrl: resolvedProfile?.adminUrl,
+                    haUrlLive: resolvedProfile?.haUrlLive,
+                    haUrlLocal: resolvedProfile?.haUrlLocal,
+                    adminUrlLive: resolvedProfile?.adminUrlLive || resolvedProfile?.dashboardUrl,
+                    adminUrlLocal: resolvedProfile?.adminUrlLocal || resolvedProfile?.dashboardUrlLocal,
+                    clearCache: true,
+                });
 
+                loginSucceededRef.current = true;
                 if (isAddAccount) {
-                    // Keep the existing dashboard underneath so both accounts stay signed in.
+                    // Reveal the dashboard underneath so both accounts stay signed in.
+                    // The dashboard reloads rooms/cameras for the newly activated home.
                     router.back();
                 } else {
                     router.replace({
@@ -750,7 +944,17 @@ export default function Login() {
                     });
                 }
             } else {
-                Alert.alert('Login Failed', 'Invalid username or password.');
+                const reason = authResult?.reason;
+                if (reason === 'invalid_auth') {
+                    Alert.alert(
+                        'Login Failed',
+                        'Home Assistant rejected this username and password. A 200 response only means the server answered — it is not a successful sign-in.\n\nUse the Home Assistant login name (Settings → People), not only the person display name.',
+                    );
+                } else if (reason === 'network') {
+                    Alert.alert('Error', 'Could not connect to Home Assistant to verify credentials.');
+                } else {
+                    Alert.alert('Login Failed', 'Invalid username or password.');
+                }
             }
 
         } catch (error) {
@@ -807,7 +1011,7 @@ export default function Login() {
                 .replace(/^ws:\/\//i, 'http://')
                 .replace(/\/$/, '');
 
-            if (!(await validateCredentials(normalizedUrl, savedUser, savedPass))) {
+            if (!((await validateCredentials(normalizedUrl, savedUser, savedPass))?.ok)) {
                 Alert.alert('Error', 'Saved credentials are no longer valid. Please log in with your password again.');
                 setIsLoggingIn(false);
                 return;
@@ -834,7 +1038,19 @@ export default function Login() {
 
             registerForPushNotificationsAsync().catch(() => {});
 
-            await preloadDashboardSnapshot(activeProfileId);
+            HAService.disconnectAll();
+            const bioProfile = profiles.find((p) => p.id === activeProfileId);
+            await beginHomeSession({
+                profileId: activeProfileId,
+                haUrl: normalizedUrl,
+                token: bioProfile?.haToken,
+                adminUrl: bioProfile?.adminUrl,
+                haUrlLive: bioProfile?.haUrlLive,
+                haUrlLocal: bioProfile?.haUrlLocal,
+                adminUrlLive: bioProfile?.adminUrlLive || bioProfile?.dashboardUrl,
+                adminUrlLocal: bioProfile?.adminUrlLocal || bioProfile?.dashboardUrlLocal,
+                clearCache: true,
+            });
 
             router.replace({
                 pathname: '/dashboard-v2',
@@ -857,7 +1073,7 @@ export default function Login() {
                 <Text style={styles.sectionTitle}>Profiles</Text>
                 <TouchableOpacity
                     style={styles.addProfileBtn}
-                    onPress={() => setEditingProfile({ name: '', haUrl: '', adminUrl: '', haToken: '' })}
+                    onPress={() => setEditingProfile({ name: '', dashboardUrl: '', dashboardUrlLocal: '', haUrl: '', adminUrl: '', haToken: '' })}
                 >
                     <Plus size={20} color="#fff" />
                     <Text style={styles.addProfileText}>Add Profile</Text>
@@ -888,13 +1104,17 @@ export default function Login() {
                                     </View>
                                 )}
                             </View>
-                            <Text style={styles.profileUrl} numberOfLines={1}>{item.haUrl}</Text>
+                            <Text style={styles.profileUrl} numberOfLines={1}>{item.adminUrl || item.dashboardUrl || item.haUrl}</Text>
                         </View>
 
                         <View style={styles.profileActions}>
                             <TouchableOpacity
                                 style={styles.actionBtn}
-                                onPress={() => setEditingProfile({ ...item })}
+                                onPress={() => setEditingProfile({
+                                    ...item,
+                                    dashboardUrl: item.dashboardUrl || item.adminUrlLive || item.adminUrl || '',
+                                    dashboardUrlLocal: item.dashboardUrlLocal || item.adminUrlLocal || '',
+                                })}
                             >
                                 <Edit2 size={18} color={Colors.textDim} />
                             </TouchableOpacity>
@@ -962,7 +1182,8 @@ export default function Login() {
         }, Platform.OS === 'ios' ? 280 : 120);
     };
 
-    const renderProfileForm = (inline = false) => {
+    const renderProfileForm = (inline = false, options = {}) => {
+        const hideBack = !!options.hideBack;
         const FormWrap = inline ? View : ScrollView;
         const wrapProps = inline
             ? { style: { width: '100%' } }
@@ -980,94 +1201,94 @@ export default function Login() {
             };
         return (
         <FormWrap {...wrapProps}>
-            <TouchableOpacity
-                style={styles.backButton}
-                onPress={() => {
-                    Keyboard.dismiss();
-                    setEditingProfile(null);
-                }}
-            >
-                <ChevronDown size={24} color={Colors.text} style={{ transform: [{ rotate: '90deg' }] }} />
-                <Text style={styles.backButtonText}>Back to Profiles</Text>
-            </TouchableOpacity>
+            {!hideBack ? (
+                <TouchableOpacity
+                    style={styles.backButton}
+                    onPress={() => {
+                        Keyboard.dismiss();
+                        setEditingProfile(null);
+                    }}
+                >
+                    <ChevronDown size={24} color={Colors.text} style={{ transform: [{ rotate: '90deg' }] }} />
+                    <Text style={styles.backButtonText}>Back to Profiles</Text>
+                </TouchableOpacity>
+            ) : null}
 
-            <View style={styles.formGroup}>
-                <Text style={styles.label}>Profile Name</Text>
-                <TextInput
-                    style={styles.settingsInput}
-                    value={editingProfile.name}
-                    onChangeText={text => setEditingProfile({ ...editingProfile, name: text })}
-                    placeholder="e.g. Home, Office, Cabin"
-                    placeholderTextColor={Colors.textDim}
-                    returnKeyType="next"
-                    onFocus={() => scrollFormFieldIntoView(0)}
-                />
-            </View>
+            <View style={inline ? styles.profileCreateCard : null}>
+                <View style={styles.formGroup}>
+                    <Text style={styles.label}>Profile name</Text>
+                    <View style={styles.fieldRow}>
+                        <Home size={18} color={Colors.textDim} style={styles.fieldIcon} />
+                        <TextInput
+                            style={styles.settingsInput}
+                            value={editingProfile.name}
+                            onChangeText={text => setEditingProfile({ ...editingProfile, name: text })}
+                            placeholder="e.g. Home, Office, Cabin"
+                            placeholderTextColor={Colors.textDim}
+                            returnKeyType="next"
+                            onFocus={() => scrollFormFieldIntoView(0)}
+                        />
+                    </View>
+                </View>
 
-            <View style={styles.formGroup}>
-                <Text style={styles.label}>Home Assistant URL</Text>
-                <View style={{ flexDirection: 'row', gap: 10 }}>
-                    <TextInput
-                        style={[styles.settingsInput, { flex: 1 }]}
-                        value={editingProfile.haUrl}
-                        onChangeText={text => setEditingProfile({ ...editingProfile, haUrl: text })}
-                        placeholder="https://homeassistant.local:8123"
-                        placeholderTextColor={Colors.textDim}
-                        autoCapitalize="none"
-                        returnKeyType="next"
-                        onFocus={() => scrollFormFieldIntoView(80)}
-                    />
-                    <TouchableOpacity
-                        style={styles.scanBtn}
-                        onPress={async () => {
-                            let found = false;
-                            await scanNetwork((url) => {
-                                if (!found) {
-                                    found = true;
-                                    setEditingProfile(prev => ({ ...prev, haUrl: url }));
-                                    Alert.alert('Found', `Discovered: ${url}`);
-                                }
-                            });
-                        }}
-                    >
-                        <Scan size={20} color={Colors.text} />
-                    </TouchableOpacity>
+                <View style={styles.formGroup}>
+                    <Text style={styles.label}>Dashboard URL</Text>
+                    <View style={styles.fieldRow}>
+                        <Link2 size={18} color={Colors.textDim} style={styles.fieldIcon} />
+                        <TextInput
+                            style={styles.settingsInput}
+                            value={editingProfile.dashboardUrl ?? editingProfile.adminUrl ?? ''}
+                            onChangeText={text => setEditingProfile({ ...editingProfile, dashboardUrl: text })}
+                            placeholder="https://app-backend.example.com"
+                            placeholderTextColor={Colors.textDim}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            keyboardType="url"
+                            returnKeyType="next"
+                            onFocus={() => scrollFormFieldIntoView(80)}
+                        />
+                    </View>
+                    <Text style={styles.fieldHint}>
+                        Cloudflare HTTPS URL of this admin backend. Required.
+                    </Text>
+                </View>
+
+                <View style={[styles.formGroup, { marginBottom: inline ? 0 : 15 }]}>
+                    <Text style={styles.label}>Local URL (optional)</Text>
+                    <View style={styles.fieldRow}>
+                        <Wifi size={18} color={Colors.textDim} style={styles.fieldIcon} />
+                        <TextInput
+                            style={styles.settingsInput}
+                            value={editingProfile.dashboardUrlLocal ?? ''}
+                            onChangeText={text => setEditingProfile({ ...editingProfile, dashboardUrlLocal: text })}
+                            placeholder="http://192.168.1.10:3000"
+                            placeholderTextColor={Colors.textDim}
+                            autoCapitalize="none"
+                            autoCorrect={false}
+                            keyboardType="url"
+                            returnKeyType="done"
+                            onFocus={() => scrollFormFieldIntoView(160)}
+                        />
+                    </View>
+                    <Text style={styles.fieldHint}>
+                        Optional. Add a Wi-Fi HTTP address (same as Dashboard URL, but local IP) if you do not have it yet — you can edit this later. Used when HTTPS is down.
+                    </Text>
                 </View>
             </View>
 
-            <View style={styles.formGroup}>
-                <Text style={styles.label}>Admin Backend URL</Text>
-                <TextInput
-                    style={styles.settingsInput}
-                    value={editingProfile.adminUrl}
-                    onChangeText={text => setEditingProfile({ ...editingProfile, adminUrl: text })}
-                    placeholder="Optional admin backend URL"
-                    placeholderTextColor={Colors.textDim}
-                    autoCapitalize="none"
-                    returnKeyType="next"
-                    onFocus={() => scrollFormFieldIntoView(160)}
-                />
-            </View>
-
-            <View style={styles.formGroup} collapsable={false}>
-                <Text style={styles.label}>Long-Lived Access Token</Text>
-                <TextInput
-                    ref={tokenFieldRef}
-                    style={[styles.settingsInput, { height: 100, textAlignVertical: 'top', paddingTop: 10 }]}
-                    value={editingProfile.haToken}
-                    onChangeText={text => setEditingProfile({ ...editingProfile, haToken: text })}
-                    placeholder="Paste your token here..."
-                    placeholderTextColor={Colors.textDim}
-                    multiline
-                    onFocus={() => scrollFormFieldIntoView(240)}
-                />
-            </View>
-
             <TouchableOpacity
-                style={[styles.saveButton, { marginTop: 16, marginBottom: 8 }]}
+                style={[
+                    inline ? styles.button : styles.saveButton,
+                    { marginTop: inline ? 22 : 16, marginBottom: 8, opacity: savingProfile ? 0.7 : 1 },
+                ]}
                 onPress={handleSaveProfile}
+                disabled={savingProfile}
             >
-                <Text style={styles.saveButtonText}>Save Profile</Text>
+                {savingProfile ? (
+                    <ActivityIndicator color="#fff" />
+                ) : (
+                    <Text style={inline ? styles.buttonText : styles.saveButtonText}>Save profile</Text>
+                )}
             </TouchableOpacity>
         </FormWrap>
         );
@@ -1082,7 +1303,13 @@ export default function Login() {
                 onPress={Keyboard.dismiss}
                 disabled={!!(isAddAccount && editingProfile)}
             >
-                <View style={styles.container}>
+                <View style={[
+                    styles.container,
+                    {
+                        paddingTop: Math.max(insets.top, 12) + 12,
+                        paddingBottom: Math.max(insets.bottom, 16),
+                    },
+                ]}>
                     <ScrollView
                         ref={scrollViewRef}
                         style={{ flex: 1 }}
@@ -1094,16 +1321,24 @@ export default function Login() {
                             {!profilesReady ? (
                                 <ActivityIndicator color={Colors.primary} size="large" />
                             ) : isAddAccount && editingProfile ? (
-                                <View style={{ width: '100%', minHeight: 420 }}>
-                                    <View style={styles.welcomeBlock}>
-                                        <Text style={styles.welcomeText}>
-                                            {editingProfile.id ? 'Edit Profile' : 'Create Profile'}
-                                        </Text>
-                                        <Text style={styles.welcomeSubText}>
-                                            Save this home, then sign in as a user
-                                        </Text>
-                                    </View>
-                                    {renderProfileForm(true)}
+                                <View style={styles.profileCreateScreen}>
+                                    <TouchableOpacity
+                                        style={styles.profileCreateBack}
+                                        onPress={() => {
+                                            Keyboard.dismiss();
+                                            setEditingProfile(null);
+                                        }}
+                                    >
+                                        <ChevronDown size={20} color={Colors.text} style={{ transform: [{ rotate: '90deg' }] }} />
+                                        <Text style={styles.profileCreateBackText}>Back</Text>
+                                    </TouchableOpacity>
+                                    <Text style={styles.profileCreateTitle}>
+                                        {editingProfile.id ? 'Edit profile' : 'Create profile'}
+                                    </Text>
+                                    <Text style={styles.profileCreateSub}>
+                                        Save this home, then sign in as a user.
+                                    </Text>
+                                    {renderProfileForm(true, { hideBack: true })}
                                 </View>
                             ) : isAddAccount && pickingProfile && profiles.length > 0 ? (
                                 <View style={{ width: '100%' }}>
@@ -1114,7 +1349,7 @@ export default function Login() {
                                         </Text>
                                         <TouchableOpacity
                                             style={{ marginTop: 12 }}
-                                            onPress={() => router.back()}
+                                            onPress={cancelAddAccount}
                                         >
                                             <Text style={{ color: Colors.primary, fontWeight: '600' }}>Cancel</Text>
                                         </TouchableOpacity>
@@ -1138,7 +1373,7 @@ export default function Login() {
                                                     )}
                                                 </View>
                                                 <Text style={styles.profileUrl} numberOfLines={1}>
-                                                    {item.haUrl}
+                                                    {item.adminUrl || item.dashboardUrl || item.haUrl}
                                                 </Text>
                                             </View>
                                             <ChevronDown
@@ -1151,7 +1386,7 @@ export default function Login() {
                                     <TouchableOpacity
                                         style={[styles.createProfileBtn, { marginTop: 8, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, alignSelf: 'stretch' }]}
                                         onPress={() => {
-                                            setEditingProfile({ name: '', haUrl: '', adminUrl: '', haToken: '' });
+                                            setEditingProfile({ name: '', dashboardUrl: '', dashboardUrlLocal: '', haUrl: '', adminUrl: '', haToken: '' });
                                         }}
                                     >
                                         <Plus size={18} color="#fff" />
@@ -1166,7 +1401,7 @@ export default function Login() {
                                     <TouchableOpacity
                                         style={styles.createProfileBtn}
                                         onPress={() => {
-                                            setEditingProfile({ name: 'My Home', haUrl: '', adminUrl: '', haToken: '' });
+                                            setEditingProfile({ name: 'My Home', dashboardUrl: '', dashboardUrlLocal: '', haUrl: '', adminUrl: '', haToken: '' });
                                             if (!isAddAccount) setShowSettings(true);
                                         }}
                                     >
@@ -1193,7 +1428,7 @@ export default function Login() {
                                         {isAddAccount ? (
                                             <TouchableOpacity
                                                 style={{ marginTop: 12 }}
-                                                onPress={() => router.back()}
+                                                onPress={cancelAddAccount}
                                             >
                                                 <Text style={{ color: Colors.primary, fontWeight: '600' }}>Cancel</Text>
                                             </TouchableOpacity>
@@ -1220,23 +1455,27 @@ export default function Login() {
                                         </TouchableOpacity>
                                     </View>
 
-                                    {/* User Dropdown */}
                                     <TouchableOpacity
                                         style={styles.inputContainer}
-                                        onPress={() => {
-                                            setShowUserModal(true);
-                                            if (haUrl && haToken && !loadingUsers && (users.length === 0 || (users.length === 1 && users[0].id === 'manual'))) {
-                                                fetchUsersFromHa();
-                                            }
-                                        }}
+                                        onPress={() => setShowUserModal(true)}
                                     >
                                         <User size={20} color={Colors.textDim} style={styles.inputIcon} />
                                         <View style={{ flex: 1 }}>
-                                            <Text style={[styles.input, { lineHeight: 60, color: selectedUser ? Colors.text : Colors.textDim }]}>
-                                                {selectedUser ? selectedUser.name : (loadingUsers ? "Loading users..." : "Select User")}
+                                            <Text
+                                                style={[
+                                                    styles.input,
+                                                    { lineHeight: 60, color: selectedUser ? Colors.text : Colors.textDim },
+                                                ]}
+                                                numberOfLines={1}
+                                            >
+                                                {loadingUsers && !selectedUser
+                                                    ? 'Loading users…'
+                                                    : selectedUser
+                                                        ? selectedUser.name
+                                                        : (users.length ? 'Select User' : (usersError ? 'Could not load users' : 'Select User'))}
                                             </Text>
                                         </View>
-                                        {loadingUsers ? (
+                                        {loadingUsers && !selectedUser ? (
                                             <ActivityIndicator size="small" color={Colors.primary} />
                                         ) : (
                                             <ChevronDown size={20} color={Colors.textDim} />
@@ -1317,7 +1556,6 @@ export default function Login() {
                 </View>
             </TouchableWithoutFeedback>
 
-                        {/* User Selection Modal */}
                         <Modal
                             visible={showUserModal}
                             transparent={true}
@@ -1328,37 +1566,16 @@ export default function Login() {
                                 <ModalBackdrop onPress={() => setShowUserModal(false)} />
                                 <View style={styles.modalContent}>
                                     <Text style={styles.modalTitle}>Select User</Text>
-                                    {isAddAccount ? (
-                                        <Text style={styles.userModalHint}>
-                                            Existing Home Assistant users are listed below. Already added accounts are marked.
-                                        </Text>
-                                    ) : null}
                                     <FlatList
                                         data={users}
-                                        keyExtractor={item => item.id}
-                                        renderItem={({ item }) => {
-                                            const uname = normalizeUsername(item.id);
-                                            const alreadyAdded = savedAccounts.some((a) => {
-                                                if (normalizeUsername(a.username) !== uname) return false;
-                                                const aHome = normalizeHaUrl(a.haUrl);
-                                                const currentHome = normalizeHaUrl(haUrl);
-                                                if (aHome && currentHome) return aHome === currentHome;
-                                                return !!(a.profileId && a.profileId === (activeProfileIdRef.current || activeProfileId));
-                                            });
-                                            return (
+                                        keyExtractor={(item) => item.id}
+                                        renderItem={({ item }) => (
                                             <TouchableOpacity
                                                 style={styles.userItem}
                                                 onPress={() => {
-                                                    if (alreadyAdded && isAddAccount) {
-                                                        Alert.alert(
-                                                            'Already added',
-                                                            'This user is already signed in for this home. Switch accounts from the home screen.',
-                                                        );
-                                                        return;
-                                                    }
                                                     setSelectedUser(item);
                                                     if (item.id !== 'manual') {
-                                                        setUsername(item.id.replace(/^person\./, ''));
+                                                        setUsername(item.username || usernameForPerson(item) || item.id.replace(/^person\./, ''));
                                                     }
                                                     setShowUserModal(false);
                                                 }}
@@ -1371,45 +1588,26 @@ export default function Login() {
                                                         <Text style={[styles.userItemText, selectedUser?.id === item.id && { color: '#8947ca', fontWeight: 'bold' }]}>
                                                             {item.name}
                                                         </Text>
-                                                        {alreadyAdded ? (
-                                                            <Text style={styles.alreadyAddedText}>Already added</Text>
+                                                        {item.username && item.username !== item.name ? (
+                                                            <Text style={styles.alreadyAddedText}>Login: {item.username}</Text>
                                                         ) : null}
                                                     </View>
                                                 </View>
                                                 {selectedUser?.id === item.id && <Check size={20} color="#8947ca" />}
                                             </TouchableOpacity>
-                                            );
-                                        }}
+                                        )}
                                         ListEmptyComponent={
                                             <View style={{ paddingVertical: 24, alignItems: 'center' }}>
-                                                <Text style={styles.emptyStateText}>
-                                                    {loadingUsers ? 'Loading users…' : 'No users loaded'}
-                                                </Text>
-                                                {!loadingUsers ? (
-                                                    <TouchableOpacity
-                                                        style={[styles.createProfileBtn, { marginTop: 14 }]}
-                                                        onPress={() => {
-                                                            setShowUserModal(false);
-                                                            fetchUsersFromHa();
-                                                        }}
-                                                    >
-                                                        <Text style={styles.createProfileBtnText}>Retry</Text>
-                                                    </TouchableOpacity>
+                                                {loadingUsers ? (
+                                                    <ActivityIndicator color={Colors.primary} />
                                                 ) : (
-                                                    <ActivityIndicator color={Colors.primary} style={{ marginTop: 12 }} />
+                                                    <Text style={styles.emptyStateText}>
+                                                        {usersError || 'No users loaded yet'}
+                                                    </Text>
                                                 )}
                                             </View>
                                         }
                                     />
-                                    <TouchableOpacity
-                                        style={styles.retryUsersBtn}
-                                        onPress={fetchUsersFromHa}
-                                        disabled={loadingUsers}
-                                    >
-                                        {loadingUsers
-                                            ? <ActivityIndicator color={Colors.primary} size="small" />
-                                            : <Text style={styles.retryUsersText}>Refresh users</Text>}
-                                    </TouchableOpacity>
                                     <TouchableOpacity style={styles.closeButton} onPress={() => setShowUserModal(false)}>
                                         <Text style={styles.closeButtonText}>Cancel</Text>
                                     </TouchableOpacity>
@@ -1422,12 +1620,16 @@ export default function Login() {
                             visible={showSettings}
                             transparent={true}
                             animationType="slide"
-                            onRequestClose={() => setShowSettings(false)}
+                            onRequestClose={() => {
+                                setShowSettings(false);
+                                if (isEditHome) router.back();
+                            }}
                         >
                             <View style={styles.modalOverlay}>
                                 <ModalBackdrop onPress={() => {
                                     Keyboard.dismiss();
                                     setShowSettings(false);
+                                    if (isEditHome) router.back();
                                 }} />
                                 <View
                                     style={[
@@ -1474,6 +1676,7 @@ export default function Login() {
                                             Keyboard.dismiss();
                                             setEditingProfile(null);
                                             setShowSettings(false);
+                                            if (isEditHome) router.back();
                                         }}>
                                             <X size={24} color={Colors.textDim} />
                                         </TouchableOpacity>
@@ -1493,7 +1696,7 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: Colors.background,
-        padding: 20,
+        paddingHorizontal: 22,
         justifyContent: 'center',
     },
     welcomeBlock: {
@@ -1650,6 +1853,13 @@ const styles = StyleSheet.create({
         fontWeight: '600',
         fontSize: 14,
     },
+    usersErrorHint: {
+        color: '#ef9a9a',
+        fontSize: 13,
+        lineHeight: 18,
+        marginTop: -8,
+        paddingHorizontal: 8,
+    },
     // FaceID
     bioButton: {
         flexDirection: 'row',
@@ -1759,7 +1969,10 @@ const styles = StyleSheet.create({
     },
     emptyStateText: {
         color: Colors.textDim,
-        fontSize: 14
+        fontSize: 14,
+        textAlign: 'center',
+        paddingHorizontal: 12,
+        lineHeight: 20,
     },
     // Form Styles
     formGroup: {
@@ -1772,15 +1985,73 @@ const styles = StyleSheet.create({
         fontWeight: '600'
     },
     settingsInput: {
-        backgroundColor: '#13132A',
-        borderRadius: 30,
-        paddingHorizontal: 18,
-        paddingVertical: 14,
+        flex: 1,
+        backgroundColor: 'transparent',
+        borderRadius: 0,
+        paddingHorizontal: 0,
+        paddingVertical: 0,
         color: '#fff',
         fontSize: 16,
+        borderWidth: 0,
+        minHeight: 52,
+    },
+    fieldRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: '#13132A',
+        borderRadius: 22,
+        paddingHorizontal: 16,
+        minHeight: 56,
         borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.07)',
-        minHeight: 54,
+        borderColor: 'rgba(255,255,255,0.10)',
+    },
+    fieldIcon: {
+        marginRight: 12,
+    },
+    fieldHint: {
+        color: 'rgba(255,255,255,0.45)',
+        fontSize: 13,
+        marginTop: 10,
+        lineHeight: 18,
+    },
+    profileCreateScreen: {
+        width: '100%',
+        paddingBottom: 24,
+    },
+    profileCreateBack: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        alignSelf: 'flex-start',
+        marginBottom: 18,
+        paddingVertical: 4,
+        marginLeft: -4,
+    },
+    profileCreateBackText: {
+        color: Colors.text,
+        marginLeft: 6,
+        fontSize: 16,
+        fontWeight: '600',
+    },
+    profileCreateTitle: {
+        color: '#fff',
+        fontSize: 28,
+        fontWeight: '700',
+        letterSpacing: -0.4,
+        marginBottom: 6,
+    },
+    profileCreateSub: {
+        color: 'rgba(255,255,255,0.55)',
+        fontSize: 15,
+        lineHeight: 21,
+        marginBottom: 22,
+    },
+    profileCreateCard: {
+        width: '100%',
+        backgroundColor: 'rgba(255,255,255,0.04)',
+        borderRadius: 24,
+        padding: 18,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
     },
     scanBtn: {
         width: 54,

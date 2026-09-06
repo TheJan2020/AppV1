@@ -79,8 +79,14 @@ function resolveDirectButlerUrl(url) {
 
 export async function getButlerBackendUrl() {
     const profile = await getActiveProfileConfig();
-    if (profile?.adminUrl) {
-        const proxied = butlerApiBaseFromAdminUrl(profile.adminUrl);
+    const liveAdmin = profile?.adminUrlLive || profile?.adminUrl;
+    const localAdmin = profile?.adminUrlLocal || profile?.dashboardUrlLocal;
+    if (liveAdmin) {
+        const proxied = butlerApiBaseFromAdminUrl(liveAdmin);
+        if (proxied) return proxied;
+    }
+    if (localAdmin) {
+        const proxied = butlerApiBaseFromAdminUrl(localAdmin);
         if (proxied) return proxied;
     }
 
@@ -137,7 +143,21 @@ function formatProxied502Error(base) {
 }
 
 export async function checkButlerBackendHealth() {
-    const base = await getButlerBackendUrl();
+    const profile = await getActiveProfileConfig();
+    const live = butlerApiBaseFromAdminUrl(profile?.adminUrlLive || profile?.adminUrl);
+    const local = butlerApiBaseFromAdminUrl(profile?.adminUrlLocal || profile?.dashboardUrlLocal);
+    const fallback = await getButlerBackendUrl();
+    const bases = [...new Set([live, local, fallback].filter(Boolean))];
+
+    let last = { ok: false, base: fallback, error: 'Butler backend URL is not configured', proxied: false };
+    for (const base of bases) {
+        last = await probeButlerHealth(base);
+        if (last.ok) return last;
+    }
+    return last;
+}
+
+async function probeButlerHealth(base) {
     const proxied = isProxiedButlerBase(base);
     try {
         const res = await fetch(`${base}/healthz`, { method: 'GET' });

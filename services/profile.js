@@ -17,7 +17,13 @@ export const getActiveProfileConfig = async () => {
                 return {
                     ...activeProfile,
                     haUrl: cleanUrl,
-                    adminUrl: cleanAdminUrl
+                    adminUrl: cleanAdminUrl,
+                    haUrlLive: activeProfile.haUrlLive || '',
+                    haUrlLocal: activeProfile.haUrlLocal || '',
+                    adminUrlLive: activeProfile.adminUrlLive || activeProfile.dashboardUrl || '',
+                    adminUrlLocal: activeProfile.adminUrlLocal || activeProfile.dashboardUrlLocal || '',
+                    dashboardUrl: activeProfile.dashboardUrl || '',
+                    dashboardUrlLocal: activeProfile.dashboardUrlLocal || '',
                 };
             }
         }

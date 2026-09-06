@@ -6,14 +6,9 @@
     "orientation": "default",
     "icon": "./assets/app-icon.png",
     "userInterfaceStyle": "light",
-    "newArchEnabled": true,
-    "splash": {
-      "backgroundColor": "#09091A",
-      "resizeMode": "contain"
-    },
     "ios": {
       "bundleIdentifier": "ai.primewave.app",
-      "buildNumber": "81",
+      "buildNumber": "84",
       "supportsTablet": true,
       "entitlements": {
         "aps-environment": "production"
@@ -27,7 +22,9 @@
         },
         "ITSAppUsesNonExemptEncryption": false,
         "NSFaceIDUsageDescription": "Primewave uses Face ID so you can unlock the app securely without typing your password.",
-        "UIBackgroundModes": ["remote-notification"]
+        "UIBackgroundModes": [
+          "remote-notification"
+        ]
       }
     },
     "android": {
@@ -35,7 +32,6 @@
         "foregroundImage": "./assets/app-icon.png",
         "backgroundColor": "#4B2FA8"
       },
-      "edgeToEdgeEnabled": true,
       "softwareKeyboardLayoutMode": "pan",
       "versionCode": 1,
       "permissions": [
@@ -51,8 +47,17 @@
     },
     "scheme": "ha-app",
     "plugins": [
+      "./plugins/withExpoModulesCoreConcurrencyFix.js",
       "expo-router",
       "expo-dev-client",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#09091A",
+          "image": "./assets/app-icon.png",
+          "resizeMode": "contain"
+        }
+      ],
       [
         "expo-build-properties",
         {
@@ -62,7 +67,7 @@
         }
       ],
       [
-        "expo-av",
+        "expo-audio",
         {
           "microphonePermission": "Primewave needs the microphone to talk with Butler, your voice assistant."
         }
@@ -82,7 +87,8 @@
           "faceIDPermission": "Allow $(PRODUCT_NAME) to use Face ID."
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      "expo-asset"
     ],
     "extra": {
       "router": {},

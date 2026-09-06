@@ -4,7 +4,7 @@
  * Paginated Frigate detection events (Cameras → Events tab).
  */
 
-import { useState, useEffect, useCallback, useRef, memo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import {
     View, Text, StyleSheet, FlatList, Image, TouchableOpacity,
     ActivityIndicator, RefreshControl, ScrollView,
@@ -13,6 +13,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { User, Car, Dog, AlertTriangle, Clock } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
 import { formatCameraName } from '../../utils/formatDisplayName';
+import { cameraKey, cameraKeysMatch } from '../../services/appRole';
 import { dedupeEventsById, paginationBeforeCursor } from '../../utils/frigateEvents';
 import FrigateEventImageModal from './FrigateEventImageModal';
 
@@ -160,6 +161,18 @@ export default function FrigateEventsFeed({ adminUrl, authHeaders = {}, frigateC
 
     const base = adminUrl ? (adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`) : '';
 
+    const allowedCameraNames = useMemo(() => (
+        (Array.isArray(frigateCameras) ? frigateCameras : [])
+            .map((c) => c?.name || c?.id || c?.entity_id)
+            .filter(Boolean)
+    ), [frigateCameras]);
+
+    const eventInRole = useCallback((event) => {
+        if (!allowedCameraNames.length) return false;
+        const cam = String(event?.camera || '');
+        return allowedCameraNames.some((name) => cameraKeysMatch(cameraKey(name), cameraKey(cam)) || name === cam);
+    }, [allowedCameraNames]);
+
     const buildUrl = useCallback((before = null, limit = INITIAL_PAGE_SIZE) => {
         const params = new URLSearchParams();
         params.set('limit', String(limit));
@@ -189,7 +202,8 @@ export default function FrigateEventsFeed({ adminUrl, authHeaders = {}, frigateC
             tracker.seenFingerprints = new Set();
         }
 
-        const incoming = dedupeEventsById(data, tracker.seenIds, tracker.seenFingerprints);
+        const incoming = dedupeEventsById(data, tracker.seenIds, tracker.seenFingerprints)
+            .filter((event) => eventInRole(event));
 
         setEvents(prev => (reset ? incoming : [...prev, ...incoming]));
 
@@ -203,7 +217,7 @@ export default function FrigateEventsFeed({ adminUrl, authHeaders = {}, frigateC
         if (!reset && incoming.length === 0 && data.length >= limit) {
             setHasMore(false);
         }
-    }, []);
+    }, [eventInRole]);
 
     const runFetch = useCallback(async ({ reset, limit = reset ? INITIAL_PAGE_SIZE : PAGE_SIZE }) => {
         if (!base) return;

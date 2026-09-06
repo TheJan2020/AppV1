@@ -33,6 +33,8 @@ import useDeviceType from '../../hooks/useDeviceType';
 import { lightSupportsBrightness } from '../../utils/lightCapabilities';
 import { findAdaptiveLightingForRoom, isAdaptiveLightingMainEntity } from '../../utils/adaptiveLighting';
 import { buildLightColorTempPayload, buildLightRgbPayload } from '../../utils/lightServicePayload';
+import { windowsForRoom } from '../../utils/coverWindows';
+import { filterCamerasForRole } from '../../services/appRole';
 import { getLightMapping } from '../../utils/lightMappingsClient';
 import { formatCameraName, formatDisplayName } from '../../utils/formatDisplayName';
 
@@ -342,6 +344,7 @@ export default function RoomDetailView({
     sensors = [],
     allEntities = [],
     doors = [],
+    windows = [],
     switches = [],
     automations = [],
     scripts = [],
@@ -366,6 +369,7 @@ export default function RoomDetailView({
     areaTabs = [],
     activeAreaKey,
     onSelectArea,
+    appRole = null,
 }) {
     const { isTablet } = useDeviceType();
     const isTabletModal = isModal && isTablet;
@@ -463,9 +467,34 @@ export default function RoomDetailView({
     const tempSensors = sensors.filter(s => s.sensorType === 'temperature');
     const humiditySensors = sensors.filter(s => s.sensorType === 'humidity');
 
-    // Doors are pre-filtered in getRoomEntities, so just use passed 'doors' prop
-    // But we double check to ensure no duplicates if 'sensors' still contains some
-    const doorSensors = doors || [];
+    // Doors only in the header. Window contacts are mapped on Cover Mapping and stay off this row.
+    const groupingRoom = useMemo(() => {
+        const tab = (areaTabs || []).find((t) => t.key === activeAreaKey);
+        return tab?.area || room;
+    }, [areaTabs, activeAreaKey, room]);
+
+    const assignedWindowIds = new Set(
+        (coverWindows || []).flatMap((w) => (Array.isArray(w.sensor_ids) ? w.sensor_ids : [])),
+    );
+    const doorSensors = (doors || []).filter((d) => (
+        d.sensorType !== 'window'
+        && !assignedWindowIds.has(d.entity_id)
+    ));
+
+    const roomCoverEntityIds = useMemo(() => {
+        const ids = [];
+        for (const list of [covers, windows, doors, sensors]) {
+            for (const entity of list || []) {
+                if (entity?.entity_id) ids.push(entity.entity_id);
+            }
+        }
+        return ids;
+    }, [covers, windows, doors, sensors]);
+
+    const namedWindowsForRoom = useMemo(
+        () => windowsForRoom(coverWindows, groupingRoom, { covers, roomEntityIds: roomCoverEntityIds }),
+        [coverWindows, groupingRoom, covers, roomCoverEntityIds],
+    );
 
     const mainTemp = tempSensors.length > 0 ? tempSensors[0] : null;
     const mainHumidity = humiditySensors.length > 0 ? humiditySensors[0] : null;
@@ -624,8 +653,13 @@ export default function RoomDetailView({
 
     const imageUrl = !isModal && !isInlinePanel && room.picture ? `${haUrl}${room.picture}` : null;
 
+    const visibleRoomCameras = useMemo(
+        () => filterCamerasForRole(cameras, appRole),
+        [cameras, appRole],
+    );
+
     const hasLightsBlock = actualLightEntities.length > 0 || fans.length > 0;
-    const hasCoversBlock = covers.length > 0;
+    const hasCoversBlock = covers.length > 0 || namedWindowsForRoom.length > 0;
     const useTabletLightsCoversSplit = isTabletModal && hasLightsBlock && hasCoversBlock;
     const hasAnyRoomDevices =
         actualLightEntities.length > 0
@@ -634,7 +668,7 @@ export default function RoomDetailView({
         || climates.length > 0
         || medias.length > 0
         || musicMedias.length > 0
-        || cameras.length > 0
+        || visibleRoomCameras.length > 0
         || lockEntities.length > 0
         || doorSensors.length > 0
         || automations.length > 0
@@ -704,7 +738,8 @@ export default function RoomDetailView({
             variant={useTabletLightsCoversSplit ? 'tabletSplit' : 'default'}
             contentWidth={useTabletLightsCoversSplit && coversPanelWidth > 0 ? coversPanelWidth : undefined}
             coverWindows={coverWindows}
-            room={room}
+            room={groupingRoom}
+            roomEntityIds={roomCoverEntityIds}
             onSliderDragStart={onSliderDragStart}
             onSliderDragEnd={onSliderDragEnd}
             onUpdate={(id, domain, service, data) => {
@@ -1143,12 +1178,12 @@ export default function RoomDetailView({
                     )}
 
                     {/* ── 4. Cameras ── */}
-                    {cameras.length > 0 && (
+                    {visibleRoomCameras.length > 0 && (
                         <View>
                             <View style={styles.divider} />
                             <Text style={styles.roomSectionHeading}>CAMERAS</Text>
                             <View style={styles.grid}>
-                                {cameras.map(cam => {
+                                {visibleRoomCameras.map(cam => {
                                     const stateObj = cam.stateObj || {};
                                     const attrs = stateObj.attributes || {};
                                     const name = formatCameraName(
