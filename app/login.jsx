@@ -5,15 +5,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import { Colors } from '../constants/Colors';
-import { Scan, Lock, User, ChevronDown, Check, Settings, Fingerprint, X, Plus, Trash2, Edit2, Shield, Link2, Wifi, Home } from 'lucide-react-native';
+import { Scan, Lock, User, ChevronDown, Check, Settings, Fingerprint, X, Plus, Trash2, Edit2, Shield, Link2, Wifi, Home, Eye, EyeOff } from 'lucide-react-native';
 import { scanNetwork } from '../utils/discovery';
 import { HAService } from '../services/ha';
-import { validateCredentials, fetchHaLoginUsernames, usernameForPerson, mergePersonsWithAuthUsers } from '../services/auth';
+import { validateCredentialsWithFallback, fetchHaLoginUsernames, usernameForPerson, mergePersonsWithAuthUsers } from '../services/auth';
 import { registerForPushNotificationsAsync } from '../services/notifications';
 import { upsertAccountAndActivate, listAccounts, normalizeHaUrl, normalizeUsername } from '../services/accounts';
 import { beginHomeSession, peekBootProfile } from '../utils/dashboardCache';
 import { bootstrapHomeFromDashboard } from '../services/homeBootstrap';
-import { allowLocalUrlFallback } from '../services/connectionEndpoints';
+import { allowLocalUrlFallback, isLanHost, hostPart } from '../services/connectionEndpoints';
 import { loadHaProfiles, saveHaProfiles, peekHaProfiles } from '../utils/storage';
 import ModalBackdrop from '../components/ModalBackdrop';
 
@@ -43,9 +43,18 @@ function mapPersonRecords(records) {
         .filter(Boolean);
 }
 
+function uniqueHttpUrls(...urls) {
+    const out = [];
+    for (const raw of urls) {
+        const n = toHaHttpBase(raw);
+        if (n && !out.includes(n)) out.push(n);
+    }
+    return out;
+}
+
 function describeUsersFetchError(err, extra = {}) {
     if (extra.missingUrl) {
-        return 'This profile has no Home Assistant URL. Edit the profile and add it.';
+        return 'This dashboard has no Home Assistant URL. In the admin app, save the live HTTPS URL and token. A local IP is optional.';
     }
     if (extra.missingToken) {
         return 'This profile has no access token. Edit the profile and paste a long-lived token.';
@@ -59,23 +68,23 @@ function describeUsersFetchError(err, extra = {}) {
     const msg = String(err?.message || err || '');
     const lower = msg.toLowerCase();
     if (err?.name === 'AbortError' || lower.includes('abort') || lower.includes('timeout')) {
-        return 'Timed out reaching Home Assistant. Check the URL and your network, then retry.';
+        return 'Timed out loading people from the dashboard. Check the Dashboard URL, then retry.';
     }
     if (lower.includes('network request failed') || lower.includes('failed to fetch') || lower.includes('network')) {
-        return 'Could not reach Home Assistant. Check the URL, token, and that the server is online.';
+        return 'Could not load people. Check the Dashboard URL. A local Home Assistant IP is not required.';
     }
     if (lower.includes('http 401') || lower.includes('http 403')) {
-        return 'Home Assistant refused the token. Update the long-lived access token in the profile.';
+        return 'Home Assistant refused the token. Update the long-lived access token in the admin Home Assistant page.';
     }
     if (lower.includes('http 404')) {
-        return 'Home Assistant URL looks wrong (not found). Check the URL in the profile.';
+        return 'Dashboard or Home Assistant URL looks wrong (not found). Check the Dashboard URL.';
     }
     const http = msg.match(/HTTP\s+(\d+)/i);
     if (http) {
-        return `Home Assistant returned HTTP ${http[1]}. Check the URL and token, then retry.`;
+        return `Server returned HTTP ${http[1]}. Check the Dashboard URL and Home Assistant token, then retry.`;
     }
     if (msg) return `Could not load users: ${msg}`;
-    return 'Could not load users from Home Assistant. Check the URL and token, then retry.';
+    return 'Could not load users. Check the Dashboard URL. A local Home Assistant IP is not required.';
 }
 
 async function fetchJson(url, options, timeoutMs) {
@@ -105,7 +114,7 @@ async function fetchJson(url, options, timeoutMs) {
 }
 
 /** Light person list first (template), then full /api/states. */
-async function fetchPersonsFromHaRest(haUrl, haToken) {
+async function fetchPersonsFromHaRest(haUrl, haToken, timeoutMs = 8000) {
     const baseUrl = toHaHttpBase(haUrl);
     const headers = {
         Authorization: `Bearer ${haToken}`,
@@ -119,7 +128,7 @@ async function fetchPersonsFromHaRest(haUrl, haToken) {
             method: 'POST',
             headers,
             body: JSON.stringify({ template }),
-        }, 12000);
+        }, timeoutMs);
         if (tpl.ok && tpl.data != null) {
             let parsed = tpl.data;
             if (typeof parsed === 'string') {
@@ -137,12 +146,26 @@ async function fetchPersonsFromHaRest(haUrl, haToken) {
     const statesRes = await fetchJson(`${baseUrl}/api/states`, {
         method: 'GET',
         headers,
-    }, 20000);
+    }, timeoutMs);
     if (!statesRes.ok) {
         throw new Error(`HA states HTTP ${statesRes.status}`);
     }
     const states = Array.isArray(statesRes.data) ? statesRes.data : [];
     return mapPersonRecords(states.filter((e) => e.entity_id?.startsWith('person.')));
+}
+
+/** People list via the admin dashboard (can reach HA on the LAN even when the phone cannot). */
+async function fetchPersonsFromDashboard(adminUrl, haToken) {
+    const base = toHaHttpBase(adminUrl);
+    if (!base || !haToken) return [];
+    const res = await fetchJson(`${base}/api/users`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${haToken}` },
+    }, 12000);
+    if (!res.ok) {
+        throw new Error(res.data?.error || `Dashboard users HTTP ${res.status}`);
+    }
+    return mapPersonRecords(Array.isArray(res.data) ? res.data : []);
 }
 
 export default function Login() {
@@ -158,6 +181,7 @@ export default function Login() {
 
     // Login Form State
     const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
     const [username, setUsername] = useState('');
 
     // ... (rest of state)
@@ -205,6 +229,7 @@ export default function Login() {
     const editHomeOpenedRef = useRef(false);
     const haUrlRef = useRef('');
     const haTokenRef = useRef('');
+    const adminUrlRef = useRef('');
 
     // Profile Editing State
     const [editingProfile, setEditingProfile] = useState(null); // If null, showing list. If object, showing form.
@@ -246,11 +271,12 @@ export default function Login() {
     useEffect(() => {
         haUrlRef.current = haUrl;
         haTokenRef.current = haToken;
-    }, [haUrl, haToken]);
+        adminUrlRef.current = adminUrl;
+    }, [haUrl, haToken, adminUrl]);
 
     useEffect(() => {
         if (isAddAccount && pickingProfile) return;
-        if (haUrl && haToken) {
+        if ((haUrl || adminUrl) && haToken) {
             fetchUsersFromHa(haUrl, haToken);
         } else {
             setUsers([]);
@@ -258,7 +284,7 @@ export default function Login() {
             setUsersError('');
             setLoadingUsers(false);
         }
-    }, [haUrl, haToken, isAddAccount, pickingProfile]);
+    }, [haUrl, haToken, adminUrl, isAddAccount, pickingProfile]);
 
     useEffect(() => {
         if (!isAddAccount) return;
@@ -439,7 +465,7 @@ export default function Login() {
                 ...editingProfile,
                 dashboardUrl: dashboardLive,
                 dashboardUrlLocal: keepLocal ? dashboardLocal : '',
-                haUrl: boot.haUrl,
+                haUrl: boot.haUrlLive || boot.haUrl || boot.haUrlLocal,
                 haUrlLive: boot.haUrlLive,
                 haUrlLocal: boot.haUrlLocal,
                 adminUrl: boot.adminUrl,
@@ -541,11 +567,11 @@ export default function Login() {
             }
         } catch (e) {
             const msg = String(e?.message || e || 'Could not reach the dashboard.');
-            const needsHaConfig = /no Home Assistant token|not configured/i.test(msg);
+            const needsHaConfig = /no Home Assistant token|not configured|no Home Assistant URL/i.test(msg);
             Alert.alert(
                 'Could not connect',
                 needsHaConfig
-                    ? `${msg}\n\nIn the admin dashboard, open Home Assistant and save the live HTTPS URL, local HTTP URL, and token.`
+                    ? `${msg}\n\nIn the admin dashboard, open Home Assistant and save the live HTTPS URL and token. A local HTTP URL is optional.`
                     : msg,
             );
         } finally {
@@ -654,11 +680,11 @@ export default function Login() {
         if (faceIdReady) handleSaveFaceId(next);
     };
 
-    const applyFetchedUsers = async (mappedUsers, errorMessage = '') => {
+    const applyFetchedUsers = async (mappedUsers, errorMessage = '', { skipHaAuthList } = {}) => {
         let list = Array.isArray(mappedUsers) ? mappedUsers : [];
         const url = haUrlRef.current || haUrl;
         const token = haTokenRef.current || haToken;
-        if (url && token) {
+        if (!skipHaAuthList && url && token) {
             try {
                 const authUsers = await fetchHaLoginUsernames(url, token);
                 if (authUsers.length) {
@@ -694,14 +720,25 @@ export default function Login() {
     };
 
     const fetchUsersFromHa = async (urlOverride, tokenOverride) => {
-        const url = urlOverride || haUrlRef.current || haUrl;
+        const resolvedId = activeProfileIdRef.current || activeProfileId;
+        const profile = profiles.find((p) => p.id === resolvedId);
         const token = tokenOverride || haTokenRef.current || haToken;
-        if (!url || !token) {
+        const haUrls = uniqueHttpUrls(
+            urlOverride,
+            profile?.haUrlLive,
+            haUrlRef.current,
+            profile?.haUrl,
+            profile?.haUrlLocal,
+        );
+        const dashboardUrl = toHaHttpBase(
+            profile?.adminUrlLive || profile?.adminUrl || adminUrlRef.current || adminUrl,
+        );
+        if ((!haUrls.length && !dashboardUrl) || !token) {
             setUsers([]);
             setSelectedUser(null);
             setUsersError(describeUsersFetchError(null, {
-                missingUrl: !url,
-                missingToken: !!url && !token,
+                missingUrl: !haUrls.length && !dashboardUrl,
+                missingToken: !!(!token && (haUrls.length || dashboardUrl)),
             }));
             setLoadingUsers(false);
             return;
@@ -711,42 +748,54 @@ export default function Login() {
         setLoadingUsers(true);
         const stillCurrent = () => fetchId === usersFetchIdRef.current;
         let lastErr = null;
+        let mapped = [];
+        let fromDashboard = false;
 
-        try {
-            let mapped = [];
-            for (let attempt = 0; attempt < 4 && stillCurrent(); attempt++) {
-                try {
-                    mapped = await fetchPersonsFromHaRest(url, token);
-                    lastErr = null;
-                    break;
-                } catch (e) {
-                    lastErr = e;
-                    console.log(`[Login] Person REST attempt ${attempt + 1} failed:`, e?.message || e);
-                    if (attempt < 3) await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
-                }
+        if (dashboardUrl) {
+            try {
+                mapped = await fetchPersonsFromDashboard(dashboardUrl, token);
+                if (mapped.length) fromDashboard = true;
+            } catch (e) {
+                lastErr = e;
+                console.log('[Login] Dashboard person fetch failed:', e?.message || e);
             }
-
-            if (!stillCurrent()) return;
-
-            if (mapped.length > 0) {
-                console.log('[Login] REST persons:', mapped.length);
-                await applyFetchedUsers(mapped);
-                setLoadingUsers(false);
-                return;
-            }
-            if (lastErr) {
-                console.log('[Login] REST user fetch failed, trying WebSocket:', lastErr?.message || lastErr);
-            }
-        } catch (restErr) {
-            if (!stillCurrent()) return;
-            lastErr = restErr;
-            console.log('[Login] REST user fetch failed, trying WebSocket:', restErr?.message || restErr);
         }
 
-        if (stillCurrent()) connectAndFetchUsers(fetchId, url, token, lastErr);
+        if (!mapped.length) {
+            for (const url of haUrls) {
+                if (!stillCurrent()) return;
+                try {
+                    const timeoutMs = isLanHost(hostPart(url)) ? 4000 : 8000;
+                    mapped = await fetchPersonsFromHaRest(url, token, timeoutMs);
+                    lastErr = null;
+                    if (mapped.length) break;
+                } catch (e) {
+                    lastErr = e;
+                    console.log('[Login] Person REST failed:', url, e?.message || e);
+                }
+            }
+        }
+
+        if (!stillCurrent()) return;
+
+        if (mapped.length > 0) {
+            console.log('[Login] Persons:', mapped.length, fromDashboard ? '(dashboard)' : '(HA)');
+            await applyFetchedUsers(mapped, '', { skipHaAuthList: fromDashboard });
+            setLoadingUsers(false);
+            return;
+        }
+
+        const wsUrl = haUrls.find((u) => !isLanHost(hostPart(u))) || haUrls[0];
+        const wsLocal = haUrls.find((u) => u !== wsUrl && isLanHost(hostPart(u)));
+        if (wsUrl) {
+            connectAndFetchUsers(fetchId, wsUrl, token, lastErr, wsLocal);
+            return;
+        }
+        applyFetchedUsers([], describeUsersFetchError(lastErr));
+        setLoadingUsers(false);
     };
 
-    const connectAndFetchUsers = (fetchId = usersFetchIdRef.current, urlOverride, tokenOverride, priorErr = null) => {
+    const connectAndFetchUsers = (fetchId = usersFetchIdRef.current, urlOverride, tokenOverride, priorErr = null, fallbackUrl = '') => {
         const url = urlOverride || haUrlRef.current || haUrl;
         const token = tokenOverride || haTokenRef.current || haToken;
         if (!url || !token) {
@@ -767,7 +816,7 @@ export default function Login() {
                 service.current = null;
             }
 
-            service.current = new HAService(url, token);
+            service.current = new HAService(url, token, { fallbackUrl });
             service.current.connect();
 
             const safetyTimer = setTimeout(() => {
@@ -857,28 +906,39 @@ export default function Login() {
             return;
         }
 
-        if (!haUrl) {
-            Alert.alert('Error', 'No Home Assistant URL configured. Please check your profile settings.');
+        if (!haUrl && !adminUrl) {
+            Alert.alert('Error', 'No dashboard URL configured. Save a profile with the HTTPS Dashboard URL first. A local Home Assistant IP is not required.');
             return;
         }
 
         setIsLoggingIn(true);
 
         try {
-            // Normalise URL: ensure it uses http(s) scheme, not ws(s)
-            const normalizedUrl = haUrl
-                .replace(/^wss:\/\//i, 'https://')
-                .replace(/^ws:\/\//i, 'http://')
-                .replace(/\/$/, '');
+            const resolvedId = activeProfileIdRef.current || activeProfileId;
+            const resolvedProfile = profiles.find((p) => p.id === resolvedId)
+                || profiles.find((p) => toHaHttpBase(p.haUrl) === toHaHttpBase(haUrl));
+            const dashboardForAuth = toHaHttpBase(
+                resolvedProfile?.adminUrlLive || resolvedProfile?.adminUrl || adminUrl,
+            );
+            const haUrls = uniqueHttpUrls(
+                resolvedProfile?.haUrlLive,
+                haUrl,
+                resolvedProfile?.haUrl,
+                resolvedProfile?.haUrlLocal,
+            );
 
-            console.log('Trying auth with username:', username, 'URL:', normalizedUrl);
-            const authResult = await validateCredentials(normalizedUrl, username, password);
+            console.log('Trying auth with username:', username);
+            const authResult = await validateCredentialsWithFallback({
+                haUrls,
+                adminUrl: dashboardForAuth,
+                haToken: resolvedProfile?.haToken || haToken,
+                username,
+                password,
+            });
             const isValid = authResult === true || authResult?.ok === true;
+            const normalizedUrl = toHaHttpBase(authResult?.usedUrl || resolvedProfile?.haUrlLive || haUrl);
 
             if (isValid) {
-                const resolvedId = activeProfileIdRef.current || activeProfileId;
-                const resolvedProfile = profiles.find((p) => p.id === resolvedId)
-                    || profiles.find((p) => toHaHttpBase(p.haUrl) === toHaHttpBase(haUrl));
                 const profileName = resolvedProfile?.name || '';
                 const profileIdToSave = resolvedProfile?.id || resolvedId || '';
 
@@ -937,8 +997,8 @@ export default function Login() {
                     router.replace({
                         pathname: route,
                         params: {
-                            userName: selectedUser.name,
-                            userId: selectedUser.user_id || '',
+                            userName: selectedUser?.name || username,
+                            userId: selectedUser?.user_id || '',
                             switchKey: String(Date.now()),
                         }
                     });
@@ -951,7 +1011,10 @@ export default function Login() {
                         'Home Assistant rejected this username and password. A 200 response only means the server answered — it is not a successful sign-in.\n\nUse the Home Assistant login name (Settings → People), not only the person display name.',
                     );
                 } else if (reason === 'network') {
-                    Alert.alert('Error', 'Could not connect to Home Assistant to verify credentials.');
+                    Alert.alert(
+                        'Error',
+                        'Could not verify the password. Check the Dashboard URL. A local Home Assistant IP is not required when you are away from home.',
+                    );
                 } else {
                     Alert.alert('Login Failed', 'Invalid username or password.');
                 }
@@ -983,8 +1046,8 @@ export default function Login() {
                 return;
             }
 
-            if (!haUrl) {
-                Alert.alert('Error', 'No Home Assistant URL configured. Please check your profile settings.');
+            if (!haUrl && !adminUrl) {
+                Alert.alert('Error', 'No dashboard URL configured. Save a profile with the HTTPS Dashboard URL first. A local Home Assistant IP is not required.');
                 return;
             }
 
@@ -1006,16 +1069,29 @@ export default function Login() {
             setIsLoggingIn(true);
             setUsername(savedUser);
 
-            const normalizedUrl = haUrl
-                .replace(/^wss:\/\//i, 'https://')
-                .replace(/^ws:\/\//i, 'http://')
-                .replace(/\/$/, '');
-
-            if (!((await validateCredentials(normalizedUrl, savedUser, savedPass))?.ok)) {
+            const bioProfile = profiles.find((p) => p.id === activeProfileId);
+            const dashboardForAuth = toHaHttpBase(
+                bioProfile?.adminUrlLive || bioProfile?.adminUrl || adminUrl,
+            );
+            const authResult = await validateCredentialsWithFallback({
+                haUrls: uniqueHttpUrls(
+                    bioProfile?.haUrlLive,
+                    haUrl,
+                    bioProfile?.haUrl,
+                    bioProfile?.haUrlLocal,
+                ),
+                adminUrl: dashboardForAuth,
+                haToken: bioProfile?.haToken || haToken,
+                username: savedUser,
+                password: savedPass,
+            });
+            if (!authResult?.ok) {
                 Alert.alert('Error', 'Saved credentials are no longer valid. Please log in with your password again.');
                 setIsLoggingIn(false);
                 return;
             }
+
+            const normalizedUrl = toHaHttpBase(authResult?.usedUrl || bioProfile?.haUrlLive || haUrl);
 
             console.log('Biometric login success');
 
@@ -1024,7 +1100,7 @@ export default function Login() {
                 return guess === savedUser || u.name?.toLowerCase().replace(/\s+/g, '_') === savedUser;
             }) || { name: savedUser, user_id: '' };
 
-            const profileName = profiles.find((p) => p.id === activeProfileId)?.name || '';
+            const profileName = bioProfile?.name || '';
 
             await upsertAccountAndActivate({
                 username: savedUser,
@@ -1039,7 +1115,6 @@ export default function Login() {
             registerForPushNotificationsAsync().catch(() => {});
 
             HAService.disconnectAll();
-            const bioProfile = profiles.find((p) => p.id === activeProfileId);
             await beginHomeSession({
                 profileId: activeProfileId,
                 haUrl: normalizedUrl,
@@ -1249,7 +1324,7 @@ export default function Login() {
                         />
                     </View>
                     <Text style={styles.fieldHint}>
-                        Cloudflare HTTPS URL of this admin backend. Required.
+                        AppBackend Cloudflare URL — not Home Assistant. Required.
                     </Text>
                 </View>
 
@@ -1271,7 +1346,7 @@ export default function Login() {
                         />
                     </View>
                     <Text style={styles.fieldHint}>
-                        Optional. Add a Wi-Fi HTTP address (same as Dashboard URL, but local IP) if you do not have it yet — you can edit this later. Used when HTTPS is down.
+                        Optional Wi-Fi address of this admin backend (not Home Assistant). Leave empty when you are away from home.
                     </Text>
                 </View>
             </View>
@@ -1507,12 +1582,27 @@ export default function Login() {
                                             placeholderTextColor={Colors.textDim}
                                             value={password}
                                             onChangeText={setPassword}
-                                            secureTextEntry
+                                            secureTextEntry={!showPassword}
+                                            autoCapitalize="none"
+                                            autoCorrect={false}
+                                            textContentType="password"
                                             ref={passwordInputRef}
                                             returnKeyType="go"
                                             onSubmitEditing={() => handleLogin('/dashboard-v2')}
                                             onFocus={scrollToInput}
                                         />
+                                        <TouchableOpacity
+                                            onPress={() => setShowPassword((v) => !v)}
+                                            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                            accessibilityRole="button"
+                                            accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                                        >
+                                            {showPassword ? (
+                                                <EyeOff size={20} color={Colors.textDim} />
+                                            ) : (
+                                                <Eye size={20} color={Colors.textDim} />
+                                            )}
+                                        </TouchableOpacity>
                                     </View>
 
                                     <TouchableOpacity

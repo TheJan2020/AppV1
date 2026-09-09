@@ -1,4 +1,4 @@
-import { StyleSheet } from 'react-native';
+import { Platform, StyleSheet } from 'react-native';
 import { CF } from './typography';
 
 const CLASH_FACES = new Set(Object.values(CF));
@@ -39,5 +39,9 @@ export function resolveAppFontStyle(style) {
 
     const next = { ...flat, fontFamily };
     delete next.fontWeight;
+    // Clash files are upright only. Android falls back to the system font if italic is set.
+    if (Platform.OS === 'android') {
+        delete next.fontStyle;
+    }
     return next;
 }

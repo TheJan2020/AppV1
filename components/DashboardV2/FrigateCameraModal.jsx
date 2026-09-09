@@ -1,39 +1,19 @@
-import { Modal, View, Text, StyleSheet, TouchableOpacity, FlatList, Image, ActivityIndicator, ScrollView } from 'react-native';
+import { Modal, View, Text, StyleSheet, TouchableOpacity, FlatList, Platform, ActivityIndicator, ScrollView } from 'react-native';
 import { WebView } from 'react-native-webview';
+import AuthedCameraImage from './AuthedCameraImage';
 import { X, User, Car, Dog, AlertTriangle, Clock } from 'lucide-react-native';
 import { useState, useEffect, useRef, useMemo } from 'react';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
+import { StatusBar } from 'expo-status-bar';
 import { CF } from '../../utils/typography';
 import { formatCameraName } from '../../utils/formatDisplayName';
 import CameraSensorOverlay, { isSensorActive, buildEntityMap, resolveSensorIds } from './CameraSensorOverlay';
 import { cameraUsesHaFeed } from '../../services/appRole';
-import { dedupeEventsById, paginationBeforeCursor } from '../../utils/frigateEvents';
+import { dedupeEventsById, paginationBeforeCursor, getEventThumbnailUrl, formatEventClock, formatEventDay, eventTimeAgo } from '../../utils/frigateEvents';
 import FrigateEventImageModal from './FrigateEventImageModal';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function timeAgo(unixTs) {
-    const diff = Math.floor(Date.now() / 1000) - unixTs;
-    if (diff < 60) return `${diff}s ago`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return `${Math.floor(diff / 86400)}d ago`;
-}
-
-function formatTime(unixTs) {
-    const d = new Date(unixTs * 1000);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function formatDate(unixTs) {
-    const d = new Date(unixTs * 1000);
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(today.getDate() - 1);
-    if (d.toDateString() === today.toDateString()) return 'Today';
-    if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-}
 
 function LabelIcon({ label, size = 14, color = '#fff' }) {
     const l = (label || '').toLowerCase();
@@ -55,7 +35,11 @@ function labelColor(label) {
 
 function EventCard({ event, adminUrl, authHeaders, onPress }) {
     const [thumbError, setThumbError] = useState(false);
-    const thumbUrl = `${adminUrl}/api/frigate/events/${event.id}/thumbnail`;
+    const thumbUrl = getEventThumbnailUrl(adminUrl, event.id);
+
+    useEffect(() => {
+        setThumbError(false);
+    }, [thumbUrl]);
     const color = labelColor(event.label);
     const score = event.data?.top_score ?? event.top_score;
     const scoreText = score ? `${Math.round(score * 100)}%` : null;
@@ -68,10 +52,9 @@ function EventCard({ event, adminUrl, authHeaders, onPress }) {
                         <LabelIcon label={event.label} size={28} color="rgba(255,255,255,0.15)" />
                     </View>
                 ) : (
-                    <Image
-                        source={{ uri: thumbUrl, headers: authHeaders }}
-                        style={StyleSheet.absoluteFill}
-                        resizeMode="cover"
+                    <AuthedCameraImage
+                        uri={thumbUrl}
+                        headers={authHeaders}
                         onError={() => setThumbError(true)}
                     />
                 )}
@@ -90,9 +73,9 @@ function EventCard({ event, adminUrl, authHeaders, onPress }) {
                 <Text style={styles.cameraName} numberOfLines={1}>{formatCameraName(event.camera)}</Text>
                 <View style={styles.timeRow}>
                     <Clock size={11} color="rgba(255,255,255,0.4)" />
-                    <Text style={styles.timeText}>{formatDate(event.start_time)} · {formatTime(event.start_time)}</Text>
+                    <Text style={styles.timeText}>{formatEventDay(event.start_time)} · {formatEventClock(event.start_time)}</Text>
                 </View>
-                <Text style={styles.agoText}>{timeAgo(event.start_time)}</Text>
+                <Text style={styles.agoText}>{eventTimeAgo(event.start_time)}</Text>
             </View>
         </>
     );
@@ -112,20 +95,19 @@ function EventCard({ event, adminUrl, authHeaders, onPress }) {
 
 function LiveStream({ service, camera, sensorIds, entityMap }) {
     const webViewRef = useRef(null);
-    const [tick, setTick] = useState(0);
+    const [hasFrame, setHasFrame] = useState(false);
     const [useFrigateFallback, setUseFrigateFallback] = useState(false);
-    const isHACamera = cameraUsesHaFeed(camera) && !useFrigateFallback;
+    const [preferHaSnapshot, setPreferHaSnapshot] = useState(false);
+    const isHACamera = (cameraUsesHaFeed(camera) || preferHaSnapshot) && !useFrigateFallback;
+    const useSnapshot = Platform.OS === 'android' || isHACamera;
     const cameraName = String(camera?.name || camera?.id || '').replace(/^camera\./, '');
+    const headers = service?.getMediaHeaders?.() || {};
 
     useEffect(() => {
         setUseFrigateFallback(false);
+        setPreferHaSnapshot(false);
+        setHasFrame(false);
     }, [camera?.id, camera?.entity_id, camera?.name]);
-
-    useEffect(() => {
-        if (!isHACamera) return undefined;
-        const id = setInterval(() => setTick((n) => n + 1), 2000);
-        return () => clearInterval(id);
-    }, [isHACamera]);
 
     if (!service || !cameraName) {
         return (
@@ -136,23 +118,34 @@ function LiveStream({ service, camera, sensorIds, entityMap }) {
     }
     const streamUrl = isHACamera
         ? service.getHASnapshotUrl(camera.entity_id || camera.id || cameraName)
-        : service.getStreamUrl(cameraName);
-    const uri = isHACamera
-        ? `${streamUrl}${streamUrl.includes('?') ? '&' : '?'}t=${tick}`
-        : streamUrl;
+        : useSnapshot
+            ? service.getSnapshotUrl(cameraName)
+            : service.getStreamUrl(cameraName);
     return (
-        <View style={styles.streamContainer}>
-            {isHACamera ? (
-                <Image
-                    source={{ uri, headers: service?.headers || {} }}
-                    style={StyleSheet.absoluteFill}
-                    resizeMode="cover"
-                    onError={() => setUseFrigateFallback(true)}
-                />
+        <View style={styles.streamContainer} collapsable={false}>
+            {useSnapshot ? (
+                <>
+                    <AuthedCameraImage
+                        uri={streamUrl}
+                        headers={headers}
+                        style={styles.streamImage}
+                        refreshMs={600}
+                        onLoad={() => setHasFrame(true)}
+                        onError={() => {
+                            if (isHACamera) setUseFrigateFallback(true);
+                            else setPreferHaSnapshot(true);
+                        }}
+                    />
+                    {!hasFrame ? (
+                        <View style={styles.streamLoading} pointerEvents="none">
+                            <ActivityIndicator color="white" />
+                        </View>
+                    ) : null}
+                </>
             ) : (
                 <WebView
                     ref={webViewRef}
-                    source={{ uri: streamUrl, headers: service?.headers || {} }}
+                    source={{ uri: streamUrl, headers }}
                     style={{ flex: 1, backgroundColor: 'black' }}
                     scrollEnabled={false}
                     allowsInlineMediaPlayback={true}
@@ -170,6 +163,7 @@ function LiveStream({ service, camera, sensorIds, entityMap }) {
 // ── Main Modal ────────────────────────────────────────────────────────────────
 
 export default function FrigateCameraModal({ visible, camera, service, onClose, cameraSensors = {}, haEntities = [] }) {
+    const insets = useSafeAreaInsets();
     const [events, setEvents] = useState([]);
     const [eventsLoaded, setEventsLoaded] = useState(false);
     const [loadingEvents, setLoadingEvents] = useState(false);
@@ -320,15 +314,22 @@ export default function FrigateCameraModal({ visible, camera, service, onClose, 
     ), [availableLabels, selectedLabel, loadingEvents, events.length]);
 
     return (
-        <Modal animationType="slide" transparent={false} visible={visible} onRequestClose={onClose}>
+        <Modal
+            animationType="slide"
+            transparent={false}
+            visible={visible}
+            onRequestClose={onClose}
+            statusBarTranslucent
+        >
             <FrigateEventImageModal
                 visible={!!selectedEvent}
                 event={selectedEvent}
                 adminUrl={service?.adminUrl}
-                authHeaders={service?.headers || {}}
+                authHeaders={service?.getMediaHeaders?.() || {}}
                 onClose={() => setSelectedEvent(null)}
             />
-            <View style={styles.container}>
+            <View style={[styles.container, { paddingTop: insets.top }]}>
+                <StatusBar style="light" />
                 <View style={styles.header}>
                     <Text style={styles.title}>{formatCameraName(camera?.name) || 'Camera'}</Text>
                     <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
@@ -351,7 +352,7 @@ export default function FrigateCameraModal({ visible, camera, service, onClose, 
                         <EventCard
                             event={item}
                             adminUrl={service?.adminUrl}
-                            authHeaders={service?.headers}
+                            authHeaders={service?.getMediaHeaders?.() || {}}
                             onPress={setSelectedEvent}
                         />
                     )}
@@ -387,21 +388,20 @@ const styles = StyleSheet.create({
     container: {
         flex: 1,
         backgroundColor: '#0a0a0a',
-        paddingTop: 50,
     },
     header: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'space-between',
         paddingHorizontal: 20,
-        paddingVertical: 14,
+        paddingVertical: 10,
         borderBottomWidth: 1,
         borderBottomColor: 'rgba(255,255,255,0.1)',
     },
     title: {
         color: 'white',
         fontSize: 20,
-        fontWeight: 'bold',
+        fontFamily: CF.bold,
         textTransform: 'capitalize',
     },
     closeBtn: {
@@ -414,6 +414,17 @@ const styles = StyleSheet.create({
         position: 'relative',
         overflow: 'hidden',
     },
+    streamImage: {
+        ...StyleSheet.absoluteFillObject,
+        width: '100%',
+        height: '100%',
+    },
+    streamLoading: {
+        ...StyleSheet.absoluteFillObject,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: '#000',
+    },
     eventsHeader: {
         paddingTop: 16,
         paddingBottom: 4,
@@ -421,7 +432,7 @@ const styles = StyleSheet.create({
     sectionTitle: {
         color: 'white',
         fontSize: 17,
-        fontWeight: '700',
+        fontFamily: CF.bold,
         marginBottom: 10,
         paddingHorizontal: 16,
     },

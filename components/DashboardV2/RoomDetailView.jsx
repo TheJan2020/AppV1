@@ -1672,7 +1672,7 @@ const styles = StyleSheet.create({
     },
     content: {
         padding: 20,
-        paddingBottom: 40,
+        paddingBottom: 120,
         paddingTop: 10,
     },
     grid: {

@@ -10,7 +10,6 @@ import {
     Text,
     StyleSheet,
     TouchableOpacity,
-    Image,
     Dimensions,
 } from 'react-native';
 import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
@@ -21,8 +20,9 @@ import Animated, {
 } from 'react-native-reanimated';
 import { X, ZoomIn, ZoomOut } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
-import { getEventThumbnailUrl } from '../../utils/frigateEvents';
+import { getEventThumbnailUrl, formatEventClock, formatEventDay } from '../../utils/frigateEvents';
 import { formatCameraName } from '../../utils/formatDisplayName';
+import AuthedCameraImage from './AuthedCameraImage';
 
 const MIN_SCALE = 1;
 const MAX_SCALE = 4;
@@ -30,11 +30,10 @@ const { width: SCREEN_W, height: SCREEN_H } = Dimensions.get('window');
 const IMAGE_H = SCREEN_H * 0.72;
 
 function formatEventTime(unixTs) {
-    if (!Number.isFinite(Number(unixTs))) return '';
-    const d = new Date(Number(unixTs) * 1000);
-    return d.toLocaleString([], {
-        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-    });
+    const clock = formatEventClock(unixTs);
+    const day = formatEventDay(unixTs);
+    if (!clock) return '';
+    return day ? `${day}, ${clock}` : clock;
 }
 
 function ZoomableImage({ uri, headers, resetKey }) {
@@ -136,10 +135,11 @@ function ZoomableImage({ uri, headers, resetKey }) {
         <View style={styles.zoomRoot}>
             <GestureDetector gesture={composed}>
                 <Animated.View style={[styles.zoomStage, animatedStyle]}>
-                    <Image
-                        source={{ uri, headers }}
+                    <AuthedCameraImage
+                        uri={uri}
+                        headers={headers}
+                        contentFit="contain"
                         style={styles.image}
-                        resizeMode="contain"
                         onError={() => setFailed(true)}
                     />
                 </Animated.View>

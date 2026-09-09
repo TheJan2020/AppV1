@@ -115,19 +115,18 @@ export class FrigateService {
     }
 
     getStreamUrl(cameraName) {
-        const url = `${this.adminUrl}/api/frigate/stream/${cameraName}?fps=5&height=720&bbox=1`;
-        return url;
+        const cam = encodeURIComponent(cameraName);
+        return `${this.adminUrl}/api/frigate/stream/${cam}?fps=5&height=720&bbox=1`;
     }
 
     getSnapshotUrl(cameraName) {
-        const url = `${this.adminUrl}/api/frigate/snapshot/${cameraName}`;
-        return url;
+        const cam = encodeURIComponent(cameraName);
+        return `${this.adminUrl}/api/frigate/snapshot/${cam}`;
     }
 
     getHASnapshotUrl(entityIdOrName) {
         const entity = entityIdOrName.startsWith('camera.') ? entityIdOrName : `camera.${entityIdOrName}`;
-        const url = `${this.adminUrl}/api/ha-camera/${entity}`;
-        return url;
+        return `${this.adminUrl}/api/ha-camera/${encodeURIComponent(entity)}`;
     }
 
     getAudioUrl(cameraName) {
@@ -167,11 +166,15 @@ export class FrigateService {
     }
 
     getImageHeaders() {
-        if (this.sessionCookie) {
-            return {
-                'Cookie': this.sessionCookie
-            };
-        }
-        return {};
+        return this.getMediaHeaders();
+    }
+
+    /** Headers safe for Image/WebView GETs (no JSON Content-Type). */
+    getMediaHeaders() {
+        const headers = {};
+        const auth = this.headers?.Authorization;
+        if (auth) headers.Authorization = auth;
+        if (this.sessionCookie) headers.Cookie = this.sessionCookie;
+        return headers;
     }
 }

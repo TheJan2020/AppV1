@@ -65,23 +65,29 @@ export function getEntityIdsForAreaIds(areaIds, registryDevices = [], registryEn
     const areaSet = areaIds instanceof Set ? areaIds : new Set(areaIds || []);
     if (!areaSet.size) return new Set();
 
-    const deviceInScope = new Set();
-    for (const d of registryDevices) {
-        if (d?.id && d.area_id && areaSet.has(d.area_id)) deviceInScope.add(d.id);
-    }
-
+    const deviceAreaById = buildDeviceAreaMap(registryDevices);
     const entityIds = new Set();
     for (const re of registryEntities) {
         if (!re?.entity_id) continue;
-        if (re.area_id && areaSet.has(re.area_id)) {
-            entityIds.add(re.entity_id);
-            continue;
-        }
-        if (re.device_id && deviceInScope.has(re.device_id)) {
-            entityIds.add(re.entity_id);
-        }
+        const area = resolveEntityAreaId(re, deviceAreaById);
+        if (area && areaSet.has(area)) entityIds.add(re.entity_id);
     }
     return entityIds;
+}
+
+export function buildDeviceAreaMap(registryDevices = []) {
+    const map = new Map();
+    for (const d of Array.isArray(registryDevices) ? registryDevices : []) {
+        if (d?.id && d.area_id) map.set(d.id, d.area_id);
+    }
+    return map;
+}
+
+/** Same as Home Assistant `area_id(entity)`: entity area wins over the device area. */
+export function resolveEntityAreaId(re, deviceAreaById) {
+    if (re?.area_id) return re.area_id;
+    if (re?.device_id && deviceAreaById?.get) return deviceAreaById.get(re.device_id) || null;
+    return null;
 }
 
 export const getRoomEntities = (
@@ -120,21 +126,17 @@ export const getRoomEntities = (
     const safeMediaMappings = Array.isArray(mediaMappings) ? mediaMappings : [];
     const safeClimateMappings = Array.isArray(climateMappings) ? climateMappings : [];
 
-    const areaDevices = safeRegistryDevices.filter(d => d.area_id === room.area_id);
-    const areaDeviceIds = areaDevices.map(d => d.id);
+    const deviceAreaById = buildDeviceAreaMap(safeRegistryDevices);
 
     /**
      * Room membership follows Home Assistant **Areas** (Settings → Areas & Zones → Areas),
      * not geographic **Zones** (used for presence / automations).
-     * An entity is in this room when either:
-     * - the entity registry assigns `area_id` to this room, or
-     * - the entity’s device is assigned to this room (`device.area_id` matches via registry).
-     * TV and music `media_player` entities use the same rules as lights and climate.
+     * An entity is in this room when `area_id(entity)` matches — entity area first,
+     * otherwise the device’s area. An entity assigned to another room is not pulled
+     * in just because its device still lives here.
      */
     const potentialEntities = safeRegistryEntities.filter(re => {
-        const directMatch = re.area_id === room.area_id;
-        const deviceMatch = re.device_id && areaDeviceIds.includes(re.device_id);
-        if (!(directMatch || deviceMatch)) return false;
+        if (resolveEntityAreaId(re, deviceAreaById) !== room.area_id) return false;
         // Filter out disabled, hidden, and non-user-facing entities (matches HA frontend behavior)
         if (re.disabled_by) return false;
         if (re.hidden_by) return false;
@@ -234,18 +236,15 @@ export const getRoomEntities = (
         return { ...climate, damperEntityId, damperStateObj };
     });
     const climateDeviceIds = new Set(mappedClimates.map((c) => c.device_id).filter(Boolean));
-    const extraPowerSwitches = safeAllEntities
-        .filter((e) => (
-            e?.entity_id?.startsWith('switch.')
-            && e.device_id
-            && climateDeviceIds.has(e.device_id)
-            && !mappedSwitches.some((s) => s.entity_id === e.entity_id)
+    const extraPowerSwitches = safeRegistryEntities
+        .filter((re) => (
+            re?.entity_id?.startsWith('switch.')
+            && re.device_id
+            && climateDeviceIds.has(re.device_id)
+            && !re.disabled_by
+            && !mappedSwitches.some((s) => s.entity_id === re.entity_id)
         ))
-        .map((e) => {
-            const reg = safeRegistryEntities.find((r) => r.entity_id === e.entity_id)
-                || { entity_id: e.entity_id, name: e.attributes?.friendly_name, device_id: e.device_id };
-            return mapEntity(reg);
-        });
+        .map(mapEntity);
     const { climates: climatesWithPower, leftoverSwitches: pairedLeftover } = attachAcPowerSwitches(
         mappedClimates,
         [...mappedSwitches, ...extraPowerSwitches],

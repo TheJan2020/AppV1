@@ -6,43 +6,20 @@
 
 import { useState, useEffect, useCallback, useRef, useMemo, memo } from 'react';
 import {
-    View, Text, StyleSheet, FlatList, Image, TouchableOpacity,
+    View, Text, StyleSheet, FlatList, TouchableOpacity,
     ActivityIndicator, RefreshControl, ScrollView,
 } from 'react-native';
+import AuthedCameraImage from './AuthedCameraImage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { User, Car, Dog, AlertTriangle, Clock } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
 import { formatCameraName } from '../../utils/formatDisplayName';
 import { cameraKey, cameraKeysMatch } from '../../services/appRole';
-import { dedupeEventsById, paginationBeforeCursor } from '../../utils/frigateEvents';
+import { dedupeEventsById, paginationBeforeCursor, getEventThumbnailUrl, formatEventClock, formatEventDay, eventTimeAgo } from '../../utils/frigateEvents';
 import FrigateEventImageModal from './FrigateEventImageModal';
 
 const INITIAL_PAGE_SIZE = 12;
 const PAGE_SIZE = 20;
-
-function timeAgo(unixTs) {
-    const diff = Math.floor(Date.now() / 1000) - unixTs;
-    if (diff < 60) return `${diff}s ago`;
-    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-    return `${Math.floor(diff / 86400)}d ago`;
-}
-
-function formatTime(unixTs) {
-    const d = new Date(unixTs * 1000);
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-
-function formatDate(unixTs) {
-    const d = new Date(unixTs * 1000);
-    const today = new Date();
-    const yesterday = new Date(today);
-    yesterday.setDate(today.getDate() - 1);
-
-    if (d.toDateString() === today.toDateString()) return 'Today';
-    if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
-    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
-}
 
 function LabelIcon({ label, size = 14, color = '#fff' }) {
     const l = (label || '').toLowerCase();
@@ -62,9 +39,11 @@ function labelColor(label) {
 
 const EventCard = memo(function EventCard({ event, adminUrl, authHeaders, onPress }) {
     const [thumbError, setThumbError] = useState(false);
-    const thumbUrl = adminUrl
-        ? `${adminUrl.replace(/\/$/, '')}/api/frigate/events/${encodeURIComponent(String(event.id))}/thumbnail`
-        : null;
+    const thumbUrl = getEventThumbnailUrl(adminUrl, event.id);
+
+    useEffect(() => {
+        setThumbError(false);
+    }, [thumbUrl]);
     const color = labelColor(event.label);
     const score = event.data?.top_score ?? event.top_score;
     const scoreText = score ? `${Math.round(score * 100)}%` : null;
@@ -77,10 +56,9 @@ const EventCard = memo(function EventCard({ event, adminUrl, authHeaders, onPres
                         <LabelIcon label={event.label} size={28} color="rgba(255,255,255,0.15)" />
                     </View>
                 ) : (
-                    <Image
-                        source={{ uri: thumbUrl, headers: authHeaders }}
-                        style={StyleSheet.absoluteFill}
-                        resizeMode="cover"
+                    <AuthedCameraImage
+                        uri={thumbUrl}
+                        headers={authHeaders}
                         onError={() => setThumbError(true)}
                     />
                 )}
@@ -99,10 +77,10 @@ const EventCard = memo(function EventCard({ event, adminUrl, authHeaders, onPres
                 <View style={styles.timeRow}>
                     <Clock size={10} color="rgba(255,255,255,0.4)" />
                     <Text style={styles.timeText}>
-                        {formatDate(event.start_time)} · {formatTime(event.start_time)}
+                        {formatEventDay(event.start_time)} · {formatEventClock(event.start_time)}
                     </Text>
                 </View>
-                <Text style={styles.agoText}>{timeAgo(event.start_time)}</Text>
+                <Text style={styles.agoText}>{eventTimeAgo(event.start_time)}</Text>
             </View>
         </>
     );

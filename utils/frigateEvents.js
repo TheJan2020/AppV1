@@ -191,6 +191,56 @@ export function getEventThumbnailUrl(adminUrl, eventId) {
     return enc ? `${base}api/frigate/events/${enc}/thumbnail` : '';
 }
 
+/** Round Frigate unix timestamps (often fractional) to whole seconds. */
+export function roundEventUnix(unixTs) {
+    const n = Number(unixTs);
+    if (!Number.isFinite(n)) return 0;
+    return Math.round(n);
+}
+
+/** Clock time with seconds rounded to the nearest minute (no :ss). */
+export function formatEventClock(unixTs) {
+    const rounded = roundEventUnix(unixTs);
+    if (!rounded) return '';
+    const d = new Date(rounded * 1000);
+    if (d.getSeconds() >= 30) d.setMinutes(d.getMinutes() + 1);
+    d.setSeconds(0, 0);
+    const hours = d.getHours();
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    const amPm = hours >= 12 ? 'PM' : 'AM';
+    const hours12 = hours % 12 || 12;
+    return `${hours12}:${minutes} ${amPm}`;
+}
+
+export function formatEventDay(unixTs) {
+    const d = new Date(roundEventUnix(unixTs) * 1000);
+    const today = new Date();
+    const yesterday = new Date(today);
+    yesterday.setDate(today.getDate() - 1);
+    if (d.toDateString() === today.toDateString()) return 'Today';
+    if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+/** Relative time with seconds rounded away (just now / minutes / hours / days). */
+export function eventTimeAgo(unixTs) {
+    const diff = Math.max(0, Math.round(Date.now() / 1000 - roundEventUnix(unixTs)));
+    if (diff < 45) return 'just now';
+    if (diff < 90) return '1m ago';
+    if (diff < 3600) return `${Math.round(diff / 60)}m ago`;
+    if (diff < 5400) return '1h ago';
+    if (diff < 86400) return `${Math.round(diff / 3600)}h ago`;
+    if (diff < 172800) return '1d ago';
+    return `${Math.round(diff / 86400)}d ago`;
+}
+
+export function eventDurationSeconds(event) {
+    const start = Number(event?.start_time);
+    const end = Number(event?.end_time);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+    return Math.max(1, Math.round(end - start));
+}
+
 function normalizeAuthHeaders(headers) {
     if (!headers || typeof headers !== 'object') return {};
     const out = {};

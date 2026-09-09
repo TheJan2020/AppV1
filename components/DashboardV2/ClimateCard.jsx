@@ -1038,6 +1038,7 @@ const s = StyleSheet.create({
     timerBlock: {
         width: '100%',
         alignSelf: 'stretch',
+        paddingBottom: 8,
     },
     timerHeader: {
         flexDirection: 'row',
@@ -1130,10 +1131,22 @@ const s = StyleSheet.create({
         color: 'rgba(255,255,255,0.25)',
         marginBottom: 18,
     },
-    timerBtnRow: { flexDirection: 'row', gap: 10 },
-    timerBtnStart: { flex: 1, height: 48, borderRadius: 24, overflow: 'hidden' },
+    timerBtnRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 10,
+        marginTop: 2,
+    },
+    timerBtnStart: {
+        flex: 1,
+        height: 48,
+        minHeight: 48,
+        borderRadius: 24,
+        overflow: 'hidden',
+    },
     timerGrad: {
-        ...StyleSheet.absoluteFillObject,
+        width: '100%',
+        height: 48,
         alignItems: 'center',
         justifyContent: 'center',
     },
@@ -1141,6 +1154,7 @@ const s = StyleSheet.create({
     timerBtnReset: {
         flex: 1,
         height: 48,
+        minHeight: 48,
         borderRadius: 24,
         backgroundColor: 'rgba(255,255,255,0.05)',
         alignItems: 'center',

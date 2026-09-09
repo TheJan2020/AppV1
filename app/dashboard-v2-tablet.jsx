@@ -41,7 +41,7 @@ import { FrigateService } from '../services/frigate';
 import * as SecureStore from 'expo-secure-store';
 import { startHeartbeat, stopHeartbeat, updateAppState } from '../services/heartbeat';
 import { getRoomEntities, getEntityIdsForAreaIds } from '../utils/roomHelpers';
-import { isClimatePoweredOn } from '../utils/acPowerSwitch';
+import { isClimatePoweredOn, collectRoomClimatesForModal } from '../utils/acPowerSwitch';
 import { isCoverUiOpen } from '../utils/coverWindows';
 import {
     collectGroupedLightMemberIds,
@@ -1154,6 +1154,7 @@ export default function DashboardV2Tablet() {
                 coverMappings,
                 mediaMappings,
                 musicAssistantEntryIds,
+                climateMappings,
             );
 
             const activeLights = countActiveCountableLights(roomEntities.lights);
@@ -1243,6 +1244,7 @@ export default function DashboardV2Tablet() {
         coverMappings,
         mediaMappings,
         musicAssistantEntryIds,
+        climateMappings,
         savedRoomOrder,
         appRole,
     ]);
@@ -1306,13 +1308,18 @@ export default function DashboardV2Tablet() {
         return [...byId.values()];
     }, [roomsWithCounts, entities]);
 
+    const roomClimatesForModal = useMemo(
+        () => collectRoomClimatesForModal(roomsWithCounts, entities),
+        [roomsWithCounts, entities],
+    );
+
     const lightsOn = useMemo(
         () => roomsWithCounts.reduce((sum, r) => sum + (r.activeLights || 0), 0),
         [roomsWithCounts],
     );
     const acOn = useMemo(
-        () => roomsWithCounts.reduce((sum, r) => sum + (r.activeAC || 0), 0),
-        [roomsWithCounts],
+        () => roomClimatesForModal.filter(isClimatePoweredOn).length,
+        [roomClimatesForModal],
     );
 
     const butlerVoiceContext = useMemo(() => ({
@@ -1613,6 +1620,7 @@ export default function DashboardV2Tablet() {
                         cameraSensors={badgeConfig?.camera_sensors || {}}
                         haEntities={entities}
                         columns={2}
+                        live={activeTab === 'home' && !showFrigateModal}
                     />
                     ) : null}
                 </ScrollView>
@@ -1703,7 +1711,7 @@ export default function DashboardV2Tablet() {
                                 service={frigateService.current}
                                 onCameraPress={handleFrigateCameraPress}
                                 columns={columns}
-                                active={activeTab === 'cctv'}
+                                active={activeTab === 'cctv' && !showFrigateModal}
                             />
                         )}
                     </View>
@@ -1788,9 +1796,7 @@ export default function DashboardV2Tablet() {
                     devices={
                         devicesToggleKind === 'lights'
                             ? roomLightsForModal
-                            : entities.filter(
-                                (e) => e.entity_id.startsWith('climate.') && dashboardEntityIds.has(e.entity_id),
-                            )
+                            : roomClimatesForModal
                     }
                     rooms={roomsWithCounts}
                     registryAreas={registryAreas}

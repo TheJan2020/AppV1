@@ -11,6 +11,8 @@
 const SWITCH_WORD = '(?:switch|swtich|power|pwr)';
 const SWITCH_SUFFIX_RE = new RegExp(`[\\s_]+${SWITCH_WORD}$`, 'i');
 const SWITCH_ONLY_RE = new RegExp(`^${SWITCH_WORD}$`, 'i');
+const ID_POWER_SUFFIX_RE = /[\s_]+(?:switch|swtich|power|pwr|state)$/i;
+const CHILD_LOCK_RE = /child[_\s-]?lock/i;
 
 export function normalizeAcLabel(raw) {
     return String(raw || '')
@@ -25,11 +27,11 @@ export function normalizeAcLabel(raw) {
 
 function climateLabel(climate) {
     return (
-        climate?.displayName
+        climate?.stateObj?.attributes?.friendly_name
+        || climate?.attributes?.friendly_name
+        || climate?.displayName
         || climate?.name
         || climate?.original_name
-        || climate?.stateObj?.attributes?.friendly_name
-        || climate?.attributes?.friendly_name
         || climate?.entity_id
         || ''
     );
@@ -37,14 +39,36 @@ function climateLabel(climate) {
 
 function switchLabel(sw) {
     return (
-        sw?.displayName
+        sw?.stateObj?.attributes?.friendly_name
+        || sw?.attributes?.friendly_name
+        || sw?.displayName
         || sw?.name
         || sw?.original_name
-        || sw?.stateObj?.attributes?.friendly_name
-        || sw?.attributes?.friendly_name
         || sw?.entity_id
         || ''
     );
+}
+
+function climateObjectId(entityId) {
+    return String(entityId || '').replace(/^climate\./i, '');
+}
+
+function switchObjectId(entityId) {
+    return String(entityId || '').replace(/^switch\./i, '');
+}
+
+function isChildLockSwitch(sw) {
+    return CHILD_LOCK_RE.test(sw?.entity_id || '') || CHILD_LOCK_RE.test(switchLabel(sw));
+}
+
+function idsShareStem(acObj, swObj) {
+    if (!acObj || !swObj) return false;
+    if (swObj === acObj || swObj.startsWith(`${acObj}_`)) return true;
+    const acStem = acObj.replace(/_thermostat$/i, '');
+    const swStem = swObj
+        .replace(/_thermostat_(state|switch)$/i, '')
+        .replace(/_(state|switch)$/i, '');
+    return !!(acStem && swStem && (swStem === acStem || swStem.startsWith(`${acStem}_`)));
 }
 
 function stripSwitchSuffix(normalized) {
@@ -67,6 +91,22 @@ export function switchMatchesClimatePower(climate, sw, opts = {}) {
     if (climate.damperEntityId && sw.entity_id === climate.damperEntityId) {
         return false;
     }
+    if (isChildLockSwitch(sw)) return false;
+
+    const acObj = climateObjectId(climate.entity_id);
+    const swObj = switchObjectId(sw.entity_id);
+    // Tuya/Zigbee thermostats: climate.foo_thermostat + switch.foo_thermostat_state
+    if (acObj && (swObj === acObj || swObj === `${acObj}_state` || swObj === `${acObj}_switch`)) {
+        return true;
+    }
+    if (
+        climate.device_id
+        && sw.device_id
+        && String(climate.device_id) === String(sw.device_id)
+        && /_(state|switch)$/i.test(swObj)
+    ) {
+        return true;
+    }
 
     const acName = normalizeAcLabel(climateLabel(climate));
     const swName = normalizeAcLabel(switchLabel(sw));
@@ -76,17 +116,20 @@ export function switchMatchesClimatePower(climate, sw, opts = {}) {
 
     if (opts.soleClimate && SWITCH_ONLY_RE.test(swName)) return true;
 
+    const nameOk = opts.soleClimate || idsShareStem(acObj, swObj);
+    if (!nameOk) return false;
+
     // Same label / id (climate "2nd AC" + switch "2nd AC")
     if (swName && (swName === acName || swName === acId)) return true;
     if (swId && (swId === acId || swId === acName)) return true;
 
     const swNameBase = stripSwitchSuffix(swName);
-    const swIdBase = stripSwitchSuffix(swId);
+    const swIdBase = String(swId || '').replace(ID_POWER_SUFFIX_RE, '').trim();
 
     if (hasSwitchSuffix(swName) && swNameBase && (swNameBase === acName || swNameBase === acId)) {
         return true;
     }
-    if (hasSwitchSuffix(swId) && swIdBase && (swIdBase === acId || swIdBase === acName)) {
+    if (ID_POWER_SUFFIX_RE.test(swId) && swIdBase && (swIdBase === acId || swIdBase === acName)) {
         return true;
     }
 
@@ -134,7 +177,9 @@ export function attachAcPowerSwitches(climates, switches, allEntities = []) {
         if (!sw) {
             return { ...climate, powerSwitchEntityId: null, powerSwitchStateObj: null };
         }
-        const live = entities.find((e) => e.entity_id === sw.entity_id) || sw.stateObj || null;
+        const live = entities.find((e) => e.entity_id === sw.entity_id)
+            || sw.stateObj
+            || sw;
         return {
             ...climate,
             powerSwitchEntityId: sw.entity_id,
@@ -228,4 +273,35 @@ export function applyClimatePower(climate, wantOn, onUpdate, hvacMode = 'cool') 
     } else {
         onUpdate(climate.entity_id, 'climate', 'set_hvac_mode', { hvac_mode: 'off' });
     }
+}
+
+/** Same climates the room cards count — used by the home AC sheet and snowflake badge. */
+export function collectRoomClimatesForModal(rooms = [], allEntities = []) {
+    const byId = new Map();
+    const all = Array.isArray(allEntities) ? allEntities : [];
+    for (const room of Array.isArray(rooms) ? rooms : []) {
+        for (const c of room?._entities?.climates || []) {
+            if (!c?.entity_id || byId.has(c.entity_id)) continue;
+            const stateObj = c.stateObj || all.find((e) => e.entity_id === c.entity_id);
+            if (!stateObj || stateObj.state === 'unavailable') continue;
+            const swId = c.powerSwitchEntityId || null;
+            const swLive = (swId && all.find((e) => e.entity_id === swId))
+                || c.powerSwitchStateObj
+                || null;
+            byId.set(c.entity_id, {
+                entity_id: c.entity_id,
+                state: stateObj.state,
+                attributes: {
+                    ...(stateObj.attributes || {}),
+                    friendly_name: c.displayName
+                        || stateObj.attributes?.friendly_name
+                        || c.entity_id,
+                },
+                area_id: c.area_id || room.area_id,
+                powerSwitchEntityId: swId,
+                powerSwitchStateObj: swLive,
+            });
+        }
+    }
+    return [...byId.values()];
 }

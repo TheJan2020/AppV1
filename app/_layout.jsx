@@ -3,12 +3,11 @@ import { StatusBar } from 'expo-status-bar';
 import { Colors } from '../constants/Colors';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import ErrorBoundary from '../components/ErrorBoundary';
-import { useEffect, useState, useCallback } from 'react';
-import { LogBox, Dimensions, Image, StyleSheet, View, Platform } from 'react-native';
+import PurpleTopGlow from '../components/PurpleTopGlow';
+import { useEffect, useCallback } from 'react';
+import { LogBox, Dimensions } from 'react-native';
 import { useFonts } from 'expo-font';
 import * as ScreenOrientation from 'expo-screen-orientation';
-import * as Notifications from 'expo-notifications';
-import { registerForPushNotificationsAsync } from '../services/notifications';
 import { NotifContext } from '../services/NotifContext';
 import { preloadLocalLightIcons } from '../utils/lightTypeAssets';
 import { CF } from '../utils/typography';
@@ -58,21 +57,6 @@ export default function RootLayout() {
         'ClashDisplay-Bold':       require('../assets/fonts/ClashDisplay-Bold.otf'),
     });
 
-    // ── Notification state — shared with all screens via context ─────────────
-    const [pendingNotif, setPendingNotif] = useState(null);
-
-    // Convert a raw Expo notification response object to our modal shape
-    const extractNotif = (response) => {
-        if (!response) return null;
-        const content = response?.notification?.request?.content ?? {};
-        return {
-            title:     content.title              || '',
-            body:      content.body               || '',
-            category:  content.data?.category     || 'default',
-            timestamp: new Date().toISOString(),
-        };
-    };
-
     const onLayoutRootView = useCallback(async () => {
         if (fontsLoaded) {
             await SplashScreen.hideAsync().catch(() => {});
@@ -97,10 +81,6 @@ export default function RootLayout() {
     }, []);
 
     useEffect(() => {
-        registerForPushNotificationsAsync().then(token => {
-            if (token) console.log('Push Token Registered:', token);
-        });
-
         // Lock phones to portrait, allow tablets to rotate
         const { width, height } = Dimensions.get('screen');
         const shortSide = Math.min(width, height);
@@ -109,35 +89,6 @@ export default function RootLayout() {
         if (!isTablet) {
             ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
         }
-
-        // ── Cold start ────────────────────────────────────────────────────────
-        // When the app was killed and the user tapped a notification to launch it,
-        // getLastNotificationResponseAsync() returns that response.
-        // This runs in _layout (which wraps all screens) so it fires BEFORE any
-        // screen mounts — the value will be ready in context when dashboard-v2 loads.
-        Notifications.getLastNotificationResponseAsync()
-            .then(response => {
-                const notif = extractNotif(response);
-                if (notif) {
-                    console.log('[Notif] Cold-start notification captured:', notif.title);
-                    setPendingNotif(notif);
-                }
-            })
-            .catch(() => {});
-
-        // ── Background → foreground ───────────────────────────────────────────
-        // Fires when user taps a notification while app is running/suspended.
-        const tapSub = Notifications.addNotificationResponseReceivedListener(response => {
-            const notif = extractNotif(response);
-            if (notif) {
-                console.log('[Notif] Tap notification captured:', notif.title);
-                setPendingNotif(notif);
-            }
-        });
-
-        return () => {
-            tapSub.remove();
-        };
     }, []);
 
     if (!fontsLoaded) {
@@ -145,7 +96,7 @@ export default function RootLayout() {
     }
 
     return (
-        <NotifContext.Provider value={{ pendingNotif, clearNotif: () => setPendingNotif(null) }}>
+        <NotifContext.Provider value={{ pendingNotif: null, clearNotif: () => {} }}>
             <ErrorBoundary>
                 <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayoutRootView}>
                     <StatusBar style="light" />
@@ -173,43 +124,9 @@ export default function RootLayout() {
                         <Stack.Screen name="tv-lab" options={{ headerShown: false }} />
                         <Stack.Screen name="dashboard-v3" options={{ headerShown: false }} />
                     </Stack>
-                    {/* Purple glow over screens.
-                        On Android/Samsung, an Image overlay above the navigator often still
-                        intercepts taps even with pointerEvents="none" (blocks Settings tabs).
-                        Skip the overlay on Android; keep it on iOS where pointerEvents works. */}
-                    {Platform.OS !== 'android' ? (
-                        <View
-                            pointerEvents="none"
-                            collapsable={false}
-                            style={layoutStyles.topShadowWrap}
-                        >
-                            <Image
-                                source={require('../assets/shadow.png')}
-                                style={layoutStyles.topShadow}
-                                resizeMode="contain"
-                            />
-                        </View>
-                    ) : null}
+                    <PurpleTopGlow />
                 </GestureHandlerRootView>
             </ErrorBoundary>
         </NotifContext.Provider>
     );
 }
-
-const layoutStyles = StyleSheet.create({
-    topShadowWrap: {
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        height: 462.37,
-        alignItems: 'center',
-        // Keep visual stacking without Android elevation touch bugs
-        zIndex: 1,
-        elevation: 0,
-    },
-    topShadow: {
-        width: 521.82,
-        height: 462.37,
-    },
-});

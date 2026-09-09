@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, FlatList, ActivityIndicator } from 'react-native';
-import { dedupeEventsById } from '../../utils/frigateEvents';
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, ActivityIndicator } from 'react-native';
+import AuthedCameraImage from './AuthedCameraImage';
+import { dedupeEventsById, getEventThumbnailUrl, formatEventClock, eventDurationSeconds } from '../../utils/frigateEvents';
 
 export default function FrigateTimeline({ events, onEventPress, onLoadMore, hasMore, loadingMore, selectedEventId, listRef, adminUrl, authHeaders, listHeader }) {
 
@@ -12,7 +13,7 @@ export default function FrigateTimeline({ events, onEventPress, onLoadMore, hasM
 
         const groups = {};
         deduped.forEach(event => {
-            const date = new Date(event.start_time * 1000);
+            const date = new Date(Math.round(Number(event.start_time)) * 1000);
             const dayKey = date.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' });
             if (!groups[dayKey]) groups[dayKey] = [];
             groups[dayKey].push(event);
@@ -37,13 +38,8 @@ export default function FrigateTimeline({ events, onEventPress, onLoadMore, hasM
     const renderEventCard = (event) => {
         if (!event) return <View style={styles.cardPlaceholder} />;
 
-        const date = new Date(event.start_time * 1000);
-        const hours = date.getHours();
-        const minutes = date.getMinutes().toString().padStart(2, '0');
-        const amPm = hours >= 12 ? 'PM' : 'AM';
-        const hours12 = hours % 12 || 12;
-        const timeStr = `${hours12}:${minutes} ${amPm}`;
-        const duration = event.end_time ? Math.round(event.end_time - event.start_time) : null;
+        const timeStr = formatEventClock(event.start_time);
+        const duration = eventDurationSeconds(event);
         const isSelected = selectedEventId === event.id;
 
         return (
@@ -54,13 +50,10 @@ export default function FrigateTimeline({ events, onEventPress, onLoadMore, hasM
                 activeOpacity={0.75}
             >
                 <View style={styles.thumbWrap}>
-                    <Image
-                        source={{
-                            uri: `${adminUrl}/api/frigate/events/${event.id}/thumbnail`,
-                            headers: authHeaders || {},
-                        }}
+                    <AuthedCameraImage
+                        uri={getEventThumbnailUrl(adminUrl, event.id)}
+                        headers={authHeaders || {}}
                         style={styles.thumbnail}
-                        resizeMode="cover"
                     />
                     {duration != null && (
                         <View style={styles.durationBadge}>

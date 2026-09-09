@@ -1,11 +1,12 @@
-import { memo, useEffect, useRef, useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Image, AppState } from 'react-native';
+import { memo, useEffect, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { CF } from '../../utils/typography';
 import { formatCameraName } from '../../utils/formatDisplayName';
 import CameraSensorOverlay, { resolveSensorIds } from './CameraSensorOverlay';
 import { cameraUsesHaFeed } from '../../services/appRole';
+import AuthedCameraImage from './AuthedCameraImage';
 
-const SNAPSHOT_MS = 4000;
+const SNAPSHOT_MS = 600;
 
 function snapshotBase(cam, service, useHa) {
     if (!service || !cam) return '';
@@ -13,29 +14,19 @@ function snapshotBase(cam, service, useHa) {
     return service.getSnapshotUrl(cam.name || cam.id);
 }
 
-function withTick(url, tick) {
-    if (!url) return '';
-    return `${url}${url.includes('?') ? '&' : '?'}t=${tick}`;
-}
-
-const CameraPreview = memo(function CameraPreview({ cam, service, tick, sensorIds = [], entityMap = {} }) {
+const CameraPreview = memo(function CameraPreview({ cam, service, sensorIds = [], entityMap = {}, active = true }) {
     const [failed, setFailed] = useState(false);
     const [useHa, setUseHa] = useState(() => cameraUsesHaFeed(cam));
-    const lastGoodRef = useRef(null);
+    const [hasFrame, setHasFrame] = useState(false);
 
     const base = snapshotBase(cam, service, useHa);
-    const uri = withTick(base, tick);
-    const headers = service?.headers || {};
+    const headers = service?.getMediaHeaders?.() || {};
 
     useEffect(() => {
         setFailed(false);
+        setHasFrame(false);
         setUseHa(cameraUsesHaFeed(cam));
-        lastGoodRef.current = null;
     }, [cam?.id, cam?.entity_id, cam?.name]);
-
-    useEffect(() => {
-        setFailed(false);
-    }, [tick]);
 
     if (!service || !cam || !base) {
         return (
@@ -50,21 +41,13 @@ const CameraPreview = memo(function CameraPreview({ cam, service, tick, sensorId
     return (
         <View style={styles.cameraWrapper}>
             <View style={styles.imageContainer}>
-                {lastGoodRef.current ? (
-                    <Image
-                        source={{ uri: lastGoodRef.current, headers }}
-                        style={StyleSheet.absoluteFill}
-                        resizeMode="cover"
-                    />
-                ) : null}
                 {!failed ? (
-                    <Image
-                        source={{ uri, headers }}
-                        style={StyleSheet.absoluteFill}
-                        resizeMode="cover"
-                        fadeDuration={0}
+                    <AuthedCameraImage
+                        uri={base}
+                        headers={headers}
+                        refreshMs={active ? SNAPSHOT_MS : 0}
                         onLoad={() => {
-                            lastGoodRef.current = uri;
+                            setHasFrame(true);
                             setFailed(false);
                         }}
                         onError={() => {
@@ -73,11 +56,11 @@ const CameraPreview = memo(function CameraPreview({ cam, service, tick, sensorId
                                 setFailed(false);
                                 return;
                             }
-                            setFailed(true);
+                            if (!hasFrame) setFailed(true);
                         }}
                     />
                 ) : null}
-                {failed && !lastGoodRef.current ? (
+                {failed && !hasFrame ? (
                     <View style={[StyleSheet.absoluteFill, styles.errorOverlay]}>
                         <Text style={styles.errorIcon}>📵</Text>
                         <Text style={styles.errorText}>Stream unavailable</Text>
@@ -90,24 +73,8 @@ const CameraPreview = memo(function CameraPreview({ cam, service, tick, sensorId
 });
 
 function CamerasList({ frigateCameras, service, onCameraPress, columns = 2, cameraSensors = {}, entityMap = {}, active = true }) {
-    const [tick, setTick] = useState(0);
     const isTabletGrid = columns > 2;
     const tabletWidth = `${Math.floor(100 / columns) - 2}%`;
-
-    useEffect(() => {
-        if (!active) return undefined;
-        const bump = () => {
-            if (AppState.currentState === 'active') setTick((n) => n + 1);
-        };
-        const id = setInterval(bump, SNAPSHOT_MS);
-        const sub = AppState.addEventListener('change', (state) => {
-            if (state === 'active') bump();
-        });
-        return () => {
-            clearInterval(id);
-            sub.remove();
-        };
-    }, [active]);
 
     if (!frigateCameras || frigateCameras.length === 0) return null;
 
@@ -132,7 +99,7 @@ function CamerasList({ frigateCameras, service, onCameraPress, columns = 2, came
                         <CameraPreview
                             cam={cam}
                             service={service}
-                            tick={tick}
+                            active={active}
                             sensorIds={resolveSensorIds(cam, cameraSensors)}
                             entityMap={entityMap}
                         />

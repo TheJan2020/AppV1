@@ -137,8 +137,9 @@ const styles = StyleSheet.create({
         borderRadius: 20,
         paddingHorizontal: 18,
         paddingTop: 18,
-        paddingBottom: 16,
+        paddingBottom: 28,
         marginBottom: 12,
+        overflow: 'visible',
     },
     containerTabletSplit: {
         backgroundColor: 'transparent',

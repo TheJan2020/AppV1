@@ -1,9 +1,10 @@
 import { memo, useState, useEffect, useRef, useMemo } from 'react';
 import {
-    View, Text, StyleSheet, TouchableOpacity, Dimensions, Image,
+    View, Text, StyleSheet, TouchableOpacity, Dimensions, Platform,
     Modal, FlatList, ActivityIndicator, Alert, TextInput, Animated, PanResponder,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
+import AuthedCameraImage from './AuthedCameraImage';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Edit2, Check, X, Search } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
@@ -59,37 +60,26 @@ const STRIP_PAGE_JS = `
   true;
 `;
 
-const SNAPSHOT_MS = 2000;
-
-function withTick(url, tick) {
-    if (!url) return '';
-    return `${url}${url.includes('?') ? '&' : '?'}t=${tick}`;
-}
+const SNAPSHOT_MS = 600;
 
 // Camera card — Frigate live WebView, HA snapshot images (JPEG cannot load in WebView)
-const CameraCard = ({ cam, frigateService, onPress, sensorIds = [], entityMap = {}, cardWidth }) => {
+const CameraCard = ({ cam, frigateService, onPress, sensorIds = [], entityMap = {}, cardWidth, live = true }) => {
     const [streamError, setStreamError] = useState(false);
-    const [tick, setTick] = useState(0);
     const [useFrigateFallback, setUseFrigateFallback] = useState(false);
-    const lastGoodRef = useRef(null);
     const isHACamera = cameraUsesHaFeed(cam) && !useFrigateFallback;
+    // Android WebView does not play Frigate MJPEG; RN Image also drops auth headers.
+    const useSnapshot = Platform.OS === 'android' || isHACamera;
     const frigateName = String(cam?.name || cam?.id || '').replace(/^camera\./, '');
     const streamUrl = isHACamera
         ? frigateService?.getHASnapshotUrl(cam.entity_id || cam.id)
-        : frigateService?.getStreamUrl(frigateName);
-    const snapshotUri = withTick(streamUrl, tick);
-    const headers = frigateService?.headers || {};
-
-    useEffect(() => {
-        if (!isHACamera) return undefined;
-        const id = setInterval(() => setTick((n) => n + 1), SNAPSHOT_MS);
-        return () => clearInterval(id);
-    }, [isHACamera]);
+        : useSnapshot
+            ? frigateService?.getSnapshotUrl(frigateName)
+            : frigateService?.getStreamUrl(frigateName);
+    const headers = frigateService?.getMediaHeaders?.() || {};
 
     useEffect(() => {
         setStreamError(false);
         setUseFrigateFallback(false);
-        lastGoodRef.current = null;
     }, [cam?.id, cam?.entity_id, cam?.name]);
 
     return (
@@ -99,29 +89,21 @@ const CameraCard = ({ cam, frigateService, onPress, sensorIds = [], entityMap = 
             activeOpacity={0.85}
         >
             {streamUrl && !streamError ? (
-                isHACamera ? (
-                    <>
-                        {lastGoodRef.current ? (
-                            <Image
-                                source={{ uri: lastGoodRef.current, headers }}
-                                style={StyleSheet.absoluteFill}
-                                resizeMode="cover"
-                            />
-                        ) : null}
-                        <Image
-                            source={{ uri: snapshotUri, headers }}
-                            style={StyleSheet.absoluteFill}
-                            resizeMode="cover"
-                            fadeDuration={0}
-                            onLoad={() => {
-                                lastGoodRef.current = snapshotUri;
-                                setStreamError(false);
-                            }}
-                            onError={() => {
-                                if (!lastGoodRef.current) setUseFrigateFallback(true);
-                            }}
-                        />
-                    </>
+                useSnapshot ? (
+                    <AuthedCameraImage
+                        uri={streamUrl}
+                        headers={headers}
+                        style={StyleSheet.absoluteFill}
+                        refreshMs={live ? SNAPSHOT_MS : 0}
+                        onLoad={() => setStreamError(false)}
+                        onError={() => {
+                            if (isHACamera) {
+                                setUseFrigateFallback(true);
+                                return;
+                            }
+                            setStreamError(true);
+                        }}
+                    />
                 ) : (
                     <WebView
                         source={{ uri: streamUrl, headers }}
@@ -462,6 +444,7 @@ function HomeCameraStrip({
     selectionStorageKey = null,
     userId = '',
     username = '',
+    live = true,
 }) {
     const [editVisible, setEditVisible] = useState(false);
     const [gridWidth, setGridWidth] = useState(0);
@@ -563,6 +546,7 @@ function HomeCameraStrip({
                                     sensorIds={sensorIds}
                                     entityMap={entityMap}
                                     cardWidth={cardWidth}
+                                    live={live}
                                 />
                             </View>
                         );

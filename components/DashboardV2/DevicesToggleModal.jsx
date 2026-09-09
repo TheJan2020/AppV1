@@ -749,7 +749,9 @@ const styles = StyleSheet.create({
         paddingHorizontal: 18,
         paddingVertical: 2,
         gap: 7,
+        flexDirection: 'row',
         alignItems: 'center',
+        flexWrap: 'nowrap',
     },
     pill: {
         flexDirection: 'row',

@@ -98,7 +98,9 @@ async function tryBootstrap(adminUrl, timeoutMs = 8000) {
         const message = data?.error
             || (res.status === 401
                 ? 'Unauthorized'
-                : `Dashboard HTTP ${res.status}`);
+                : res.status === 404
+                    ? 'This URL is not the admin dashboard (HTTP 404). Use the AppBackend Cloudflare URL, not Home Assistant.'
+                    : `Dashboard HTTP ${res.status}`);
         throw bootstrapError(message, { status: res.status, url: base });
     }
     return {
@@ -130,6 +132,14 @@ function formatProbeFailure(errors, tried, localUrl) {
 
     if (triedLocal) {
         return SAME_NETWORK_MESSAGE;
+    }
+
+    if (errors.some((e) => e.status === 404)) {
+        return (
+            'This URL is not the admin dashboard (HTTP 404). ' +
+            'Enter the AppBackend Cloudflare URL (the backend, not Home Assistant). ' +
+            'A local IP is not required.'
+        );
     }
 
     const last = errors[errors.length - 1];
@@ -177,38 +187,32 @@ export async function probeDashboard(liveUrl, localUrl) {
     });
 }
 
-async function haApiAlive(haUrl, haToken) {
-    const base = stripSlash(haUrl);
-    if (!base || !haToken) return false;
-    try {
-        const res = await fetchWithTimeout(`${base}/api/`, {
-            headers: { Authorization: `Bearer ${haToken}` },
-        }, 8000);
-        return res.ok;
-    } catch {
-        return false;
-    }
-}
-
-export async function pickWorkingHaUrl({ haUrlLive, haUrlLocal, haToken }) {
+/**
+ * Prefer the public HTTPS HA URL so a home can be saved away from Wi-Fi.
+ * Do not ping HA from the phone — live HA or a LAN IP may be unreachable
+ * even when the dashboard (which talks to HA) is fine.
+ */
+export function pickWorkingHaUrl({ haUrlLive, haUrlLocal }) {
     const live = stripSlash(haUrlLive);
     const local = stripSlash(haUrlLocal);
-    if (live && await haApiAlive(live, haToken)) return live;
-    if (local && local !== live && allowLocalUrlFallback(live, local) && await haApiAlive(local, haToken)) {
-        return local;
-    }
-    return live || (allowLocalUrlFallback(live, local) ? local : '') || '';
+    if (live) return live;
+    if (local && allowLocalUrlFallback(live, local)) return local;
+    return '';
 }
+
+const MISSING_HA_URL_MESSAGE =
+    'This dashboard has no Home Assistant URL yet. In the admin app, open Home Assistant and save the live HTTPS URL and token. A local IP is optional.';
 
 /**
  * Resolve dashboard URLs into admin + HA connection.
- * Tries the live HTTPS dashboard first, then the local HTTP dashboard.
+ * Tries the live HTTPS dashboard first, then the optional local HTTP dashboard.
+ * Local Home Assistant IP is not required to create a profile.
  */
 export async function bootstrapHomeFromDashboard(dashboardUrl, dashboardUrlLocal) {
     const boot = await probeDashboard(dashboardUrl, dashboardUrlLocal);
-    const haUrl = await pickWorkingHaUrl(boot);
+    const haUrl = pickWorkingHaUrl(boot);
     if (!haUrl) {
-        throw new Error(SAME_NETWORK_MESSAGE);
+        throw new Error(MISSING_HA_URL_MESSAGE);
     }
     return {
         ...boot,

@@ -7,14 +7,16 @@
 
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import {
-    Modal, View, Text, StyleSheet, TouchableOpacity, Image, ActivityIndicator,
+    Modal, View, Text, StyleSheet, TouchableOpacity, ActivityIndicator,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
+import AuthedCameraImage from './AuthedCameraImage';
 import { setAudioModeAsync } from '../../services/expoAudio';
 import { X, Clock } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
 import {
     getEventPlayUrl, getEventThumbnailUrl, getClipRelativePath, resolveEventEndTime,
+    formatEventClock, formatEventDay,
 } from '../../utils/frigateEvents';
 import { formatCameraName } from '../../utils/formatDisplayName';
 
@@ -33,11 +35,10 @@ function normalizeAuthHeaders(headers) {
 }
 
 function formatEventTime(unixTs) {
-    if (!Number.isFinite(Number(unixTs))) return '';
-    const d = new Date(Number(unixTs) * 1000);
-    return d.toLocaleString([], {
-        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-    });
+    const clock = formatEventClock(unixTs);
+    const day = formatEventDay(unixTs);
+    if (!clock) return '';
+    return day ? `${day}, ${clock}` : clock;
 }
 
 function buildClipPlayerHtml(clipPath) {
@@ -395,10 +396,11 @@ export default function FrigateEventPlayerModal({
                     {clipUrl && playerError && (
                         <View style={styles.centerMsg}>
                             {thumbUrl ? (
-                                <Image
-                                    source={{ uri: thumbUrl, headers: requestHeaders }}
+                                <AuthedCameraImage
+                                    uri={thumbUrl}
+                                    headers={requestHeaders}
+                                    contentFit="contain"
                                     style={styles.errorThumb}
-                                    resizeMode="contain"
                                 />
                             ) : null}
                             <Text style={styles.msgText}>Could not load clip</Text>
@@ -409,10 +411,10 @@ export default function FrigateEventPlayerModal({
                     {clipUrl && !playerError && (
                         <>
                             {!playerStarted && thumbUrl ? (
-                                <Image
-                                    source={{ uri: thumbUrl, headers: requestHeaders }}
-                                    style={StyleSheet.absoluteFill}
-                                    resizeMode="contain"
+                                <AuthedCameraImage
+                                    uri={thumbUrl}
+                                    headers={requestHeaders}
+                                    contentFit="contain"
                                 />
                             ) : null}
 

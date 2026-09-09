@@ -1,9 +1,11 @@
 import React, { memo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Cloud, CloudRain, Sun, CloudSnow, CloudLightning, Bell } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
 
 function HeaderV2({ weather, cityName, userName, humidity, indoorTemp, onBellPress, unreadCount = 0, onUserPress }) {
+    const insets = useSafeAreaInsets();
 
     const capitalizeWords = (str) => {
         if (!str) return str;
@@ -55,7 +57,7 @@ function HeaderV2({ weather, cityName, userName, humidity, indoorTemp, onBellPre
         : null;
 
     return (
-        <View style={styles.header}>
+        <View style={[styles.header, { paddingTop: Math.max(insets.top, 8) + 8 }]}>
             <View style={styles.topRow}>
                 <TouchableOpacity
                     style={styles.greetingBlock}
@@ -67,7 +69,9 @@ function HeaderV2({ weather, cityName, userName, humidity, indoorTemp, onBellPre
                     accessibilityLabel={onUserPress ? `Switch account, ${displayName}` : undefined}
                 >
                     <Text style={styles.greeting}>{getGreeting()}</Text>
-                    <Text style={styles.name}>{displayName}</Text>
+                    <View style={styles.nameSkew}>
+                        <Text style={styles.name}>{displayName}</Text>
+                    </View>
                     {!!onUserPress && (
                         <Text style={styles.switchHint}>Tap to switch account</Text>
                     )}
@@ -108,7 +112,6 @@ function HeaderV2({ weather, cityName, userName, humidity, indoorTemp, onBellPre
 
 const styles = StyleSheet.create({
     header: {
-        paddingTop: 60,
         paddingBottom: 12,
         gap: 6,
     },
@@ -126,14 +129,18 @@ const styles = StyleSheet.create({
         color: 'rgba(237,237,245,0.45)',
         letterSpacing: 0.1,
     },
+    nameSkew: {
+        alignSelf: 'flex-start',
+        transform: [{ skewX: '-8deg' }],
+    },
     name: {
         fontSize: 36,
         fontFamily: CF.bold,
-        fontStyle: 'italic',
         color: '#ededf5',
         letterSpacing: -1.5,
         marginTop: -2,
         lineHeight: 42,
+        includeFontPadding: false,
     },
     switchHint: {
         marginTop: 2,
