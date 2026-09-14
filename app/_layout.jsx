@@ -57,11 +57,9 @@ export default function RootLayout() {
         'ClashDisplay-Bold':       require('../assets/fonts/ClashDisplay-Bold.otf'),
     });
 
-    const onLayoutRootView = useCallback(async () => {
-        if (fontsLoaded) {
-            await SplashScreen.hideAsync().catch(() => {});
-        }
-    }, [fontsLoaded]);
+    const onLayoutRootView = useCallback(() => {
+        // Native splash stays up until the Lottie splash in index.jsx is painted.
+    }, []);
 
     useEffect(() => {
         preloadLocalLightIcons().catch(() => {});

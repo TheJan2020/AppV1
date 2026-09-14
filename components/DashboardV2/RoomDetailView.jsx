@@ -848,8 +848,10 @@ export default function RoomDetailView({
                             resizeMode="cover"
                         >
                             <LinearGradient
-                                colors={['transparent', 'rgba(0,0,0,0.8)', '#14141e']}
-                                style={styles.gradient}
+                                colors={['transparent', 'rgba(0,0,0,0.35)', 'rgba(0,0,0,0.82)', 'rgba(0,0,0,0.96)']}
+                                locations={[0, 0.28, 0.62, 1]}
+                                pointerEvents="none"
+                                style={styles.bottomShadow}
                             />
 
                             <TouchableOpacity onPress={onClose} style={styles.backButton}>
@@ -959,6 +961,15 @@ export default function RoomDetailView({
             )}
 
             <View style={{ flex: 1 }}>
+                {areaTabs.length > 0 && activeAreaKey && onSelectArea ? (
+                    <View style={styles.areaTabsBar}>
+                        <RoomAreasNavBar
+                            tabs={areaTabs}
+                            activeKey={activeAreaKey}
+                            onSelect={onSelectArea}
+                        />
+                    </View>
+                ) : null}
                 <ScrollView
                     style={{ flex: 1 }}
                     contentContainerStyle={styles.content}
@@ -968,14 +979,6 @@ export default function RoomDetailView({
                     keyboardDismissMode="on-drag"
                 >
                     <HaSystemBanner banner={systemHealthBanner} />
-
-                    {areaTabs.length > 0 && activeAreaKey && onSelectArea ? (
-                        <RoomAreasNavBar
-                            tabs={areaTabs}
-                            activeKey={activeAreaKey}
-                            onSelect={onSelectArea}
-                        />
-                    ) : null}
 
                     {!hasAnyRoomDevices && (
                         <View style={styles.emptyState}>
@@ -1556,12 +1559,17 @@ const styles = StyleSheet.create({
         height: '100%',
         justifyContent: 'flex-end',
     },
-    gradient: {
-        ...StyleSheet.absoluteFillObject,
+    bottomShadow: {
+        position: 'absolute',
+        left: 0,
+        right: 0,
+        bottom: 0,
+        height: '78%',
     },
     headerContent: {
         padding: 20,
-        paddingBottom: 20,
+        paddingBottom: 22,
+        zIndex: 1,
     },
     backButton: {
         position: 'absolute',
@@ -1674,6 +1682,12 @@ const styles = StyleSheet.create({
         padding: 20,
         paddingBottom: 120,
         paddingTop: 10,
+    },
+    areaTabsBar: {
+        paddingHorizontal: 20,
+        paddingTop: 6,
+        zIndex: 4,
+        elevation: 4,
     },
     grid: {
         flexDirection: 'row',

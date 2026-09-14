@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { getRoomAreaTabs } from '../utils/roomAreas';
 import { getRoomEntities } from '../utils/roomHelpers';
 import { areaAllowedForRole } from '../services/appRole';
@@ -21,6 +21,8 @@ export function useRoomAreaEntities({
     badgeConfig = null,
     appRole = null,
 }) {
+    const roomAreaId = room?.area_id;
+
     const areaTabs = useMemo(() => {
         const tabs = getRoomAreaTabs(room, registryAreas, resolveDisplayName, badgeConfig);
         if (!tabs.length) return tabs;
@@ -29,13 +31,23 @@ export function useRoomAreaEntities({
         return tabs.filter((t) => areaAllowedForRole(t.key, appRole, badgeConfig));
     }, [room, registryAreas, resolveDisplayName, badgeConfig, appRole]);
 
-    const [activeAreaKey, setActiveAreaKey] = useState(room?.area_id);
+    const [activeAreaKey, setActiveAreaKey] = useState(roomAreaId);
+    const prevRoomAreaIdRef = useRef(roomAreaId);
 
     useEffect(() => {
-        const preferred = room?.area_id;
-        const hasPreferred = areaTabs.some((t) => t.key === preferred);
-        setActiveAreaKey(hasPreferred ? preferred : (areaTabs[0]?.key || preferred));
-    }, [room?.area_id, areaTabs]);
+        const roomChanged = prevRoomAreaIdRef.current !== roomAreaId;
+        prevRoomAreaIdRef.current = roomAreaId;
+
+        setActiveAreaKey((current) => {
+            // Keep the user's sub-room tab when registries/config merely refresh.
+            // Only reset when the parent room changes or the current tab disappeared.
+            if (!roomChanged && current && areaTabs.some((t) => t.key === current)) {
+                return current;
+            }
+            const hasPreferred = areaTabs.some((t) => t.key === roomAreaId);
+            return hasPreferred ? roomAreaId : (areaTabs[0]?.key || roomAreaId);
+        });
+    }, [roomAreaId, areaTabs]);
 
     const activeArea = useMemo(() => {
         const tab = areaTabs.find((t) => t.key === activeAreaKey);

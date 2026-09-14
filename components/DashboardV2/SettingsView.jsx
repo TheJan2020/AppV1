@@ -57,45 +57,77 @@ function SettingsView({
     const [storedUserName, setStoredUserName] = useState('');
     const [loggingOut, setLoggingOut] = useState(false);
     const [isHaOwner, setIsHaOwner] = useState(false);
+    const [settingsReady, setSettingsReady] = useState(false);
 
-    useEffect(() => {
-        SecureStore.getItemAsync('face_id_enabled').then(val => {
-            setFaceIdEnabled(val === 'true');
-        });
-    }, []);
+    // Saved accounts (multi-account switcher list) — shown on the Account tab
+    // so any signed-in user can be logged out individually from this device.
+    const [savedAccounts, setSavedAccounts] = useState([]);
+    const [activeAccountId, setActiveAccountId] = useState(null);
+    const [loadingAccounts, setLoadingAccounts] = useState(false);
+    const [removingAccountId, setRemovingAccountId] = useState(null);
 
-    useEffect(() => {
-        const effectiveUser = userName || storedUserName;
-        if (!effectiveUser || !adminUrl) {
-            setIsHaOwner(false);
-            return;
+    const loadSavedAccounts = async ({ silent } = {}) => {
+        if (!silent) setLoadingAccounts(true);
+        try {
+            await ensureAccountsMigrated();
+            const [list, id] = await Promise.all([listAccounts(), getActiveAccountId()]);
+            setSavedAccounts(list);
+            setActiveAccountId(id);
+        } catch (e) {
+            console.log('[Settings] Failed to load saved accounts:', e?.message || e);
+        } finally {
+            if (!silent) setLoadingAccounts(false);
         }
+    };
+
+    useEffect(() => {
         let cancelled = false;
+        setSettingsReady(false);
+
         (async () => {
             try {
-                const base = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
-                const res = await authFetch(`${base}api/auth/owner-status?username=${encodeURIComponent(effectiveUser)}`);
-                const data = await res.json().catch(() => ({}));
-                if (!cancelled) setIsHaOwner(!!data.isOwner);
-            } catch {
-                if (!cancelled) setIsHaOwner(false);
+                const faceIdPromise = SecureStore.getItemAsync('face_id_enabled')
+                    .then((val) => { if (!cancelled) setFaceIdEnabled(val === 'true'); })
+                    .catch(() => {});
+
+                const userPromise = (async () => {
+                    if (userName) return userName;
+                    try {
+                        const json = await SecureStore.getItemAsync('logged_in_user');
+                        if (!json) return '';
+                        const user = JSON.parse(json);
+                        const name = user?.name || '';
+                        if (!cancelled && name) setStoredUserName(name);
+                        return name;
+                    } catch {
+                        return '';
+                    }
+                })();
+
+                const accountsPromise = loadSavedAccounts({ silent: true });
+
+                const effectiveUser = (await userPromise) || userName;
+                if (effectiveUser && adminUrl) {
+                    try {
+                        const base = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
+                        const res = await authFetch(`${base}api/auth/owner-status?username=${encodeURIComponent(effectiveUser)}`);
+                        const data = await res.json().catch(() => ({}));
+                        if (!cancelled) setIsHaOwner(!!data.isOwner);
+                    } catch {
+                        if (!cancelled) setIsHaOwner(false);
+                    }
+                } else if (!cancelled) {
+                    setIsHaOwner(false);
+                }
+
+                await Promise.all([faceIdPromise, accountsPromise]);
+            } finally {
+                if (!cancelled) setSettingsReady(true);
             }
         })();
-        return () => { cancelled = true; };
-    }, [userName, storedUserName, adminUrl]);
 
-    useEffect(() => {
-        if (userName) return;
-        SecureStore.getItemAsync('logged_in_user').then(json => {
-            if (!json) return;
-            try {
-                const user = JSON.parse(json);
-                if (user?.name) setStoredUserName(user.name);
-            } catch {
-                // ignore invalid stored user
-            }
-        });
-    }, [userName]);
+        return () => { cancelled = true; };
+    }, [userName, adminUrl]);
 
     const displayName = capitalizeWords(userName || storedUserName) || 'User';
 
@@ -151,41 +183,22 @@ function SettingsView({
 
     const logoutButton = (
         <TouchableOpacity
-            style={[styles.logoutBtn, loggingOut && { opacity: 0.6 }]}
+            style={[styles.listItem, loggingOut && { opacity: 0.6 }]}
             disabled={loggingOut}
             onPress={handleLogout}
+            activeOpacity={0.7}
         >
-            <LogOut size={20} color={Colors.error} />
-            <Text style={styles.logoutText}>{loggingOut ? 'Signing out…' : 'Log Out of This Account'}</Text>
+            <View style={styles.itemInfo}>
+                <View style={[styles.iconContainer, styles.logoutIconWrap]}>
+                    <LogOut size={18} color={Colors.error} />
+                </View>
+                <View>
+                    <Text style={styles.logoutItemName}>{loggingOut ? 'Signing out…' : 'Log Out'}</Text>
+                    <Text style={styles.itemSub}>Sign out of this account on this device</Text>
+                </View>
+            </View>
         </TouchableOpacity>
     );
-
-    // Saved accounts (multi-account switcher list) — shown on the Account tab
-    // so any signed-in user can be logged out individually from this device.
-    const [savedAccounts, setSavedAccounts] = useState([]);
-    const [activeAccountId, setActiveAccountId] = useState(null);
-    const [loadingAccounts, setLoadingAccounts] = useState(false);
-    const [removingAccountId, setRemovingAccountId] = useState(null);
-
-    const loadSavedAccounts = async () => {
-        setLoadingAccounts(true);
-        try {
-            await ensureAccountsMigrated();
-            const [list, id] = await Promise.all([listAccounts(), getActiveAccountId()]);
-            setSavedAccounts(list);
-            setActiveAccountId(id);
-        } catch (e) {
-            console.log('[Settings] Failed to load saved accounts:', e?.message || e);
-        } finally {
-            setLoadingAccounts(false);
-        }
-    };
-
-    useEffect(() => {
-        if (activeTab === 'account') {
-            loadSavedAccounts();
-        }
-    }, [activeTab]);
 
     const handleRemoveAccount = (account) => {
         if (!account || removingAccountId) return;
@@ -889,7 +902,7 @@ function SettingsView({
                             </View>
                             <View>
                                 <Text style={styles.itemName}>Manage Users</Text>
-                                <Text style={styles.itemSub}>Reset passwords & create new users (Owner)</Text>
+                                <Text style={styles.itemSub}>Reset, create, or delete users (Owner)</Text>
                             </View>
                         </View>
                         <ChevronRight size={20} color={Colors.textDim} />
@@ -1035,13 +1048,13 @@ function SettingsView({
     const renderAccount = () => {
         const activeAccount = savedAccounts.find((a) => a.id === activeAccountId);
         return (
-        <ScrollView contentContainerStyle={styles.accountContent}>
-            <View style={styles.profileSection}>
-                <View style={[styles.iconContainer, { width: 80, height: 80, borderRadius: 40, marginBottom: 16 }]}>
-                    <User size={40} color={Colors.text} />
+        <ScrollView contentContainerStyle={styles.listContent}>
+            <View style={styles.section}>
+                <Text style={styles.sectionHeader}>Signed in as</Text>
+                <View style={styles.profileBlock}>
+                    <Text style={styles.profileName}>{displayName}</Text>
+                    <Text style={styles.profileRole}>{activeAccount?.profileName || roleName || 'User'}</Text>
                 </View>
-                <Text style={styles.profileName}>{displayName}</Text>
-                <Text style={styles.profileRole}>{activeAccount?.profileName || roleName || 'User'}</Text>
             </View>
 
             <View style={styles.section}>
@@ -1052,7 +1065,7 @@ function SettingsView({
                     )}
                 </View>
                 <Text style={styles.accountSectionHint}>
-                    Devices staying signed in on this app. Log out any account you no longer need here.
+                    Accounts saved on this device. Remove any you no longer need.
                 </Text>
 
                 {loadingAccounts ? (
@@ -1093,7 +1106,7 @@ function SettingsView({
                                     </View>
 
                                     <TouchableOpacity
-                                        style={[styles.accountLogoutBtn, busy && { opacity: 0.6 }]}
+                                        style={[styles.accountRemoveBtn, busy && { opacity: 0.6 }]}
                                         onPress={() => handleRemoveAccount(account)}
                                         disabled={!!removingAccountId}
                                         hitSlop={6}
@@ -1102,7 +1115,7 @@ function SettingsView({
                                         {busy ? (
                                             <ActivityIndicator size="small" color={Colors.error} />
                                         ) : (
-                                            <LogOut size={16} color={Colors.error} />
+                                            <Text style={styles.accountRemoveText}>Remove</Text>
                                         )}
                                     </TouchableOpacity>
                                 </View>
@@ -1112,7 +1125,9 @@ function SettingsView({
                 )}
             </View>
 
-            {logoutButton}
+            <View style={styles.section}>
+                {logoutButton}
+            </View>
         </ScrollView>
         );
     };
@@ -1126,17 +1141,24 @@ function SettingsView({
                 <Text style={styles.title}>{settingsAllowed ? 'Settings' : 'Account'}</Text>
             </View>
 
-            {!settingsAllowed ? (
-                <ScrollView contentContainerStyle={styles.accountContent}>
-                    <View style={styles.profileSection}>
-                        <View style={[styles.iconContainer, { width: 80, height: 80, borderRadius: 40, marginBottom: 16 }]}>
-                            <User size={40} color={Colors.text} />
+            {!settingsReady ? (
+                <View style={styles.loadingScreen}>
+                    <ActivityIndicator size="large" color={Colors.primary} />
+                    <Text style={styles.loadingText}>Loading settings…</Text>
+                </View>
+            ) : !settingsAllowed ? (
+                <ScrollView contentContainerStyle={styles.listContent}>
+                    <View style={styles.section}>
+                        <Text style={styles.sectionHeader}>Signed in as</Text>
+                        <View style={styles.profileBlock}>
+                            <Text style={styles.profileName}>{displayName}</Text>
+                            <Text style={styles.profileRole}>{roleName || 'User'}</Text>
+                            <Text style={styles.restrictedHint}>Settings are restricted for this role.</Text>
                         </View>
-                        <Text style={styles.profileName}>{displayName}</Text>
-                        <Text style={styles.profileRole}>{roleName || 'User'}</Text>
-                        <Text style={styles.restrictedHint}>Settings are restricted for this role.</Text>
                     </View>
-                    {logoutButton}
+                    <View style={styles.section}>
+                        {logoutButton}
+                    </View>
                 </ScrollView>
             ) : (
                 <>
@@ -1230,6 +1252,18 @@ const styles = StyleSheet.create({
     title: {
         ...Heading.xl,
         color: '#fff',
+    },
+    loadingScreen: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingBottom: 80,
+        gap: 14,
+    },
+    loadingText: {
+        color: 'rgba(237,237,245,0.5)',
+        fontSize: 14,
+        fontFamily: CF.medium,
     },
     tabsScroll: {
         flexGrow: 0,
@@ -1478,51 +1512,33 @@ const styles = StyleSheet.create({
         fontSize: 16,
     },
     // Account Styles
-    accountContent: {
-        flexGrow: 1, // Changed from flex: 1 to flexGrow: 1 for ScrollView
-        alignItems: 'center',
-        paddingTop: 40,
-    },
-    profileSection: {
-        alignItems: 'center',
-        marginBottom: 60,
+    profileBlock: {
+        paddingBottom: 4,
     },
     profileName: {
-        fontSize: 24,
-        fontWeight: 'bold',
+        fontSize: 22,
+        fontFamily: CF.semibold,
         color: Colors.text,
         marginBottom: 4,
     },
     profileRole: {
-        fontSize: 16,
+        fontSize: 14,
+        fontFamily: CF.regular,
         color: Colors.textDim,
     },
     restrictedHint: {
-        marginTop: 12,
+        marginTop: 10,
         fontSize: 13,
         fontFamily: CF.medium,
         color: 'rgba(255,255,255,0.45)',
-        textAlign: 'center',
-        paddingHorizontal: 24,
     },
-    logoutBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: 8,
-        marginTop: 28,
-        marginBottom: 40,
-        marginHorizontal: 16,
-        paddingVertical: 15,
-        borderRadius: 16,
-        backgroundColor: 'rgba(239,68,68,0.1)',
-        borderWidth: 1,
-        borderColor: 'rgba(239,68,68,0.3)',
+    logoutIconWrap: {
+        backgroundColor: 'rgba(239,68,68,0.12)',
     },
-    logoutText: {
+    logoutItemName: {
         color: Colors.error,
-        fontSize: 15,
-        fontFamily: CF.semibold,
+        fontSize: 16,
+        fontFamily: CF.medium,
     },
     accountSectionHeaderRow: {
         flexDirection: 'row',
@@ -1615,13 +1631,16 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontFamily: CF.regular,
     },
-    accountLogoutBtn: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
-        alignItems: 'center',
-        justifyContent: 'center',
-        backgroundColor: 'rgba(239,68,68,0.12)',
+    accountRemoveBtn: {
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 8,
+        backgroundColor: 'rgba(239,68,68,0.1)',
+    },
+    accountRemoveText: {
+        color: Colors.error,
+        fontSize: 12,
+        fontFamily: CF.semibold,
     },
 });
 

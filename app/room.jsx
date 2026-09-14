@@ -1,7 +1,7 @@
 import { useLocalSearchParams, useRouter, Stack } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { View, Text, ActivityIndicator } from 'react-native';
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { HAService } from '../services/ha';
 import RoomDetailView from '../components/DashboardV2/RoomDetailView';
 import { peekRoomPageBootstrap } from '../utils/roomPageBootstrap';
@@ -254,7 +254,7 @@ export default function RoomPage() {
         return service.current?.callService(domain, serviceName, data);
     };
 
-    const room = { area_id, name, picture };
+    const room = useMemo(() => ({ area_id, name, picture }), [area_id, name, picture]);
 
     const {
         areaTabs,

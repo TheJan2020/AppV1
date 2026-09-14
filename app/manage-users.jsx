@@ -1,12 +1,12 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
     View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView,
-    TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Modal,
+    TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Modal, Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
-import { Users, KeyRound, UserPlus, X, Eye, EyeOff, ShieldCheck } from 'lucide-react-native';
+import { KeyRound, UserPlus, X, Eye, EyeOff, ShieldCheck, Trash2 } from 'lucide-react-native';
 import { StatusBar } from 'expo-status-bar';
 
 import { Colors } from '../constants/Colors';
@@ -21,8 +21,9 @@ import { authFetch } from '../utils/authFetch';
  *    /api/auth/admin-reset-password (which uses HA_OWNER_TOKEN server-side).
  *  - Create brand-new Home Assistant users (with a username/password login),
  *    via /api/auth/create-user.
+ *  - Delete users (except the owner account) via /api/auth/delete-user.
  *
- * Both endpoints re-verify server-side that the requester really is the HA
+ * These endpoints re-verify server-side that the requester really is the HA
  * owner — this screen being visible is just a UI convenience, not the real
  * security boundary.
  */
@@ -59,6 +60,7 @@ export default function ManageUsersPage() {
     const [showNewPassword, setShowNewPassword] = useState(false);
     const [creating, setCreating] = useState(false);
     const [createError, setCreateError] = useState('');
+    const [deletingUserId, setDeletingUserId] = useState('');
 
     const base = adminUrl ? (adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`) : '';
 
@@ -100,14 +102,23 @@ export default function ManageUsersPage() {
 
     useEffect(() => { loadRoles(); }, [loadRoles]);
 
-    const getRoleForUser = (user) => {
+    const getRoleMeta = (user) => {
         const match = roleAssignments.find(
             (a) => a.userId === user.user_id || (a.username && a.username === user.username)
         );
         const roleId = match ? match.roleId : 'admin';
         const role = roles.find((r) => r.id === roleId);
-        return role ? role.name : roleId;
+        const name = role ? role.name : roleId;
+        const key = String(roleId || '').toLowerCase();
+        let tint = Colors.primary;
+        if (key === 'admin') tint = '#38bdf8';
+        else if (key.includes('kid') || key.includes('child')) tint = '#f472b6';
+        else if (key.includes('guest')) tint = '#facc15';
+        else if (key.includes('family')) tint = '#34d399';
+        return { id: roleId, name, tint };
     };
+
+    const getRoleForUser = (user) => getRoleMeta(user).name;
 
     const openRoleModal = (user) => {
         setRoleError('');
@@ -146,6 +157,59 @@ export default function ManageUsersPage() {
             setRoleError('Network error. Try again.');
         } finally {
             setAssigningRole(false);
+        }
+    };
+
+    const isOwnerAccount = (user) => {
+        const req = String(requesterUsername || '').trim().toLowerCase();
+        const un = String(user?.username || '').trim().toLowerCase();
+        return !!(req && un && req === un);
+    };
+
+    const handleDelete = (user) => {
+        if (!user?.user_id || isOwnerAccount(user)) return;
+        const label = user.name || user.username || 'this user';
+        Alert.alert(
+            'Delete user?',
+            `${label} will be removed from Home Assistant and will no longer be able to sign in to the app. This cannot be undone.`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Delete',
+                    style: 'destructive',
+                    onPress: () => confirmDelete(user),
+                },
+            ],
+        );
+    };
+
+    const confirmDelete = async (user) => {
+        setDeletingUserId(user.user_id);
+        try {
+            const res = await authFetch(`${base}api/auth/delete-user`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    requesterUsername,
+                    userId: user.user_id,
+                    username: user.username,
+                }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (res.ok && data.ok) {
+                setUsers((prev) => prev.filter((u) => u.user_id !== user.user_id));
+                setRoleAssignments((prev) => prev.filter(
+                    (a) => a.userId !== user.user_id && a.username !== user.username,
+                ));
+                if (resetModal?.user_id === user.user_id) setResetModal(null);
+                if (roleModal?.user_id === user.user_id) setRoleModal(null);
+            } else {
+                Alert.alert('Could not delete user', data.error || 'Please try again.');
+            }
+        } catch {
+            Alert.alert('Could not delete user', 'Network error. Try again.');
+        } finally {
+            setDeletingUserId('');
         }
     };
 
@@ -247,8 +311,7 @@ export default function ManageUsersPage() {
                 </View>
 
                 <Text style={styles.ownerNote}>
-                    As the Home Assistant owner, you can reset any user&apos;s password (no old password
-                    needed) or create a brand-new user for the app.
+                    Reset passwords, create users, or remove accounts. Your owner account cannot be deleted.
                 </Text>
 
                 {loading ? (
@@ -261,25 +324,54 @@ export default function ManageUsersPage() {
                     </View>
                 ) : (
                     <ScrollView contentContainerStyle={styles.list}>
-                        {users.map((u) => (
-                            <View key={u.user_id} style={styles.userRow}>
-                                <View style={styles.userIconBadge}>
-                                    <Users size={18} color={Colors.primary} />
+                        {users.map((u) => {
+                            const ownerAccount = isOwnerAccount(u);
+                            const deleting = deletingUserId === u.user_id;
+                            const role = getRoleMeta(u);
+                            const displayName = u.name || u.username || '?';
+                            const initial = String(displayName).trim().charAt(0).toUpperCase() || '?';
+                            return (
+                            <View key={u.user_id} style={styles.userCard}>
+                                <View style={styles.userTop}>
+                                    <View style={[styles.userIconBadge, { backgroundColor: `${role.tint}22` }]}>
+                                        <Text style={[styles.userInitial, { color: role.tint }]}>{initial}</Text>
+                                    </View>
+                                    <View style={styles.userIdentity}>
+                                        <Text style={styles.userName} numberOfLines={1}>{displayName}</Text>
+                                        <Text style={styles.userSub} numberOfLines={1}>
+                                            {ownerAccount ? `${u.username} · Owner` : u.username}
+                                        </Text>
+                                    </View>
                                 </View>
-                                <View style={{ flex: 1 }}>
-                                    <Text style={styles.userName}>{u.name || u.username}</Text>
-                                    <Text style={styles.userSub}>{u.username}</Text>
+                                <View style={styles.userActions}>
+                                    <TouchableOpacity
+                                        style={[styles.roleBtn, { borderColor: `${role.tint}55`, backgroundColor: `${role.tint}18` }]}
+                                        onPress={() => openRoleModal(u)}
+                                    >
+                                        <ShieldCheck size={14} color={role.tint} />
+                                        <Text style={[styles.roleBtnText, { color: role.tint }]} numberOfLines={1}>
+                                            {role.name}
+                                        </Text>
+                                    </TouchableOpacity>
+                                    <TouchableOpacity style={styles.resetBtn} onPress={() => openReset(u)}>
+                                        <KeyRound size={14} color="#fff" />
+                                        <Text style={styles.resetBtnText}>Reset</Text>
+                                    </TouchableOpacity>
+                                    {!ownerAccount ? (
+                                        <TouchableOpacity
+                                            style={[styles.deleteBtn, deleting && { opacity: 0.6 }]}
+                                            onPress={() => handleDelete(u)}
+                                            disabled={!!deletingUserId}
+                                        >
+                                            {deleting
+                                                ? <ActivityIndicator color="#f87171" size="small" />
+                                                : <Trash2 size={15} color="#f87171" />}
+                                        </TouchableOpacity>
+                                    ) : null}
                                 </View>
-                                <TouchableOpacity style={styles.roleBtn} onPress={() => openRoleModal(u)}>
-                                    <ShieldCheck size={16} color={Colors.primary} />
-                                    <Text style={styles.roleBtnText}>{getRoleForUser(u)}</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity style={styles.resetBtn} onPress={() => openReset(u)}>
-                                    <KeyRound size={16} color="#fff" />
-                                    <Text style={styles.resetBtnText}>Reset</Text>
-                                </TouchableOpacity>
                             </View>
-                        ))}
+                            );
+                        })}
                     </ScrollView>
                 )}
             </SafeAreaView>
@@ -510,49 +602,79 @@ const styles = StyleSheet.create({
         paddingHorizontal: 20,
         paddingBottom: 40,
     },
-    userRow: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: 12,
+    userCard: {
         backgroundColor: 'rgba(255,255,255,0.04)',
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.08)',
-        borderRadius: 14,
+        borderRadius: 16,
         paddingHorizontal: 14,
-        paddingVertical: 12,
+        paddingTop: 14,
+        paddingBottom: 12,
         marginBottom: 10,
+        gap: 12,
+    },
+    userTop: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+    },
+    userIdentity: {
+        flex: 1,
+        minWidth: 0,
+    },
+    userActions: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    deleteBtn: {
+        width: 42, height: 38, borderRadius: 10,
+        alignItems: 'center', justifyContent: 'center',
+        backgroundColor: 'rgba(239,68,68,0.12)',
+        borderWidth: 1,
+        borderColor: 'rgba(239,68,68,0.28)',
     },
     userIconBadge: {
-        width: 36, height: 36, borderRadius: 18,
-        backgroundColor: 'rgba(137,71,202,0.15)',
+        width: 40, height: 40, borderRadius: 20,
+        backgroundColor: 'rgba(56,189,248,0.15)',
         alignItems: 'center', justifyContent: 'center',
+    },
+    userInitial: {
+        color: Colors.primary,
+        fontSize: 16,
+        fontFamily: CF.semibold,
     },
     userName: {
         color: '#ededf5',
-        fontSize: 14,
+        fontSize: 15,
         fontFamily: CF.semibold,
     },
     userSub: {
-        color: 'rgba(237,237,245,0.4)',
+        color: 'rgba(237,237,245,0.45)',
         fontSize: 12,
         fontFamily: CF.regular,
+        marginTop: 2,
     },
     roleBtn: {
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         gap: 6,
-        backgroundColor: 'rgba(137,71,202,0.15)',
+        backgroundColor: 'rgba(56,189,248,0.12)',
         borderWidth: 1,
-        borderColor: 'rgba(137,71,202,0.3)',
+        borderColor: 'rgba(56,189,248,0.3)',
         borderRadius: 10,
         paddingHorizontal: 10,
-        paddingVertical: 8,
+        paddingVertical: 9,
+        minHeight: 38,
     },
     roleBtnText: {
         color: Colors.primary,
-        fontSize: 12,
+        fontSize: 12.5,
         fontFamily: CF.semibold,
         textTransform: 'capitalize',
+        flexShrink: 1,
     },
     roleOption: {
         flexDirection: 'row',
@@ -581,13 +703,16 @@ const styles = StyleSheet.create({
         fontFamily: CF.semibold,
     },
     resetBtn: {
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         gap: 6,
         backgroundColor: Colors.primary,
         borderRadius: 10,
         paddingHorizontal: 12,
-        paddingVertical: 8,
+        paddingVertical: 9,
+        minHeight: 38,
     },
     resetBtnText: {
         color: '#fff',

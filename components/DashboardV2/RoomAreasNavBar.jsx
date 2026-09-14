@@ -15,8 +15,10 @@ function RoomAreasNavBar({ tabs = [], activeKey, onSelect }) {
         <View style={styles.wrap}>
             <ScrollView
                 horizontal
-                showsHorizontalScrollIndicator
+                showsHorizontalScrollIndicator={false}
                 nestedScrollEnabled
+                keyboardShouldPersistTaps="always"
+                directionalLockEnabled
                 style={styles.scroll}
                 contentContainerStyle={styles.row}
             >
