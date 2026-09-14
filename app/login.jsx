@@ -1617,6 +1617,16 @@ export default function Login() {
                                         )}
                                     </TouchableOpacity>
 
+                                    <TouchableOpacity
+                                        style={styles.forgotPasswordLink}
+                                        onPress={() => router.push({
+                                            pathname: '/forgot-password',
+                                            params: { adminUrl, username },
+                                        })}
+                                    >
+                                        <Text style={styles.forgotPasswordText}>Forgot password?</Text>
+                                    </TouchableOpacity>
+
                                     {faceIdEnabled && isBiometricSupported && !isAddAccount && (
                                         <TouchableOpacity
                                             style={[styles.bioButton, { opacity: (isLoggingIn || !hasSavedBiometricCreds) ? 0.55 : 1 }]}
@@ -1973,6 +1983,18 @@ const styles = StyleSheet.create({
     supportEmail: {
         color: Colors.primary,
         textDecorationLine: 'underline',
+    },
+    forgotPasswordLink: {
+        alignSelf: 'center',
+        marginTop: 14,
+        marginBottom: 4,
+        paddingVertical: 4,
+        paddingHorizontal: 8,
+    },
+    forgotPasswordText: {
+        color: Colors.textDim,
+        fontSize: 13,
+        fontWeight: '500',
     },
     // Settings & Profiles
     sectionTitle: {

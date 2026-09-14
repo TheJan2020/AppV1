@@ -1,10 +1,10 @@
 import React, { memo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Cloud, CloudRain, Sun, CloudSnow, CloudLightning, Bell } from 'lucide-react-native';
+import { Cloud, CloudRain, Sun, CloudSnow, CloudLightning, Bell, Users } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
 
-function HeaderV2({ weather, cityName, userName, humidity, indoorTemp, onBellPress, unreadCount = 0, onUserPress }) {
+function HeaderV2({ weather, cityName, userName, humidity, indoorTemp, onBellPress, unreadCount = 0, onUserPress, activeUsersCount = 0, onActiveUsersPress }) {
     const insets = useSafeAreaInsets();
 
     const capitalizeWords = (str) => {
@@ -91,19 +91,38 @@ function HeaderV2({ weather, cityName, userName, humidity, indoorTemp, onBellPre
 
             {/* Weather info row */}
             <View style={styles.weatherRow}>
-                {getWeatherIcon(state)}
-                <Text style={styles.weatherText}>{stateLabel}, {temp}°C</Text>
+                <View style={styles.weatherLeft}>
+                    {getWeatherIcon(state)}
+                    <Text style={styles.weatherText}>{stateLabel}, {temp}°C</Text>
 
-                <Text style={styles.dot}>·</Text>
-                <Text style={styles.weatherText}>
-                    Humidity {humidityVal !== null ? `${humidityVal}%` : '--'}
-                </Text>
+                    <Text style={styles.dot}>·</Text>
+                    <Text style={styles.weatherText}>
+                        Humidity {humidityVal !== null ? `${humidityVal}%` : '--'}
+                    </Text>
 
-                {indoorVal !== null && (
-                    <>
-                        <Text style={styles.dot}>·</Text>
-                        <Text style={styles.weatherText}>Indoor {indoorVal}°C</Text>
-                    </>
+                    {indoorVal !== null && (
+                        <>
+                            <Text style={styles.dot}>·</Text>
+                            <Text style={styles.weatherText}>Indoor {indoorVal}°C</Text>
+                        </>
+                    )}
+                </View>
+
+                {!!onActiveUsersPress && (
+                    <TouchableOpacity
+                        style={styles.activeUsersPill}
+                        onPress={onActiveUsersPress}
+                        activeOpacity={0.75}
+                        accessibilityLabel={`Active users, ${activeUsersCount}`}
+                    >
+                        <Users size={12} color={activeUsersCount > 0 ? '#26D07C' : 'rgba(237,237,245,0.4)'} />
+                        <Text style={[
+                            styles.activeUsersText,
+                            activeUsersCount > 0 && styles.activeUsersTextOn,
+                        ]}>
+                            {activeUsersCount}
+                        </Text>
+                    </TouchableOpacity>
                 )}
             </View>
         </View>
@@ -170,9 +189,15 @@ const styles = StyleSheet.create({
     weatherRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        flexWrap: 'wrap',
-        gap: 5,
+        justifyContent: 'space-between',
         marginTop: 2,
+    },
+    weatherLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        flexShrink: 1,
+        gap: 5,
     },
     weatherText: {
         color: 'rgba(237,237,245,0.6)',
@@ -182,6 +207,26 @@ const styles = StyleSheet.create({
     dot: {
         color: 'rgba(237,237,245,0.25)',
         fontSize: 12,
+    },
+    activeUsersPill: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        paddingHorizontal: 9,
+        paddingVertical: 5,
+        borderRadius: 14,
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+        marginLeft: 8,
+    },
+    activeUsersText: {
+        fontSize: 12,
+        fontFamily: CF.semibold,
+        color: 'rgba(237,237,245,0.5)',
+    },
+    activeUsersTextOn: {
+        color: '#26D07C',
     },
 });
 

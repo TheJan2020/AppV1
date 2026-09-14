@@ -214,7 +214,7 @@ export function camerasFromBackendPayload(data) {
 
 export async function fetchRoleCameras({ adminUrl, token, userId, username }) {
     const base = String(adminUrl || '').replace(/\/+$/, '');
-    if (!base) return { cameras: [], homeCameras: [], allCameras: true };
+    if (!base) return { cameras: [], homeCameras: [], allCameras: true, camerasGloballyEnabled: true };
     const qs = new URLSearchParams({
         t: String(Date.now()),
         userId: String(userId || ''),
@@ -236,6 +236,7 @@ export async function fetchRoleCameras({ adminUrl, token, userId, username }) {
             cameras: camerasFromBackendPayload(data),
             homeCameras: Array.isArray(data.home_cameras) ? data.home_cameras : [],
             allCameras: data.allCameras !== false,
+            camerasGloballyEnabled: data.cameras_globally_enabled !== false,
         };
     } finally {
         if (timer) clearTimeout(timer);

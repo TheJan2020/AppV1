@@ -23,6 +23,7 @@ import QuickControlsWidget from '../components/DashboardV3/QuickControlsWidget';
 import FamilyWidget from '../components/DashboardV3/FamilyWidget';
 import RoomsWidget from '../components/DashboardV3/RoomsWidget';
 import CamerasWidget from '../components/DashboardV3/CamerasWidget';
+import ActiveUsersWidget from '../components/DashboardV3/ActiveUsersWidget';
 
 // V2 components for modals
 import RoomSheet from '../components/DashboardV2/RoomSheet';
@@ -287,6 +288,13 @@ export default function DashboardV3() {
                                 totalColumns={totalCols}
                             />
                         )}
+
+                        {/* Row 1.5: Active Users */}
+                        <ActiveUsersWidget
+                            weather={weather}
+                            span={totalCols >= 4 ? 2 : totalCols >= 3 ? 2 : 2}
+                            totalColumns={totalCols}
+                        />
 
                         {/* Row 2: Todo + Calendar + Sensors */}
                         <TodoWidget

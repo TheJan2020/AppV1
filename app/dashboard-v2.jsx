@@ -10,14 +10,15 @@ import AlertNotificationModal from '../components/DashboardV2/AlertNotificationM
 import SecurityAlertModal from '../components/DashboardV2/SecurityAlertModal';
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, Alert, InteractionManager } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, Alert, InteractionManager, Modal, TextInput, ActivityIndicator } from 'react-native';
 import HomeCameraStrip from '../components/DashboardV2/HomeCameraStrip';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import HeaderV2 from '../components/DashboardV2/HeaderV2';
 import AccountSwitcherModal from '../components/DashboardV2/AccountSwitcherModal';
 import StatusBadges from '../components/DashboardV2/StatusBadges';
-import PersonBadges from '../components/DashboardV2/PersonBadges';
+import ActiveUsersSheetModal from '../components/DashboardV2/ActiveUsersSheetModal';
+import { useActiveUsers } from '../hooks/useActiveUsers';
 import LocksModal from '../components/DashboardV2/LocksModal';
 import DevicesToggleModal from '../components/DashboardV2/DevicesToggleModal';
 import SettingsView from '../components/DashboardV2/SettingsView';
@@ -99,6 +100,12 @@ import {
     withFailoverUrls,
 } from '../services/connectionEndpoints';
 import { probeDashboard, applyBootstrapHaToConfig } from '../services/homeBootstrap';
+import { authFetch } from '../utils/authFetch';
+import {
+    disableCamerasGlobally as disableCamerasGloballyApi,
+    requestEnableCameras as requestEnableCamerasApi,
+    verifyEnableCameras as verifyEnableCamerasApi,
+} from '../services/cameraVisibility';
 
 export default function DashboardV2() {
     const router = useRouter();
@@ -125,6 +132,18 @@ export default function DashboardV2() {
     const homeKeyRef = useRef(`${bootProf?.profileId || ''}::${toHaHttpUrl(bootProf?.url || '').replace(/\/+$/, '').toLowerCase()}`);
     const haLiveRef = useRef(false);
     const saveTimerRef = useRef(null);
+    /**
+     * Guards against overlapping loadConnectionConfig() calls. Account switching
+     * can trigger this function from several places almost simultaneously
+     * (handleAccountSwitched's direct call, the switchKey effect it also
+     * triggers via router.setParams, and useFocusEffect firing on regained
+     * focus). Without this guard, two overlapping runs could race — one
+     * call's resetHomeDashboardState/HAService.disconnectAll() wiping state
+     * that the other call just populated — which is why rooms/entities would
+     * sometimes fail to (re)load after switching accounts.
+     */
+    const loadConnectionInFlightRef = useRef(false);
+    const loadConnectionPendingRef = useRef(false);
 
     const [entities, setEntities] = useState(() => bootValue('entities', []));
     const [cityName, setCityName] = useState(() => bootValue('cityName', 'Home'));
@@ -140,11 +159,21 @@ export default function DashboardV2() {
     const [userHomeCameras, setUserHomeCameras] = useState(null);
     /** First Frigate config fetch finished (success or fail) — camera strip uses skeleton until then to avoid a blank gap. */
     const [frigateConfigResolved, setFrigateConfigResolved] = useState(false);
+    /** Owner-controlled global switch — when false, cameras are hidden from every account/device. */
+    const [camerasGloballyEnabled, setCamerasGloballyEnabled] = useState(true);
+    const [isHaOwner, setIsHaOwner] = useState(false);
+    const [cameraTogglingOff, setCameraTogglingOff] = useState(false);
+    const [showEnableCamerasModal, setShowEnableCamerasModal] = useState(false);
+    const [enableCamerasStep, setEnableCamerasStep] = useState('request'); // 'request' | 'code'
+    const [enableCamerasCode, setEnableCamerasCode] = useState('');
+    const [enableCamerasBusy, setEnableCamerasBusy] = useState(false);
+    const [enableCamerasError, setEnableCamerasError] = useState('');
     const [selectedFrigateCamera, setSelectedFrigateCamera] = useState(null);
     const [showFrigateModal, setShowFrigateModal] = useState(false);
     const [frigateInitialView, setFrigateInitialView] = useState('live'); // 'live' or 'history'
     const [showNetworkModal, setShowNetworkModal] = useState(false);
     const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
+    const [showActiveUsers, setShowActiveUsers] = useState(false);
     const [roomTrackingLookup, setRoomTrackingLookup] = useState(() => bootValue('roomTrackingLookup', {}));
 
     // Settings State
@@ -217,6 +246,12 @@ export default function DashboardV2() {
     }, []);
 
     const loadConnectionConfig = async () => {
+        // De-dupe overlapping calls (see loadConnectionInFlightRef comment above).
+        if (loadConnectionInFlightRef.current) {
+            loadConnectionPendingRef.current = true;
+            return;
+        }
+        loadConnectionInFlightRef.current = true;
         try {
             // 1. Try to load from Profiles first
             const [activeProfileId, profiles] = await Promise.all([
@@ -307,6 +342,14 @@ export default function DashboardV2() {
             console.log('Error loading connection config:', e);
             // Fallback
             setConnectionConfig(prev => ({ ...prev, loaded: true }));
+        } finally {
+            loadConnectionInFlightRef.current = false;
+            if (loadConnectionPendingRef.current) {
+                loadConnectionPendingRef.current = false;
+                // Another switch/focus event asked for a reload while we were
+                // busy — run once more now so we don't end up serving stale data.
+                loadConnectionConfig();
+            }
         }
     };
 
@@ -557,7 +600,12 @@ export default function DashboardV2() {
 
     useEffect(() => {
         fetchMappings();
-    }, [connectionConfig.loaded, connectionConfig.adminUrl]);
+        // Also re-run when the HA token changes: two accounts can point at the
+        // exact same admin/home URL, so `adminUrl` alone doesn't change when
+        // switching between them — without `token` here, quick scenes (and the
+        // other mappings fetched below) would keep showing empty/stale data
+        // after resetHomeDashboardState() cleared them for the new account.
+    }, [connectionConfig.loaded, connectionConfig.adminUrl, connectionConfig.token]);
 
     // Initial Load Logic
     useEffect(() => {
@@ -933,6 +981,9 @@ export default function DashboardV2() {
     }, [connectionConfig.loaded, connectionConfig.token, connectionConfig.haUrlLive, connectionConfig.haUrlLocal]);
 
     const weather = useMemo(() => entities.find(e => e.entity_id.startsWith('weather.')), [entities]);
+
+    const { users: activeUsers, loading: activeUsersLoading, error: activeUsersError } =
+        useActiveUsers(connectionConfig.adminUrl, connectionConfig.token);
 
     // Humidity: from weather entity attributes, or from a dedicated humidity sensor
     const humidity = useMemo(() => {
@@ -1492,7 +1543,7 @@ export default function DashboardV2() {
         refreshAppRole();
     }, [refreshAppRole]);
 
-    useEffect(() => {
+    const reloadCameras = useCallback(() => {
         if (!connectionConfig.loaded || !connectionConfig.adminUrl) {
             if (connectionConfig.loaded) setFrigateConfigResolved(true);
             return undefined;
@@ -1515,6 +1566,7 @@ export default function DashboardV2() {
                 setFrigateCameras(result.cameras);
                 setHaCameras([]);
                 setUserHomeCameras(Array.isArray(result.homeCameras) ? result.homeCameras : []);
+                setCamerasGloballyEnabled(result.camerasGloballyEnabled !== false);
             })
             .catch((e) => logOperationalIssue('Cameras', e))
             .finally(() => {
@@ -1522,6 +1574,107 @@ export default function DashboardV2() {
             });
         return () => { cancelled = true; };
     }, [connectionConfig.loaded, connectionConfig.adminUrl, connectionConfig.token, userId, userName]);
+
+    useEffect(() => {
+        return reloadCameras();
+    }, [reloadCameras]);
+
+    // Owner status — used to show the global camera on/off switch only to the HA owner.
+    useEffect(() => {
+        const effectiveUser = userName;
+        const adminUrl = connectionConfig.adminUrl;
+        if (!effectiveUser || !adminUrl) {
+            setIsHaOwner(false);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            try {
+                const base = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
+                const res = await authFetch(`${base}api/auth/owner-status?username=${encodeURIComponent(effectiveUser)}`);
+                const data = await res.json().catch(() => ({}));
+                if (!cancelled) setIsHaOwner(!!data.isOwner);
+            } catch {
+                if (!cancelled) setIsHaOwner(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [userName, connectionConfig.adminUrl]);
+
+    const handleDisableCameras = useCallback(() => {
+        Alert.alert(
+            'Hide cameras for everyone?',
+            'No one will see any camera, on any device, until you turn this back on with an emailed code.',
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Hide Cameras',
+                    style: 'destructive',
+                    onPress: async () => {
+                        setCameraTogglingOff(true);
+                        try {
+                            const result = await disableCamerasGloballyApi(connectionConfig.adminUrl, userName);
+                            if (result.ok) {
+                                setCamerasGloballyEnabled(false);
+                                setBackendCameras([]);
+                                setFrigateCameras([]);
+                                setUserHomeCameras([]);
+                            } else {
+                                Alert.alert('Error', result.error || 'Could not hide cameras.');
+                            }
+                        } catch {
+                            Alert.alert('Error', 'Network error. Please try again.');
+                        } finally {
+                            setCameraTogglingOff(false);
+                        }
+                    },
+                },
+            ],
+        );
+    }, [connectionConfig.adminUrl, userName]);
+
+    const openEnableCamerasFlow = useCallback(async () => {
+        setEnableCamerasError('');
+        setEnableCamerasCode('');
+        setEnableCamerasStep('request');
+        setShowEnableCamerasModal(true);
+        setEnableCamerasBusy(true);
+        try {
+            const result = await requestEnableCamerasApi(connectionConfig.adminUrl, userName);
+            if (result.ok) {
+                setEnableCamerasStep('code');
+            } else {
+                setEnableCamerasError(result.error || 'Could not send the code email.');
+            }
+        } catch {
+            setEnableCamerasError('Network error. Please try again.');
+        } finally {
+            setEnableCamerasBusy(false);
+        }
+    }, [connectionConfig.adminUrl, userName]);
+
+    const submitEnableCamerasCode = useCallback(async () => {
+        if (!enableCamerasCode.trim()) {
+            setEnableCamerasError('Enter the 6-digit code from your email.');
+            return;
+        }
+        setEnableCamerasBusy(true);
+        setEnableCamerasError('');
+        try {
+            const result = await verifyEnableCamerasApi(connectionConfig.adminUrl, userName, enableCamerasCode.trim());
+            if (result.ok) {
+                setCamerasGloballyEnabled(true);
+                setShowEnableCamerasModal(false);
+                reloadCameras();
+            } else {
+                setEnableCamerasError(result.error || 'Incorrect code.');
+            }
+        } catch {
+            setEnableCamerasError('Network error. Please try again.');
+        } finally {
+            setEnableCamerasBusy(false);
+        }
+    }, [connectionConfig.adminUrl, userName, enableCamerasCode, reloadCameras]);
 
     useEffect(() => {
         if (!Array.isArray(allowedScreens)) return;
@@ -1851,6 +2004,7 @@ export default function DashboardV2() {
     if (snapshotRef.current) snapshotRef.current.rooms = roomsWithCounts;
 
     const displayCameras = useMemo(() => {
+        if (!camerasGloballyEnabled) return [];
         if (!appRole || appRole.roleId === 'pending') return [];
         if (!roleCanSeeCameras(appRole, allowedScreens)) return [];
         if (Array.isArray(backendCameras) && backendCameras.length > 0) return backendCameras;
@@ -1860,7 +2014,7 @@ export default function DashboardV2() {
             appRole,
             badgeConfig?.selected_cameras,
         );
-    }, [backendCameras, frigateCameras, haCameras, appRole, allowedScreens, badgeConfig?.selected_cameras]);
+    }, [camerasGloballyEnabled, backendCameras, frigateCameras, haCameras, appRole, allowedScreens, badgeConfig?.selected_cameras]);
 
     const homeCameraIds = useMemo(() => {
         if (!appRole || appRole.roleId === 'pending') return [];
@@ -2145,6 +2299,14 @@ export default function DashboardV2() {
                 onEditHome={handleEditHome}
             />
 
+            <ActiveUsersSheetModal
+                visible={showActiveUsers}
+                onClose={() => setShowActiveUsers(false)}
+                users={activeUsers}
+                loading={activeUsersLoading}
+                error={activeUsersError}
+            />
+
             {/* ===== HOME TAB ===== */}
             <View style={[{ flex: 1 }, activeTab !== 'home' && activeTab !== 'ai' && { display: 'none' }]}>
                 <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
@@ -2157,6 +2319,8 @@ export default function DashboardV2() {
                         onBellPress={handleBellPress}
                         unreadCount={notifUnread}
                         onUserPress={() => setShowAccountSwitcher(true)}
+                        activeUsersCount={activeUsers.length}
+                        onActiveUsersPress={showFamily ? () => setShowActiveUsers(true) : undefined}
                     />
                     <StatusBadges
                         lightsOn={lightsOn}
@@ -2166,7 +2330,6 @@ export default function DashboardV2() {
                         lockPassageConfigs={lockPassageConfigs}
                         entities={entities}
                     />
-                    {showFamily && <PersonBadges entities={entities} alertRules={alertRules} haUrl={haHttpUrl} />}
                     <HaSystemBanner banner={systemHealth.banner} />
 
                     <QuickScenes
@@ -2312,10 +2475,49 @@ export default function DashboardV2() {
 
             {/* ===== CCTV TAB — WebViews only rendered when active (too heavy to keep in background) ===== */}
             <View style={[{ flex: 1 }, activeTab !== 'cctv' && { display: 'none' }]}>
-                {frigateConfigResolved && displayCameras.length === 0 ? (
+                {!camerasGloballyEnabled ? (
                     <View style={{ flex: 1, marginTop: 60, paddingHorizontal: 20 }}>
                         <View style={[styles.cctvToggleRow, { paddingHorizontal: 0 }]}>
                             <Text style={styles.cctvSectionTitle}>Surveillance</Text>
+                        </View>
+                        <View style={styles.camerasHiddenBox}>
+                            <MaterialCommunityIcons name="cctv-off" size={40} color="rgba(255,255,255,0.35)" />
+                            <Text style={styles.cctvEmptyText}>Cameras are currently hidden</Text>
+                            <Text style={styles.cctvEmptyHint}>
+                                {isHaOwner
+                                    ? 'You turned cameras off for everyone. Enter the emailed code to turn them back on.'
+                                    : 'The owner has turned cameras off for everyone on this account. Ask them to turn cameras back on.'}
+                            </Text>
+                            {isHaOwner && (
+                                <TouchableOpacity
+                                    style={styles.enableCamerasBtn}
+                                    onPress={openEnableCamerasFlow}
+                                    activeOpacity={0.8}
+                                >
+                                    <MaterialCommunityIcons name="cctv" size={18} color="#fff" />
+                                    <Text style={styles.enableCamerasBtnText}>Enable Cameras</Text>
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    </View>
+                ) : frigateConfigResolved && displayCameras.length === 0 ? (
+                    <View style={{ flex: 1, marginTop: 60, paddingHorizontal: 20 }}>
+                        <View style={[styles.cctvToggleRow, { paddingHorizontal: 0 }]}>
+                            <Text style={styles.cctvSectionTitle}>Surveillance</Text>
+                            {isHaOwner && (
+                                <TouchableOpacity
+                                    style={styles.hideCamerasBtn}
+                                    onPress={handleDisableCameras}
+                                    disabled={cameraTogglingOff}
+                                    activeOpacity={0.75}
+                                >
+                                    {cameraTogglingOff ? (
+                                        <ActivityIndicator size="small" color="rgba(255,255,255,0.6)" />
+                                    ) : (
+                                        <MaterialCommunityIcons name="eye-off-outline" size={16} color="rgba(255,255,255,0.6)" />
+                                    )}
+                                </TouchableOpacity>
+                            )}
                         </View>
                         <Text style={styles.cctvEmptyText}>No cameras yet</Text>
                         <Text style={styles.cctvEmptyHint}>
@@ -2347,6 +2549,20 @@ export default function DashboardV2() {
                                         </Text>
                                     </TouchableOpacity>
                                 </View>
+                                {isHaOwner && (
+                                    <TouchableOpacity
+                                        style={styles.hideCamerasBtn}
+                                        onPress={handleDisableCameras}
+                                        disabled={cameraTogglingOff}
+                                        activeOpacity={0.75}
+                                    >
+                                        {cameraTogglingOff ? (
+                                            <ActivityIndicator size="small" color="rgba(255,255,255,0.6)" />
+                                        ) : (
+                                            <MaterialCommunityIcons name="eye-off-outline" size={16} color="rgba(255,255,255,0.6)" />
+                                        )}
+                                    </TouchableOpacity>
+                                )}
                             </View>
                         </View>
 
@@ -2373,6 +2589,65 @@ export default function DashboardV2() {
                     </View>
                 )}
             </View>
+
+            <Modal
+                visible={showEnableCamerasModal}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setShowEnableCamerasModal(false)}
+            >
+                <View style={styles.enableModalOverlay}>
+                    <View style={styles.enableModalCard}>
+                        <Text style={styles.enableModalTitle}>Enable Cameras</Text>
+                        {enableCamerasStep === 'request' ? (
+                            <View style={{ alignItems: 'center', paddingVertical: 16 }}>
+                                <ActivityIndicator color="#8947ca" />
+                                <Text style={styles.enableModalHint}>Sending a code to your email…</Text>
+                            </View>
+                        ) : (
+                            <>
+                                <Text style={styles.enableModalHint}>
+                                    Enter the 6-digit code we emailed you to turn cameras back on for everyone.
+                                </Text>
+                                <TextInput
+                                    style={styles.enableModalInput}
+                                    value={enableCamerasCode}
+                                    onChangeText={setEnableCamerasCode}
+                                    placeholder="000000"
+                                    placeholderTextColor="rgba(255,255,255,0.3)"
+                                    keyboardType="number-pad"
+                                    maxLength={6}
+                                    autoFocus
+                                />
+                            </>
+                        )}
+                        {!!enableCamerasError && <Text style={styles.enableModalError}>{enableCamerasError}</Text>}
+                        <View style={styles.enableModalActions}>
+                            <TouchableOpacity
+                                style={[styles.enableModalBtn, styles.enableModalCancelBtn]}
+                                onPress={() => setShowEnableCamerasModal(false)}
+                                disabled={enableCamerasBusy}
+                            >
+                                <Text style={styles.enableModalCancelText}>Cancel</Text>
+                            </TouchableOpacity>
+                            {enableCamerasStep === 'code' && (
+                                <TouchableOpacity
+                                    style={[styles.enableModalBtn, styles.enableModalConfirmBtn]}
+                                    onPress={submitEnableCamerasCode}
+                                    disabled={enableCamerasBusy}
+                                >
+                                    {enableCamerasBusy ? (
+                                        <ActivityIndicator size="small" color="#fff" />
+                                    ) : (
+                                        <Text style={styles.enableModalConfirmText}>Verify</Text>
+                                    )}
+                                </TouchableOpacity>
+                            )}
+                        </View>
+                    </View>
+                </View>
+            </Modal>
+
 
             {/* ===== SETTINGS TAB — unmount when hidden (rarely visited, no state to preserve) ===== */}
             <View style={[{ flex: 1 }, activeTab !== 'settings' && { display: 'none' }]}>
@@ -2526,6 +2801,117 @@ const styles = StyleSheet.create({
     },
     cctvToggleWrap: {
         flexShrink: 0,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    hideCamerasBtn: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(255,255,255,0.06)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+    },
+    camerasHiddenBox: {
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 40,
+        paddingHorizontal: 16,
+        gap: 6,
+    },
+    enableCamerasBtn: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+        backgroundColor: '#8947ca',
+        paddingHorizontal: 20,
+        paddingVertical: 12,
+        borderRadius: 14,
+        marginTop: 16,
+    },
+    enableCamerasBtnText: {
+        color: '#fff',
+        fontSize: 14,
+        fontFamily: CF.semibold,
+    },
+    enableModalOverlay: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.55)',
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingHorizontal: 24,
+    },
+    enableModalCard: {
+        width: '100%',
+        maxWidth: 340,
+        backgroundColor: '#181826',
+        borderRadius: 20,
+        padding: 22,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+    },
+    enableModalTitle: {
+        color: '#fff',
+        fontSize: 18,
+        fontFamily: CF.bold,
+        marginBottom: 10,
+        textAlign: 'center',
+    },
+    enableModalHint: {
+        color: 'rgba(255,255,255,0.5)',
+        fontSize: 13,
+        textAlign: 'center',
+        lineHeight: 18,
+        marginTop: 8,
+    },
+    enableModalInput: {
+        marginTop: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.15)',
+        borderRadius: 12,
+        paddingVertical: 12,
+        color: '#fff',
+        fontSize: 22,
+        letterSpacing: 8,
+        textAlign: 'center',
+        fontFamily: CF.semibold,
+    },
+    enableModalError: {
+        color: '#f87171',
+        fontSize: 12.5,
+        textAlign: 'center',
+        marginTop: 10,
+    },
+    enableModalActions: {
+        flexDirection: 'row',
+        gap: 10,
+        marginTop: 18,
+    },
+    enableModalBtn: {
+        flex: 1,
+        paddingVertical: 12,
+        borderRadius: 12,
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    enableModalCancelBtn: {
+        backgroundColor: 'rgba(255,255,255,0.06)',
+    },
+    enableModalCancelText: {
+        color: 'rgba(255,255,255,0.6)',
+        fontSize: 14,
+        fontFamily: CF.medium,
+    },
+    enableModalConfirmBtn: {
+        backgroundColor: '#8947ca',
+    },
+    enableModalConfirmText: {
+        color: '#fff',
+        fontSize: 14,
+        fontFamily: CF.semibold,
     },
     cctvToggle: {
         flexDirection: 'row',

@@ -96,6 +96,18 @@ export default function DashboardV2Tablet() {
     const homeKeyRef = useRef(`${bootProf?.profileId || ''}::${toHaHttpUrl(bootProf?.url || '').replace(/\/+$/, '').toLowerCase()}`);
     const haLiveRef = useRef(false);
     const saveTimerRef = useRef(null);
+    /**
+     * Guards against overlapping loadConnectionConfig() calls. Account
+     * switching can trigger this from several places almost simultaneously
+     * (handleAccountSwitched's direct call, the switchKey effect it also
+     * triggers via router.setParams, and useFocusEffect firing on regained
+     * focus). Without this guard, two overlapping runs could race — one
+     * call's resetHomeDashboardState/HAService.disconnectAll() wiping state
+     * that the other call just populated — which is why rooms/entities would
+     * sometimes fail to (re)load after switching accounts.
+     */
+    const loadConnectionInFlightRef = useRef(false);
+    const loadConnectionPendingRef = useRef(false);
 
     const [entities, setEntities] = useState(() => bootValue('entities', []));
     const [cityName, setCityName] = useState(() => bootValue('cityName', 'Home'));
@@ -159,6 +171,12 @@ export default function DashboardV2Tablet() {
     }, []);
 
     const loadConnectionConfig = async () => {
+        // De-dupe overlapping calls (see loadConnectionInFlightRef comment above).
+        if (loadConnectionInFlightRef.current) {
+            loadConnectionPendingRef.current = true;
+            return;
+        }
+        loadConnectionInFlightRef.current = true;
         try {
             // 1. Try to load from Profiles first
             const [activeProfileId, profiles] = await Promise.all([
@@ -245,6 +263,14 @@ export default function DashboardV2Tablet() {
             console.log('Error loading connection config:', e);
             // Fallback
             setConnectionConfig(prev => ({ ...prev, loaded: true }));
+        } finally {
+            loadConnectionInFlightRef.current = false;
+            if (loadConnectionPendingRef.current) {
+                loadConnectionPendingRef.current = false;
+                // Another switch/focus event asked for a reload while we were
+                // busy — run once more now so we don't end up serving stale data.
+                loadConnectionConfig();
+            }
         }
     };
 
@@ -520,7 +546,12 @@ export default function DashboardV2Tablet() {
 
     useEffect(() => {
         fetchMappings();
-    }, [connectionConfig.loaded, connectionConfig.adminUrl]);
+        // Also re-run when the HA token changes: two accounts can point at the
+        // exact same admin/home URL, so `adminUrl` alone doesn't change when
+        // switching between them — without `token` here, quick scenes (and the
+        // other mappings fetched below) would keep showing empty/stale data
+        // after resetHomeDashboardState() cleared them for the new account.
+    }, [connectionConfig.loaded, connectionConfig.adminUrl, connectionConfig.token]);
 
     useEffect(() => {
         if (!connectionConfig.loaded || !connectionConfig.adminUrl) return undefined;

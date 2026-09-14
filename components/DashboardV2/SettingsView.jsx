@@ -1,13 +1,19 @@
 import { useState, useEffect, memo } from 'react';
 import { View, Text, TouchableOpacity, Pressable, StyleSheet, ScrollView, FlatList, TextInput, Alert, ActivityIndicator, Switch } from 'react-native';
 import { Colors } from '../../constants/Colors';
-import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles, Monitor, LayoutGrid, Timer, Home } from 'lucide-react-native';
+import { Map, Layers, ChevronRight, User, LogOut, Brain, Check, Save, Bell, Settings, Play, Wifi, Clock, BarChart2, ScrollText, Database, Activity, Smartphone, Heart, Sparkles, Monitor, LayoutGrid, Timer, Home, Users, ShieldCheck, UserRound } from 'lucide-react-native';
 import { router } from 'expo-router';
 import { AIService } from '../../services/ai';
 import * as SecureStore from 'expo-secure-store';
 import { authFetch } from '../../utils/authFetch';
 import { unregisterPushTokenAsync } from '../../services/notifications';
-import { logoutActiveAccount } from '../../services/accounts';
+import {
+    logoutActiveAccount,
+    listAccounts,
+    removeAccount,
+    getActiveAccountId,
+    ensureAccountsMigrated,
+} from '../../services/accounts';
 import { HAService } from '../../services/ha';
 import { beginHomeSession } from '../../utils/dashboardCache';
 import { loadHaProfiles } from '../../utils/storage';
@@ -50,12 +56,33 @@ function SettingsView({
     const [faceIdEnabled, setFaceIdEnabled] = useState(false);
     const [storedUserName, setStoredUserName] = useState('');
     const [loggingOut, setLoggingOut] = useState(false);
+    const [isHaOwner, setIsHaOwner] = useState(false);
 
     useEffect(() => {
         SecureStore.getItemAsync('face_id_enabled').then(val => {
             setFaceIdEnabled(val === 'true');
         });
     }, []);
+
+    useEffect(() => {
+        const effectiveUser = userName || storedUserName;
+        if (!effectiveUser || !adminUrl) {
+            setIsHaOwner(false);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            try {
+                const base = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
+                const res = await authFetch(`${base}api/auth/owner-status?username=${encodeURIComponent(effectiveUser)}`);
+                const data = await res.json().catch(() => ({}));
+                if (!cancelled) setIsHaOwner(!!data.isOwner);
+            } catch {
+                if (!cancelled) setIsHaOwner(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [userName, storedUserName, adminUrl]);
 
     useEffect(() => {
         if (userName) return;
@@ -132,6 +159,103 @@ function SettingsView({
             <Text style={styles.logoutText}>{loggingOut ? 'Signing out…' : 'Log Out of This Account'}</Text>
         </TouchableOpacity>
     );
+
+    // Saved accounts (multi-account switcher list) — shown on the Account tab
+    // so any signed-in user can be logged out individually from this device.
+    const [savedAccounts, setSavedAccounts] = useState([]);
+    const [activeAccountId, setActiveAccountId] = useState(null);
+    const [loadingAccounts, setLoadingAccounts] = useState(false);
+    const [removingAccountId, setRemovingAccountId] = useState(null);
+
+    const loadSavedAccounts = async () => {
+        setLoadingAccounts(true);
+        try {
+            await ensureAccountsMigrated();
+            const [list, id] = await Promise.all([listAccounts(), getActiveAccountId()]);
+            setSavedAccounts(list);
+            setActiveAccountId(id);
+        } catch (e) {
+            console.log('[Settings] Failed to load saved accounts:', e?.message || e);
+        } finally {
+            setLoadingAccounts(false);
+        }
+    };
+
+    useEffect(() => {
+        if (activeTab === 'account') {
+            loadSavedAccounts();
+        }
+    }, [activeTab]);
+
+    const handleRemoveAccount = (account) => {
+        if (!account || removingAccountId) return;
+        const isActive = account.id === activeAccountId;
+        Alert.alert(
+            'Log out this account?',
+            `${capitalizeWords(account.name || account.username)} will be removed from this device.${isActive ? ' You are currently signed in as this user.' : ''}`,
+            [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                    text: 'Log Out',
+                    style: 'destructive',
+                    onPress: async () => {
+                        setRemovingAccountId(account.id);
+                        try {
+                            if (isActive) {
+                                unregisterPushTokenAsync().catch(() => {});
+                                HAService.disconnectAll();
+                                try {
+                                    await SecureStore.deleteItemAsync('room_reorder_config');
+                                } catch {
+                                    // ignore
+                                }
+                            }
+                            const { nextAccount } = await removeAccount(account.id);
+                            if (isActive) {
+                                if (nextAccount) {
+                                    let profiles = [];
+                                    try {
+                                        profiles = await loadHaProfiles();
+                                    } catch {
+                                        profiles = [];
+                                    }
+                                    const profile = profiles.find((p) => p.id === nextAccount.profileId);
+                                    await beginHomeSession({
+                                        profileId: nextAccount.profileId,
+                                        haUrl: nextAccount.haUrl || profile?.haUrl,
+                                        token: profile?.haToken,
+                                        adminUrl: profile?.adminUrl,
+                                        haUrlLive: profile?.haUrlLive,
+                                        haUrlLocal: profile?.haUrlLocal,
+                                        adminUrlLive: profile?.adminUrlLive || profile?.dashboardUrl,
+                                        adminUrlLocal: profile?.adminUrlLocal || profile?.dashboardUrlLocal,
+                                        clearCache: false,
+                                    });
+                                    router.replace({
+                                        pathname: '/dashboard-v2',
+                                        params: {
+                                            userName: nextAccount.name || '',
+                                            userId: nextAccount.userId || '',
+                                            switchKey: String(Date.now()),
+                                        },
+                                    });
+                                } else {
+                                    router.replace('/login');
+                                }
+                            } else {
+                                await loadSavedAccounts();
+                            }
+                        } catch (e) {
+                            console.log('[Settings] Remove account failed:', e?.message || e);
+                            Alert.alert('Error', 'Could not log out that account. Please try again.');
+                        } finally {
+                            setRemovingAccountId(null);
+                        }
+                    },
+                },
+            ],
+        );
+    };
 
     // Modals
     const [monitoredModalVisible, setMonitoredModalVisible] = useState(false);
@@ -487,7 +611,7 @@ function SettingsView({
                         </View>
                         <View>
                             <Text style={styles.itemName}>Show Family</Text>
-                            <Text style={styles.itemSub}>Show person badges on dashboard</Text>
+                            <Text style={styles.itemSub}>Show active users icon & count on Home</Text>
                         </View>
                     </View>
                     <Switch
@@ -498,7 +622,9 @@ function SettingsView({
                     />
                 </View>
 
-                {/* Auto Room (Visit) Toggle */}
+                {/* Auto-Room (Visit), Automations, Auto-Room (Resume), Voice Assistant and
+                    Show Preference Button are not used right now — re-enable by
+                    uncommenting this block.
                 <View style={styles.listItem}>
                     <View style={styles.itemInfo}>
                         <View style={styles.iconContainer}>
@@ -517,7 +643,6 @@ function SettingsView({
                     />
                 </View>
 
-                {/* Automations Page Button */}
                 <TouchableOpacity style={styles.listItem} onPress={() => router.push('/automations')}>
                     <View style={styles.itemInfo}>
                         <View style={styles.iconContainer}>
@@ -531,7 +656,6 @@ function SettingsView({
                     <ChevronRight size={20} color={Colors.textDim} />
                 </TouchableOpacity>
 
-                {/* Auto Room (Background) Toggle */}
                 <View style={styles.listItem}>
                     <View style={styles.itemInfo}>
                         <View style={styles.iconContainer}>
@@ -570,7 +694,6 @@ function SettingsView({
                 </View>
                 )}
 
-                {/* Show Preference Button Toggle */}
                 <View style={styles.listItem}>
                     <View style={styles.itemInfo}>
                         <View style={styles.iconContainer}>
@@ -588,8 +711,11 @@ function SettingsView({
                         thumbColor={showPreferenceButton ? '#fff' : '#f4f3f4'}
                     />
                 </View>
+                */}
             </View>
 
+            {/* Notifications section is not used right now — re-enable by
+                uncommenting this whole block.
             <View style={styles.section}>
                 <Text style={styles.sectionHeader}>Notifications</Text>
 
@@ -657,7 +783,10 @@ function SettingsView({
                     <ChevronRight size={20} color={Colors.textDim} />
                 </TouchableOpacity>
             </View>
+            */}
 
+            {/* Data & System section is not used right now — re-enable by
+                uncommenting this whole block.
             <View style={styles.section}>
                 <Text style={styles.sectionHeader}>Data & System</Text>
 
@@ -741,6 +870,52 @@ function SettingsView({
                     </View>
                     <ChevronRight size={20} color={Colors.textDim} />
                 </TouchableOpacity>
+                */}
+
+            <View style={styles.section}>
+                <Text style={styles.sectionHeader}>App Access</Text>
+
+                {isHaOwner && (
+                    <TouchableOpacity
+                        style={styles.listItem}
+                        onPress={() => router.push({
+                            pathname: '/manage-users',
+                            params: { userName: userName || storedUserName, adminUrl },
+                        })}
+                    >
+                        <View style={styles.itemInfo}>
+                            <View style={styles.iconContainer}>
+                                <Users size={20} color={Colors.text} />
+                            </View>
+                            <View>
+                                <Text style={styles.itemName}>Manage Users</Text>
+                                <Text style={styles.itemSub}>Reset passwords & create new users (Owner)</Text>
+                            </View>
+                        </View>
+                        <ChevronRight size={20} color={Colors.textDim} />
+                    </TouchableOpacity>
+                )}
+
+                {isHaOwner && (
+                    <TouchableOpacity
+                        style={styles.listItem}
+                        onPress={() => router.push({
+                            pathname: '/app-roles',
+                            params: { userName: userName || storedUserName, adminUrl },
+                        })}
+                    >
+                        <View style={styles.itemInfo}>
+                            <View style={styles.iconContainer}>
+                                <ShieldCheck size={20} color={Colors.text} />
+                            </View>
+                            <View>
+                                <Text style={styles.itemName}>App Roles & Access</Text>
+                                <Text style={styles.itemSub}>Create roles and control screens, cameras & rooms (Owner)</Text>
+                            </View>
+                        </View>
+                        <ChevronRight size={20} color={Colors.textDim} />
+                    </TouchableOpacity>
+                )}
 
                 <TouchableOpacity style={styles.listItem} onPress={() => router.push('/about')}>
                     <View style={styles.itemInfo}>
@@ -756,6 +931,8 @@ function SettingsView({
                 </TouchableOpacity>
             </View>
 
+            {/* Quick Actions section is not used right now — re-enable by
+                uncommenting this whole block.
             <View style={styles.section}>
                 <Text style={styles.sectionHeader}>Quick Actions</Text>
 
@@ -851,61 +1028,96 @@ function SettingsView({
                     <ChevronRight size={20} color={Colors.textDim} />
                 </TouchableOpacity>
             </View>
+            */}
         </ScrollView >
     );
 
-    const renderAccount = () => (
+    const renderAccount = () => {
+        const activeAccount = savedAccounts.find((a) => a.id === activeAccountId);
+        return (
         <ScrollView contentContainerStyle={styles.accountContent}>
             <View style={styles.profileSection}>
                 <View style={[styles.iconContainer, { width: 80, height: 80, borderRadius: 40, marginBottom: 16 }]}>
                     <User size={40} color={Colors.text} />
                 </View>
                 <Text style={styles.profileName}>{displayName}</Text>
-                <Text style={styles.profileRole}>{roleName || 'User'}</Text>
+                <Text style={styles.profileRole}>{activeAccount?.profileName || roleName || 'User'}</Text>
             </View>
 
             <View style={styles.section}>
-                {/* Transferred to General Settings */}
+                <View style={styles.accountSectionHeaderRow}>
+                    <Text style={styles.sectionHeader}>Signed-In Accounts</Text>
+                    {savedAccounts.length > 0 && (
+                        <Text style={styles.accountCountBadge}>{savedAccounts.length}</Text>
+                    )}
+                </View>
+                <Text style={styles.accountSectionHint}>
+                    Devices staying signed in on this app. Log out any account you no longer need here.
+                </Text>
+
+                {loadingAccounts ? (
+                    <ActivityIndicator color={Colors.primary} style={{ marginVertical: 20 }} />
+                ) : savedAccounts.length === 0 ? (
+                    <Text style={styles.itemSub}>No saved accounts found.</Text>
+                ) : (
+                    <View style={styles.accountList}>
+                        {savedAccounts.map((account) => {
+                            const isActive = account.id === activeAccountId;
+                            const busy = removingAccountId === account.id;
+                            const displayLabel = capitalizeWords(account.name || account.username) || 'User';
+                            const initial = displayLabel.trim().charAt(0).toUpperCase() || '?';
+                            return (
+                                <View
+                                    key={account.id}
+                                    style={[styles.accountCard, isActive && styles.accountCardActive]}
+                                >
+                                    <View style={[styles.accountAvatar, isActive && styles.accountAvatarActive]}>
+                                        <Text style={styles.accountAvatarText}>{initial}</Text>
+                                    </View>
+
+                                    <View style={styles.accountMeta}>
+                                        <View style={styles.accountNameRow}>
+                                            <Text style={styles.accountName} numberOfLines={1}>
+                                                {displayLabel}
+                                            </Text>
+                                            {isActive && (
+                                                <View style={styles.activeBadge}>
+                                                    <Text style={styles.activeBadgeText}>ACTIVE</Text>
+                                                </View>
+                                            )}
+                                        </View>
+                                        <Text style={styles.accountSub} numberOfLines={1}>
+                                            {account.username}
+                                            {account.profileName ? `  ·  ${account.profileName}` : ''}
+                                        </Text>
+                                    </View>
+
+                                    <TouchableOpacity
+                                        style={[styles.accountLogoutBtn, busy && { opacity: 0.6 }]}
+                                        onPress={() => handleRemoveAccount(account)}
+                                        disabled={!!removingAccountId}
+                                        hitSlop={6}
+                                        activeOpacity={0.75}
+                                    >
+                                        {busy ? (
+                                            <ActivityIndicator size="small" color={Colors.error} />
+                                        ) : (
+                                            <LogOut size={16} color={Colors.error} />
+                                        )}
+                                    </TouchableOpacity>
+                                </View>
+                            );
+                        })}
+                    </View>
+                )}
             </View>
-
-            <TouchableOpacity
-                style={styles.testPushBtn}
-                onPress={async () => {
-                    try {
-                        if (!adminUrl) {
-                            Alert.alert('Configuration Error', 'Admin URL is not configured in your profile.');
-                            return;
-                        }
-                        const cleanAdminUrl = adminUrl.replace(/\/$/, '');
-
-                        const loading = Alert.alert('Sending...', 'Triggering test notification...', [], { cancelable: false });
-                        const response = await authFetch(`${cleanAdminUrl}/api/notifications/send`, {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                title: 'Test Notification',
-                                body: 'This is a test notification from your HA App!',
-                                data: { test: true }
-                            })
-                        });
-                        const data = await response.json();
-                        if (response.ok) {
-                            Alert.alert('Success', `Sent ${data.count} notifications`);
-                        } else {
-                            Alert.alert('Error', 'Failed to send: ' + (data.error || 'Unknown error'));
-                        }
-                    } catch (e) {
-                        Alert.alert('Error', 'Network Error: ' + e.message);
-                    }
-                }}
-            >
-                <Bell size={20} color={Colors.primary} />
-                <Text style={styles.testPushText}>Test Push Notification</Text>
-            </TouchableOpacity>
 
             {logoutButton}
         </ScrollView>
-    );
+        );
+    };
+
+
 
 
     return (
@@ -931,9 +1143,11 @@ function SettingsView({
             <View style={styles.tabs} collapsable={false}>
                 {[
                     { id: 'general', label: 'General' },
+                    /* Not used right now — re-enable by uncommenting these tabs.
                     { id: 'areas', label: 'Areas' },
                     { id: 'entities', label: 'Entities' },
                     { id: 'ai', label: 'A.I.' },
+                    */
                     { id: 'account', label: 'Account' },
                 ].map((tab) => {
                     const selected = activeTab === tab.id;
@@ -969,9 +1183,11 @@ function SettingsView({
 
             <View style={styles.content} collapsable={false}>
                 {activeTab === 'general' && renderGeneralSettings()}
+                {/* Not used right now — re-enable by uncommenting these along with their tabs above.
                 {activeTab === 'areas' && (selectedArea ? renderAreaDetails() : renderAreaList())}
                 {activeTab === 'entities' && renderEntitiesList()}
                 {activeTab === 'ai' && renderAIConfig()}
+                */}
                 {activeTab === 'account' && renderAccount()}
             </View>
                 </>
@@ -1289,34 +1505,123 @@ const styles = StyleSheet.create({
         textAlign: 'center',
         paddingHorizontal: 24,
     },
-    testPushBtn: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'rgba(59, 130, 246, 0.1)', // Light Blue
-        paddingVertical: 16,
-        paddingHorizontal: 32,
-        borderRadius: 16,
-        gap: 12,
-        borderWidth: 1,
-        borderColor: 'rgba(59, 130, 246, 0.3)',
-        marginBottom: 20
-    },
-    testPushText: {
-        color: Colors.primary,
-        fontSize: 16,
-    },
     logoutBtn: {
         flexDirection: 'row',
         alignItems: 'center',
+        justifyContent: 'center',
         gap: 8,
-        marginTop: 40, // Fixed margin instead of auto
+        marginTop: 28,
         marginBottom: 40,
-        padding: 16, // Increase hit area
+        marginHorizontal: 16,
+        paddingVertical: 15,
+        borderRadius: 16,
+        backgroundColor: 'rgba(239,68,68,0.1)',
+        borderWidth: 1,
+        borderColor: 'rgba(239,68,68,0.3)',
     },
     logoutText: {
         color: Colors.error,
-        fontSize: 16,
-        fontWeight: '600',
+        fontSize: 15,
+        fontFamily: CF.semibold,
+    },
+    accountSectionHeaderRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    accountCountBadge: {
+        color: 'rgba(237,237,245,0.5)',
+        fontSize: 12,
+        fontFamily: CF.semibold,
+        backgroundColor: 'rgba(255,255,255,0.08)',
+        paddingHorizontal: 8,
+        paddingVertical: 2,
+        borderRadius: 10,
+        overflow: 'hidden',
+    },
+    accountSectionHint: {
+        color: 'rgba(237,237,245,0.4)',
+        fontSize: 12,
+        fontFamily: CF.regular,
+        marginTop: 4,
+        marginBottom: 14,
+        lineHeight: 17,
+    },
+    accountList: {
+        gap: 10,
+    },
+    accountCard: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        padding: 12,
+        borderRadius: 16,
+        backgroundColor: 'rgba(255,255,255,0.035)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.08)',
+    },
+    accountCardActive: {
+        backgroundColor: 'rgba(137, 71, 202, 0.12)',
+        borderColor: 'rgba(137, 71, 202, 0.4)',
+    },
+    accountAvatar: {
+        width: 44,
+        height: 44,
+        borderRadius: 22,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(255,255,255,0.08)',
+    },
+    accountAvatarActive: {
+        backgroundColor: Colors.primary,
+    },
+    accountAvatarText: {
+        color: '#fff',
+        fontSize: 17,
+        fontFamily: CF.semibold,
+    },
+    accountMeta: {
+        flex: 1,
+        minWidth: 0,
+        gap: 3,
+    },
+    accountNameRow: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 8,
+    },
+    accountName: {
+        color: '#fff',
+        fontSize: 15,
+        fontFamily: CF.semibold,
+        flexShrink: 1,
+    },
+    activeBadge: {
+        backgroundColor: 'rgba(137, 71, 202, 0.25)',
+        borderWidth: 1,
+        borderColor: 'rgba(137, 71, 202, 0.5)',
+        borderRadius: 8,
+        paddingHorizontal: 6,
+        paddingVertical: 2,
+    },
+    activeBadgeText: {
+        color: Colors.primary,
+        fontSize: 9.5,
+        fontFamily: CF.semibold,
+        letterSpacing: 0.4,
+    },
+    accountSub: {
+        color: 'rgba(237,237,245,0.45)',
+        fontSize: 12,
+        fontFamily: CF.regular,
+    },
+    accountLogoutBtn: {
+        width: 36,
+        height: 36,
+        borderRadius: 18,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: 'rgba(239,68,68,0.12)',
     },
 });
 

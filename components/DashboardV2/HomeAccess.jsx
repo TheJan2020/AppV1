@@ -137,6 +137,7 @@ export function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, 
     const maxTravelSV       = useSharedValue(0);
     const pulseOpacity      = useSharedValue(1);
     const userInitiatedRef  = useRef(false);
+    const hasSnappedRef     = useRef(false);
 
     // Knob is absolutely positioned at left:0.
     // locked   → translateX = 0            (knob at left edge)
@@ -145,7 +146,13 @@ export function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, 
         if (pillW === 0 || inTransit) return;
         maxTravelSV.value = pillW - KNOB;
         const target = isUnlocked ? pillW - KNOB : 0;
-        if (userInitiatedRef.current) {
+        if (!hasSnappedRef.current) {
+            // First measurement after mount (incl. remounts on tab re-show) —
+            // snap instantly instead of animating, so the knob never renders
+            // on the wrong side (overlapping the label) for a frame.
+            translateX.value = target;
+            hasSnappedRef.current = true;
+        } else if (userInitiatedRef.current) {
             translateX.value = withSpring(target, { damping: 18 });
         } else {
             translateX.value = withTiming(target, { duration: 280 });
@@ -381,6 +388,7 @@ function GaragePill({
     const maxTravelSV       = useSharedValue(0);
     const progress          = useSharedValue(0);
     const arrowY            = useSharedValue(0);
+    const hasSnappedRef     = useRef(false);
 
     useEffect(() => {
         if (pillW === 0) return;
@@ -391,7 +399,13 @@ function GaragePill({
     useEffect(() => {
         if (pillW === 0 || inTransit) return;
         const target = isOpen ? pillW - KNOB : 0;
-        if (userInitiatedRef.current) {
+        if (!hasSnappedRef.current) {
+            // First measurement after mount (incl. remounts on tab re-show) —
+            // snap instantly instead of animating, so the knob never renders
+            // on the wrong side (overlapping the label) for a frame.
+            translateX.value = target;
+            hasSnappedRef.current = true;
+        } else if (userInitiatedRef.current) {
             translateX.value = withSpring(target, { damping: 18 });
         } else {
             translateX.value = withTiming(target, { duration: 280 });
