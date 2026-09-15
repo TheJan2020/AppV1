@@ -1557,23 +1557,6 @@ export default function Login() {
                                         )}
                                     </TouchableOpacity>
 
-                                    {/* Username Input */}
-                                    <View style={styles.inputContainer}>
-                                        <User size={20} color={Colors.textDim} style={styles.inputIcon} />
-                                        <TextInput
-                                            style={styles.input}
-                                            placeholder="Username"
-                                            placeholderTextColor={Colors.textDim}
-                                            value={username}
-                                            onChangeText={setUsername}
-                                            autoCapitalize="none"
-                                            returnKeyType="next"
-                                            onSubmitEditing={() => passwordInputRef.current?.focus()}
-                                            blurOnSubmit={false}
-                                            onFocus={scrollToInput}
-                                        />
-                                    </View>
-
                                     <View style={styles.inputContainer}>
                                         <Lock size={20} color={Colors.textDim} style={styles.inputIcon} />
                                         <TextInput
@@ -1688,9 +1671,6 @@ export default function Login() {
                                                         <Text style={[styles.userItemText, selectedUser?.id === item.id && { color: '#8947ca', fontWeight: 'bold' }]}>
                                                             {item.name}
                                                         </Text>
-                                                        {item.username && item.username !== item.name ? (
-                                                            <Text style={styles.alreadyAddedText}>Login: {item.username}</Text>
-                                                        ) : null}
                                                     </View>
                                                 </View>
                                                 {selectedUser?.id === item.id && <Check size={20} color="#8947ca" />}
@@ -1937,11 +1917,6 @@ const styles = StyleSheet.create({
         fontSize: 13,
         marginBottom: 12,
         lineHeight: 18,
-    },
-    alreadyAddedText: {
-        color: Colors.primary,
-        fontSize: 11,
-        marginTop: 2,
     },
     retryUsersBtn: {
         marginTop: 8,

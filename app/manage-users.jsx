@@ -214,6 +214,7 @@ export default function ManageUsersPage() {
     };
 
     const openReset = (user) => {
+        if (isOwnerAccount(user)) return;
         setResetModal(user);
         setResetPassword('');
         setResetConfirm('');
@@ -311,7 +312,7 @@ export default function ManageUsersPage() {
                 </View>
 
                 <Text style={styles.ownerNote}>
-                    Reset passwords, create users, or remove accounts. Your owner account cannot be deleted.
+                    Reset other users’ passwords, create accounts, or remove them. The owner password cannot be reset here — use Forgot password on the login page (email).
                 </Text>
 
                 {loading ? (
@@ -353,10 +354,12 @@ export default function ManageUsersPage() {
                                             {role.name}
                                         </Text>
                                     </TouchableOpacity>
-                                    <TouchableOpacity style={styles.resetBtn} onPress={() => openReset(u)}>
-                                        <KeyRound size={14} color="#fff" />
-                                        <Text style={styles.resetBtnText}>Reset</Text>
-                                    </TouchableOpacity>
+                                    {!ownerAccount ? (
+                                        <TouchableOpacity style={styles.resetBtn} onPress={() => openReset(u)}>
+                                            <KeyRound size={14} color="#fff" />
+                                            <Text style={styles.resetBtnText}>Reset</Text>
+                                        </TouchableOpacity>
+                                    ) : null}
                                     {!ownerAccount ? (
                                         <TouchableOpacity
                                             style={[styles.deleteBtn, deleting && { opacity: 0.6 }]}
@@ -369,6 +372,11 @@ export default function ManageUsersPage() {
                                         </TouchableOpacity>
                                     ) : null}
                                 </View>
+                                {ownerAccount ? (
+                                    <Text style={styles.ownerResetHint}>
+                                        You can’t reset the owner password here. Change it from the login page with Forgot password — a code is emailed to you.
+                                    </Text>
+                                ) : null}
                             </View>
                             );
                         })}
@@ -654,6 +662,12 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontFamily: CF.regular,
         marginTop: 2,
+    },
+    ownerResetHint: {
+        color: 'rgba(237,237,245,0.5)',
+        fontSize: 12,
+        fontFamily: CF.regular,
+        lineHeight: 17,
     },
     roleBtn: {
         flex: 1,

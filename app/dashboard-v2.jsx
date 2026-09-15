@@ -2567,17 +2567,17 @@ export default function DashboardV2() {
                         </View>
 
                         <View style={[{ flex: 1 }, (cctvView !== 'cameras') && { display: 'none' }]}>
-                            <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
-                                <CamerasList
-                                    frigateCameras={displayCameras}
-                                    service={frigateService.current}
-                                    onCameraPress={handleFrigateCameraPress}
-                                    columns={columns}
-                                    cameraSensors={badgeConfig?.camera_sensors || {}}
-                                    entityMap={haEntityMap}
-                                    active={activeTab === 'cctv' && cctvView === 'cameras' && !showFrigateModal}
-                                />
-                            </ScrollView>
+                            <CamerasList
+                                frigateCameras={displayCameras}
+                                service={frigateService.current}
+                                onCameraPress={handleFrigateCameraPress}
+                                columns={columns}
+                                cameraSensors={badgeConfig?.camera_sensors || {}}
+                                entityMap={haEntityMap}
+                                active={activeTab === 'cctv' && cctvView === 'cameras' && !showFrigateModal}
+                                scrollable
+                                contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}
+                            />
                         </View>
                         {activeTab === 'cctv' && cctvView === 'events' ? (
                             <FrigateEventsFeed

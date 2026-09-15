@@ -119,9 +119,11 @@ export class FrigateService {
         return `${this.adminUrl}/api/frigate/stream/${cam}?fps=5&height=720&bbox=1`;
     }
 
-    getSnapshotUrl(cameraName) {
+    getSnapshotUrl(cameraName, { height } = {}) {
         const cam = encodeURIComponent(cameraName);
-        return `${this.adminUrl}/api/frigate/snapshot/${cam}`;
+        const h = Number(height);
+        const qs = Number.isFinite(h) && h > 0 ? `?h=${Math.round(h)}` : '';
+        return `${this.adminUrl}/api/frigate/snapshot/${cam}${qs}`;
     }
 
     getHASnapshotUrl(entityIdOrName) {

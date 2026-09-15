@@ -1724,29 +1724,29 @@ export default function DashboardV2Tablet() {
 
         if (activeTab === 'cctv') {
             return (
-                <ScrollView contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}>
-                    <View style={{ marginTop: 60 }}>
-                        <Text style={styles.sectionTitle}>Surveillance</Text>
-                        {displayCameras.length === 0 ? (
-                            <>
-                                <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 16, marginTop: 8 }}>
-                                    No cameras yet
-                                </Text>
-                                <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, marginTop: 6, lineHeight: 18 }}>
-                                    Cameras are optional. Add Frigate or Home Assistant cameras when you have them.
-                                </Text>
-                            </>
-                        ) : (
-                            <CamerasList
-                                frigateCameras={displayCameras}
-                                service={frigateService.current}
-                                onCameraPress={handleFrigateCameraPress}
-                                columns={columns}
-                                active={activeTab === 'cctv' && !showFrigateModal}
-                            />
-                        )}
-                    </View>
-                </ScrollView>
+                <View style={{ flex: 1, marginTop: 60 }}>
+                    <Text style={[styles.sectionTitle, { paddingHorizontal: 20 }]}>Surveillance</Text>
+                    {displayCameras.length === 0 ? (
+                        <View style={{ paddingHorizontal: 20 }}>
+                            <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 16, marginTop: 8 }}>
+                                No cameras yet
+                            </Text>
+                            <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 13, marginTop: 6, lineHeight: 18 }}>
+                                Cameras are optional. Add Frigate or Home Assistant cameras when you have them.
+                            </Text>
+                        </View>
+                    ) : (
+                        <CamerasList
+                            frigateCameras={displayCameras}
+                            service={frigateService.current}
+                            onCameraPress={handleFrigateCameraPress}
+                            columns={columns}
+                            active={activeTab === 'cctv' && !showFrigateModal}
+                            scrollable
+                            contentContainerStyle={[styles.content, isLandscape && sidebarPadding]}
+                        />
+                    )}
+                </View>
             );
         }
 

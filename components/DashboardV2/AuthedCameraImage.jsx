@@ -59,6 +59,7 @@ function LiveAuthedImage({
     style,
     contentFit,
     refreshMs,
+    startDelayMs = 0,
 }) {
     const [slots, setSlots] = useState(['', '']);
     const [visible, setVisible] = useState(0);
@@ -123,7 +124,11 @@ function LiveAuthedImage({
             }
         };
 
-        pull();
+        if (startDelayMs > 0) {
+            timer = setTimeout(pull, startDelayMs);
+        } else {
+            pull();
+        }
         return () => {
             cancelled = true;
             if (timer) clearTimeout(timer);
@@ -131,7 +136,7 @@ function LiveAuthedImage({
             filesRef.current = [];
             leftover.forEach(forgetFile);
         };
-    }, [uri, auth, refreshMs]);
+    }, [uri, auth, refreshMs, startDelayMs]);
 
     const onSlotLoad = (slot) => {
         visibleRef.current = slot;
@@ -180,6 +185,7 @@ export default function AuthedCameraImage({
     style,
     contentFit = 'cover',
     refreshMs = 0,
+    startDelayMs = 0,
 }) {
     const baseUri = stableUrl(uri);
     if (!baseUri) return null;
@@ -206,6 +212,7 @@ export default function AuthedCameraImage({
             style={style}
             contentFit={contentFit}
             refreshMs={refreshMs}
+            startDelayMs={startDelayMs}
         />
     );
 }
