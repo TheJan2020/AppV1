@@ -1,10 +1,10 @@
 <libraries>
   <library
       name=":@@:expo-modules-core::release"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/8.14.3/transforms/4e105660b38a3cad855062efca8a422c/transformed/out/jars/classes.jar:/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/8.14.3/transforms/4e105660b38a3cad855062efca8a422c/transformed/out/jars/libs/R.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/8.14.3/transforms/b20191917e8d2a36d461c8ab1eec307d/transformed/out/jars/classes.jar:/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/8.14.3/transforms/b20191917e8d2a36d461c8ab1eec307d/transformed/out/jars/libs/R.jar"
       resolved="host.exp.exponent:expo-modules-core:57.0.16"
       provided="true"
-      folder="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/8.14.3/transforms/4e105660b38a3cad855062efca8a422c/transformed/out"
+      folder="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/8.14.3/transforms/b20191917e8d2a36d461c8ab1eec307d/transformed/out"
       manifest="AndroidManifest.xml"
       resFolder="res"
       assetsFolder="assets"
@@ -15,14 +15,14 @@
       proguardRules="proguard.txt"/>
   <library
       name="io.github.lukmccall.pika:pika-api:0.3.2@jar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/modules-2/files-2.1/io.github.lukmccall.pika/pika-api/0.3.2/e80dff6fc36448ac79ef7041175f31af39bac8d5/pika-api-0.3.2.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/modules-2/files-2.1/io.github.lukmccall.pika/pika-api/0.3.2/e80dff6fc36448ac79ef7041175f31af39bac8d5/pika-api-0.3.2.jar"
       resolved="io.github.lukmccall.pika:pika-api:0.3.2"/>
   <library
       name="androidx.core:core-ktx:1.17.0@aar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/8.14.3/transforms/f91c67aee9e0de30bf9f47518fc297dc/transformed/core-ktx-1.17.0/jars/classes.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/8.14.3/transforms/f91c67aee9e0de30bf9f47518fc297dc/transformed/core-ktx-1.17.0/jars/classes.jar"
       resolved="androidx.core:core-ktx:1.17.0"
       provided="true"
-      folder="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/8.14.3/transforms/f91c67aee9e0de30bf9f47518fc297dc/transformed/core-ktx-1.17.0"
+      folder="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/8.14.3/transforms/f91c67aee9e0de30bf9f47518fc297dc/transformed/core-ktx-1.17.0"
       manifest="AndroidManifest.xml"
       resFolder="res"
       assetsFolder="assets"
@@ -33,10 +33,10 @@
       proguardRules="proguard.txt"/>
   <library
       name="androidx.core:core:1.17.0@aar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/8.14.3/transforms/c9099ee415569a05c893c6a56746b1f1/transformed/core-1.17.0/jars/classes.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/8.14.3/transforms/c9099ee415569a05c893c6a56746b1f1/transformed/core-1.17.0/jars/classes.jar"
       resolved="androidx.core:core:1.17.0"
       provided="true"
-      folder="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/8.14.3/transforms/c9099ee415569a05c893c6a56746b1f1/transformed/core-1.17.0"
+      folder="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/8.14.3/transforms/c9099ee415569a05c893c6a56746b1f1/transformed/core-1.17.0"
       manifest="AndroidManifest.xml"
       resFolder="res"
       assetsFolder="assets"
@@ -47,15 +47,15 @@
       proguardRules="proguard.txt"/>
   <library
       name="org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2@jar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/modules-2/files-2.1/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm/1.10.2/4a9f78ef49483748e2c129f3d124b8fa249dafbf/kotlinx-coroutines-core-jvm-1.10.2.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/modules-2/files-2.1/org.jetbrains.kotlinx/kotlinx-coroutines-core-jvm/1.10.2/4a9f78ef49483748e2c129f3d124b8fa249dafbf/kotlinx-coroutines-core-jvm-1.10.2.jar"
       resolved="org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2"
       provided="true"/>
   <library
       name="androidx.lifecycle:lifecycle-runtime:2.6.2@aar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/8.14.3/transforms/7eac2350e186a069e6b795a3425743ee/transformed/lifecycle-runtime-2.6.2/jars/classes.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/8.14.3/transforms/7eac2350e186a069e6b795a3425743ee/transformed/lifecycle-runtime-2.6.2/jars/classes.jar"
       resolved="androidx.lifecycle:lifecycle-runtime:2.6.2"
       provided="true"
-      folder="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/8.14.3/transforms/7eac2350e186a069e6b795a3425743ee/transformed/lifecycle-runtime-2.6.2"
+      folder="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/8.14.3/transforms/7eac2350e186a069e6b795a3425743ee/transformed/lifecycle-runtime-2.6.2"
       manifest="AndroidManifest.xml"
       resFolder="res"
       assetsFolder="assets"
@@ -66,20 +66,20 @@
       proguardRules="proguard.txt"/>
   <library
       name="androidx.lifecycle:lifecycle-common:2.6.2@jar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/modules-2/files-2.1/androidx.lifecycle/lifecycle-common/2.6.2/10f354fdb64868baecd67128560c5a0d6312c495/lifecycle-common-2.6.2.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/modules-2/files-2.1/androidx.lifecycle/lifecycle-common/2.6.2/10f354fdb64868baecd67128560c5a0d6312c495/lifecycle-common-2.6.2.jar"
       resolved="androidx.lifecycle:lifecycle-common:2.6.2"
       provided="true"/>
   <library
       name="org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2@jar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/modules-2/files-2.1/org.jetbrains.kotlinx/kotlinx-coroutines-android/1.10.2/c8705d275d81f19e8afaf3ff9b5bf7a4b6b6c19b/kotlinx-coroutines-android-1.10.2.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/modules-2/files-2.1/org.jetbrains.kotlinx/kotlinx-coroutines-android/1.10.2/c8705d275d81f19e8afaf3ff9b5bf7a4b6b6c19b/kotlinx-coroutines-android-1.10.2.jar"
       resolved="org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2"
       provided="true"/>
   <library
       name="androidx.versionedparcelable:versionedparcelable:1.1.1@aar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/8.14.3/transforms/d754c245a0979fff665c13abf76a76da/transformed/versionedparcelable-1.1.1/jars/classes.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/8.14.3/transforms/d754c245a0979fff665c13abf76a76da/transformed/versionedparcelable-1.1.1/jars/classes.jar"
       resolved="androidx.versionedparcelable:versionedparcelable:1.1.1"
       provided="true"
-      folder="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/8.14.3/transforms/d754c245a0979fff665c13abf76a76da/transformed/versionedparcelable-1.1.1"
+      folder="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/8.14.3/transforms/d754c245a0979fff665c13abf76a76da/transformed/versionedparcelable-1.1.1"
       manifest="AndroidManifest.xml"
       resFolder="res"
       assetsFolder="assets"
@@ -90,25 +90,25 @@
       proguardRules="proguard.txt"/>
   <library
       name="androidx.arch.core:core-common:2.2.0@jar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/modules-2/files-2.1/androidx.arch.core/core-common/2.2.0/5e1b8b81dfd5f52c56a8d53b18ca759c19a301f3/core-common-2.2.0.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/modules-2/files-2.1/androidx.arch.core/core-common/2.2.0/5e1b8b81dfd5f52c56a8d53b18ca759c19a301f3/core-common-2.2.0.jar"
       resolved="androidx.arch.core:core-common:2.2.0"
       provided="true"/>
   <library
       name="androidx.collection:collection:1.0.0@jar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/modules-2/files-2.1/androidx.collection/collection/1.0.0/42858b26cafdaa69b6149f45dfc2894007bc2c7a/collection-1.0.0.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/modules-2/files-2.1/androidx.collection/collection/1.0.0/42858b26cafdaa69b6149f45dfc2894007bc2c7a/collection-1.0.0.jar"
       resolved="androidx.collection:collection:1.0.0"
       provided="true"/>
   <library
       name="androidx.annotation:annotation-jvm:1.8.1@jar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/modules-2/files-2.1/androidx.annotation/annotation-jvm/1.8.1/b8a16fe526014b7941c1debaccaf9c5153692dbb/annotation-jvm-1.8.1.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/modules-2/files-2.1/androidx.annotation/annotation-jvm/1.8.1/b8a16fe526014b7941c1debaccaf9c5153692dbb/annotation-jvm-1.8.1.jar"
       resolved="androidx.annotation:annotation-jvm:1.8.1"
       provided="true"/>
   <library
       name="androidx.annotation:annotation-experimental:1.4.1@aar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/8.14.3/transforms/7d292ac912b0aeb21b79c698b9d2f484/transformed/annotation-experimental-1.4.1/jars/classes.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/8.14.3/transforms/7d292ac912b0aeb21b79c698b9d2f484/transformed/annotation-experimental-1.4.1/jars/classes.jar"
       resolved="androidx.annotation:annotation-experimental:1.4.1"
       provided="true"
-      folder="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/8.14.3/transforms/7d292ac912b0aeb21b79c698b9d2f484/transformed/annotation-experimental-1.4.1"
+      folder="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/8.14.3/transforms/7d292ac912b0aeb21b79c698b9d2f484/transformed/annotation-experimental-1.4.1"
       manifest="AndroidManifest.xml"
       resFolder="res"
       assetsFolder="assets"
@@ -119,10 +119,10 @@
       proguardRules="proguard.txt"/>
   <library
       name="androidx.core:core-viewtree:1.0.0@aar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/8.14.3/transforms/5de5f2a179ddc4a5b0c5362b7f68b21d/transformed/core-viewtree-1.0.0/jars/classes.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/8.14.3/transforms/5de5f2a179ddc4a5b0c5362b7f68b21d/transformed/core-viewtree-1.0.0/jars/classes.jar"
       resolved="androidx.core:core-viewtree:1.0.0"
       provided="true"
-      folder="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/8.14.3/transforms/5de5f2a179ddc4a5b0c5362b7f68b21d/transformed/core-viewtree-1.0.0"
+      folder="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/8.14.3/transforms/5de5f2a179ddc4a5b0c5362b7f68b21d/transformed/core-viewtree-1.0.0"
       manifest="AndroidManifest.xml"
       resFolder="res"
       assetsFolder="assets"
@@ -133,24 +133,24 @@
       proguardRules="proguard.txt"/>
   <library
       name="org.jetbrains.kotlin:kotlin-stdlib:2.1.20@jar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib/2.1.20/aa8ca79cd50578314f6d1180c47cbe14c0fee567/kotlin-stdlib-2.1.20.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib/2.1.20/aa8ca79cd50578314f6d1180c47cbe14c0fee567/kotlin-stdlib-2.1.20.jar"
       resolved="org.jetbrains.kotlin:kotlin-stdlib:2.1.20"/>
   <library
       name="org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.1.20@jar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib-jdk7/2.1.20/72672df5e83231744c00550955b10acb71ed49d6/kotlin-stdlib-jdk7-2.1.20.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib-jdk7/2.1.20/72672df5e83231744c00550955b10acb71ed49d6/kotlin-stdlib-jdk7-2.1.20.jar"
       resolved="org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.1.20"/>
   <library
       name="org.jetbrains:annotations:23.0.0@jar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/modules-2/files-2.1/org.jetbrains/annotations/23.0.0/8cc20c07506ec18e0834947b84a864bfc094484e/annotations-23.0.0.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/modules-2/files-2.1/org.jetbrains/annotations/23.0.0/8cc20c07506ec18e0834947b84a864bfc094484e/annotations-23.0.0.jar"
       resolved="org.jetbrains:annotations:23.0.0"/>
   <library
       name="com.google.guava:listenablefuture:1.0@jar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/modules-2/files-2.1/com.google.guava/listenablefuture/1.0/c949a840a6acbc5268d088e47b04177bf90b3cad/listenablefuture-1.0.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/modules-2/files-2.1/com.google.guava/listenablefuture/1.0/c949a840a6acbc5268d088e47b04177bf90b3cad/listenablefuture-1.0.jar"
       resolved="com.google.guava:listenablefuture:1.0"
       provided="true"/>
   <library
       name="org.jspecify:jspecify:1.0.0@jar"
-      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/ae3cc3a32c762af1903fed1d11a0885b/gradle/caches/modules-2/files-2.1/org.jspecify/jspecify/1.0.0/7425a601c1c7ec76645a78d22b8c6a627edee507/jspecify-1.0.0.jar"
+      jars="/private/var/folders/3w/j8gwv06s30s4lxr2cwhc__r80000gn/T/cursor-sandbox-cache/f47d7c1711809bd21055caf73c66dfc6/gradle/caches/modules-2/files-2.1/org.jspecify/jspecify/1.0.0/7425a601c1c7ec76645a78d22b8c6a627edee507/jspecify-1.0.0.jar"
       resolved="org.jspecify:jspecify:1.0.0"
       provided="true"/>
 </libraries>

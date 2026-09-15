@@ -1,6 +1,7 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView, Image } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, ScrollView, Image } from 'react-native';
 import { useRouter, Stack } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { StatusBar } from 'expo-status-bar';
@@ -9,13 +10,14 @@ import { Colors } from '../constants/Colors';
 
 export default function AboutPage() {
     const router = useRouter();
+    const insets = useSafeAreaInsets();
 
     return (
         <View style={styles.container}>
             <Stack.Screen options={{ headerShown: false }} />
             <LinearGradient colors={['#1a1b2e', '#16161e', '#000000']} style={StyleSheet.absoluteFill} />
             <StatusBar style="light" />
-            <SafeAreaView style={{ flex: 1 }}>
+            <View style={{ flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom }}>
                 {/* Header */}
                 <View style={styles.header}>
                     <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
@@ -51,7 +53,7 @@ export default function AboutPage() {
                         © 2026 Primewave Co. All rights reserved.
                     </Text>
                 </ScrollView>
-            </SafeAreaView>
+            </View>
         </View>
     );
 }

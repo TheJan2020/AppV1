@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import {
-    View, Text, StyleSheet, TouchableOpacity, SafeAreaView, ScrollView,
+    View, Text, StyleSheet, TouchableOpacity, ScrollView,
     TextInput, ActivityIndicator, KeyboardAvoidingView, Platform, Modal, Alert,
 } from 'react-native';
 import { useRouter, useLocalSearchParams, Stack } from 'expo-router';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { KeyRound, UserPlus, X, Eye, EyeOff, ShieldCheck, Trash2 } from 'lucide-react-native';
@@ -29,6 +30,7 @@ import { authFetch } from '../utils/authFetch';
  */
 export default function ManageUsersPage() {
     const router = useRouter();
+    const insets = useSafeAreaInsets();
     const { adminUrl: adminUrlParam, userName: userNameParam } = useLocalSearchParams();
     const adminUrl = Array.isArray(adminUrlParam) ? adminUrlParam[0] : adminUrlParam;
     const requesterUsername = Array.isArray(userNameParam) ? userNameParam[0] : userNameParam;
@@ -300,7 +302,7 @@ export default function ManageUsersPage() {
             <Stack.Screen options={{ headerShown: false }} />
             <LinearGradient colors={['#1a1b2e', '#16161e', '#000000']} style={StyleSheet.absoluteFill} />
             <StatusBar style="light" />
-            <SafeAreaView style={{ flex: 1 }}>
+            <View style={{ flex: 1, paddingTop: insets.top, paddingBottom: insets.bottom }}>
                 <View style={styles.header}>
                     <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
                         <Ionicons name="arrow-back" size={24} color="white" />
@@ -382,7 +384,7 @@ export default function ManageUsersPage() {
                         })}
                     </ScrollView>
                 )}
-            </SafeAreaView>
+            </View>
 
             {/* Assign role modal */}
             <Modal visible={!!roleModal} transparent animationType="fade" onRequestClose={() => setRoleModal(null)}>
