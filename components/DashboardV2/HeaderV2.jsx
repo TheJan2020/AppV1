@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Cloud, CloudRain, Sun, CloudSnow, CloudLightning, Bell, Users } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
 
-function HeaderV2({ weather, cityName, userName, humidity, indoorTemp, onBellPress, unreadCount = 0, onUserPress, activeUsersCount = 0, onActiveUsersPress }) {
+function HeaderV2({ weather, cityName, userName, humidity, indoorTemp, onBellPress, unreadCount = 0, onUserPress, activeUsersCount = 0, onActiveUsersPress, loadHint = '' }) {
     const insets = useSafeAreaInsets();
 
     const capitalizeWords = (str) => {
@@ -72,8 +72,8 @@ function HeaderV2({ weather, cityName, userName, humidity, indoorTemp, onBellPre
                     <View style={styles.nameSkew}>
                         <Text style={styles.name}>{displayName}</Text>
                     </View>
-                    {!!onUserPress && (
-                        <Text style={styles.switchHint}>Tap to switch account</Text>
+                    {!!loadHint && (
+                        <Text style={styles.loadHint} numberOfLines={1}>{loadHint}</Text>
                     )}
                 </TouchableOpacity>
                 <View style={styles.headerActions}>
@@ -161,11 +161,12 @@ const styles = StyleSheet.create({
         lineHeight: 42,
         includeFontPadding: false,
     },
-    switchHint: {
+    loadHint: {
         marginTop: 2,
         fontSize: 11,
         fontFamily: CF.regular,
-        color: 'rgba(237,237,245,0.35)',
+        color: 'rgba(237,237,245,0.38)',
+        letterSpacing: 0.1,
     },
     headerActions: {
         flexDirection: 'row',

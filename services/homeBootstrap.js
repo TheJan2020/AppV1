@@ -162,28 +162,43 @@ export async function probeDashboard(liveUrl, localUrl) {
         if (url && !unique.includes(url)) unique.push(url);
     }
     if (!unique.length) throw new Error('Enter a dashboard URL.');
-    const errors = [];
-    for (const url of unique) {
-        try {
-            const timeoutMs = /^https:/i.test(url) ? 10000 : 8000;
-            const boot = await tryBootstrap(url, timeoutMs);
-            return {
-                ...boot,
-                adminUrlLive: unique.find((u) => /^https:/i.test(u) && !isLanHost(hostPart(u))) || live,
-                adminUrlLocal: allowLocalUrlFallback(live, local)
-                    ? (unique.find((u) => /^http:/i.test(u) && !/^https:/i.test(u)) || local)
-                    : '',
-            };
-        } catch (e) {
-            errors.push({
-                url,
-                status: e?.status,
-                message: e?.message || String(e),
-            });
-        }
+    const adminUrlLive = unique.find((u) => /^https:/i.test(u) && !isLanHost(hostPart(u))) || live;
+    const adminUrlLocal = allowLocalUrlFallback(live, local)
+        ? (unique.find((u) => /^http:/i.test(u) && !/^https:/i.test(u)) || local)
+        : '';
+    const withMeta = (boot) => ({
+        ...boot,
+        adminUrlLive,
+        adminUrlLocal,
+    });
+    if (unique.length === 1) {
+        return withMeta(await tryBootstrap(unique[0], /^https:/i.test(unique[0]) ? 10000 : 8000));
     }
-    throw bootstrapError(formatProbeFailure(errors, unique, local), {
-        status: errors.find((e) => e.status === 401)?.status,
+
+    const errors = [];
+    return await new Promise((resolve, reject) => {
+        let remaining = unique.length;
+        let settled = false;
+        unique.forEach((url) => {
+            const timeoutMs = /^https:/i.test(url) ? 10000 : 8000;
+            tryBootstrap(url, timeoutMs).then((boot) => {
+                if (settled) return;
+                settled = true;
+                resolve(withMeta(boot));
+            }).catch((e) => {
+                errors.push({
+                    url,
+                    status: e?.status,
+                    message: e?.message || String(e),
+                });
+                remaining -= 1;
+                if (!settled && remaining === 0) {
+                    reject(bootstrapError(formatProbeFailure(errors, unique, local), {
+                        status: errors.find((err) => err.status === 401)?.status,
+                    }));
+                }
+            });
+        });
     });
 }
 

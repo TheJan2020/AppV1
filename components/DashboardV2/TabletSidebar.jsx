@@ -14,14 +14,15 @@ const TAB_LABELS = {
     tablet: 'Kids Tablet',
 };
 
-function tabIsAllowed(allowedTabs, tabId) {
+function tabIsAllowed(allowedTabs, tabId, rolesLoading = false) {
     if (tabId === 'home' || tabId === 'settings') return true;
+    if (rolesLoading) return true;
     if (!Array.isArray(allowedTabs)) return true;
     if (allowedTabs.length === 0) return tabId === 'home' || tabId === 'settings';
     return allowedTabs.includes(tabId);
 }
 
-function TabletSidebar({ activeTab, onTabPress, allowedTabs = null }) {
+function TabletSidebar({ activeTab, onTabPress, allowedTabs = null, rolesLoading = false }) {
     const [deniedLabel, setDeniedLabel] = useState('');
     const deniedTimer = useRef(null);
 
@@ -30,7 +31,7 @@ function TabletSidebar({ activeTab, onTabPress, allowedTabs = null }) {
     }, []);
 
     const handlePress = (tabId) => {
-        if (tabId !== 'home' && !tabIsAllowed(allowedTabs, tabId)) {
+        if (tabId !== 'home' && !tabIsAllowed(allowedTabs, tabId, rolesLoading)) {
             setDeniedLabel(TAB_LABELS[tabId] || 'This screen');
             if (deniedTimer.current) clearTimeout(deniedTimer.current);
             deniedTimer.current = setTimeout(() => setDeniedLabel(''), 2200);

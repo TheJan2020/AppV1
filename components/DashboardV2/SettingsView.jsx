@@ -137,11 +137,6 @@ function SettingsView({
         try {
             unregisterPushTokenAsync().catch(() => {});
             HAService.disconnectAll();
-            try {
-                await SecureStore.deleteItemAsync('room_reorder_config');
-            } catch {
-                // ignore
-            }
             const { nextAccount } = await logoutActiveAccount();
             if (nextAccount) {
                 let profiles = [];
@@ -217,11 +212,6 @@ function SettingsView({
                             if (isActive) {
                                 unregisterPushTokenAsync().catch(() => {});
                                 HAService.disconnectAll();
-                                try {
-                                    await SecureStore.deleteItemAsync('room_reorder_config');
-                                } catch {
-                                    // ignore
-                                }
                             }
                             const { nextAccount } = await removeAccount(account.id);
                             if (isActive) {
@@ -302,13 +292,10 @@ function SettingsView({
         setSavingReminder(true);
         try {
             const base = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
-            const res = await authFetch(`${base}api/config`);
-            const cfg = await res.json();
-            const next = { ...cfg, still_open_reminder_ms: minutes * 60 * 1000 };
             const saveRes = await authFetch(`${base}api/config`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(next),
+                body: JSON.stringify({ still_open_reminder_ms: minutes * 60 * 1000 }),
             });
             const data = await saveRes.json();
             if (!saveRes.ok) throw new Error(data?.error || 'Failed to save');

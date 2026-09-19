@@ -1,7 +1,9 @@
 import { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import ButlerVoiceModal from '../components/DashboardV2/ButlerVoiceModal';
+import IntercomCallModal from '../components/DashboardV2/IntercomCallModal';
 import { canOpenButlerCall, requestButlerMicPermission, runButlerBackgroundSetup } from '../services/butler/openButlerCall';
+import { registerForPushNotificationsAsync } from '../services/notifications';
 import { getButlerBackendUrl } from '../utils/butlerBackend';
 import { fetchEnrichedLightMappings } from '../utils/lightMappingsClient';
 import { CF } from '../utils/typography';
@@ -70,9 +72,10 @@ import {
 import { connectionConfigFromProfile, connectionConfigFromBoot, withFailoverUrls } from '../services/connectionEndpoints';
 import { probeDashboard, applyBootstrapHaToConfig } from '../services/homeBootstrap';
 import { loadHaProfiles, saveHaProfiles, mergeActiveProfileUrls } from '../utils/storage';
-import { fetchAppRole, fetchRoleCameras, canShowScreen, roleCanSeeCameras, filterHomeCameraIds, filterCamerasForRole, filterRoomsForRole, areaAllowedForRole, areaVisibleForRole, selectedCameraIdsForRole, camerasForRoleDisplay, PENDING_APP_ROLE, hasAppUserIdentity } from '../services/appRole';
+import { fetchAppRole, fetchRoleCameras, canShowScreen, roleCanSeeCameras, filterHomeCameraIds, filterCamerasForRole, filterRoomsForRole, areaAllowedForRole, areaVisibleForRole, selectedCameraIdsForRole, camerasForRoleDisplay, hasAppUserIdentity } from '../services/appRole';
 import { fetchBackendHaSnapshot, applyBackendHaSnapshot, fetchLockStates, mergeEntitySlice } from '../services/haBackendCache';
 import { setRoomPageBootstrap, clearRoomPageBootstrap } from '../utils/roomPageBootstrap';
+import { persistRoomOrder, loadLocalRoomOrder, parentIdsFromConfig, mergeRoomOrder } from '../services/roomOrder';
 
 export default function DashboardV2Tablet() {
     const router = useRouter();
@@ -88,6 +91,8 @@ export default function DashboardV2Tablet() {
 
     // Config State
     const [connectionConfig, setConnectionConfig] = useState(() => connectionConfigFromBoot(bootProf));
+    const connectionConfigRef = useRef(connectionConfig);
+    connectionConfigRef.current = connectionConfig;
     const [showAccountSwitcher, setShowAccountSwitcher] = useState(false);
 
     const service = useRef(null);
@@ -95,6 +100,7 @@ export default function DashboardV2Tablet() {
     const profileIdRef = useRef(bootProf?.profileId || null);
     const homeKeyRef = useRef(`${bootProf?.profileId || ''}::${toHaHttpUrl(bootProf?.url || '').replace(/\/+$/, '').toLowerCase()}`);
     const haLiveRef = useRef(false);
+    const haConnectGenRef = useRef(0);
     const saveTimerRef = useRef(null);
     /**
      * Guards against overlapping loadConnectionConfig() calls. Account
@@ -108,6 +114,7 @@ export default function DashboardV2Tablet() {
      */
     const loadConnectionInFlightRef = useRef(false);
     const loadConnectionPendingRef = useRef(false);
+    const roleFetchGenRef = useRef(0);
 
     const [entities, setEntities] = useState(() => bootValue('entities', []));
     const [cityName, setCityName] = useState(() => bootValue('cityName', 'Home'));
@@ -124,6 +131,7 @@ export default function DashboardV2Tablet() {
     const [showNetworkModal, setShowNetworkModal] = useState(false);
     const [allowedScreens, setAllowedScreens] = useState(null);
     const [appRole, setAppRole] = useState(null);
+    const [rolesLoading, setRolesLoading] = useState(true);
     const [roomTrackingLookup, setRoomTrackingLookup] = useState(() => bootValue('roomTrackingLookup', {}));
 
     // Settings State
@@ -155,15 +163,8 @@ export default function DashboardV2Tablet() {
         SecureStore.getItemAsync('settings_show_preference_button').then(val => {
             if (val !== null) setShowPreferenceButton(val === 'true');
         });
-        // Load Room Order
-        SecureStore.getItemAsync('room_reorder_config').then(val => {
-            if (val !== null) {
-                try {
-                    setSavedRoomOrder(JSON.parse(val));
-                } catch (e) {
-                    console.log('Error parsing room order:', e);
-                }
-            }
+        loadLocalRoomOrder(bootProf?.profileId || profileIdRef.current).then((order) => {
+            if (Array.isArray(order) && order.length) setSavedRoomOrder(order);
         });
 
         void startBackgroundBoot().then(() => loadConnectionConfig());
@@ -216,24 +217,22 @@ export default function DashboardV2Tablet() {
                     console.log('[Dashboard] Loaded active profile:', activeProfile.name);
                     if (homeChanged) {
                         haLiveRef.current = false;
+                        haConnectGenRef.current += 1;
                         if (saveTimerRef.current) {
                             clearTimeout(saveTimerRef.current);
                             saveTimerRef.current = null;
                         }
                         HAService.disconnectAll();
                         resetHomeDashboardState(dashboardUiSetters);
+                        setRolesLoading(true);
                         setAppRole(null);
                         setAllowedScreens(null);
                         setHaCameras([]);
                         setBackendCameras(null);
                         setUserHomeCameras(null);
-                        setSavedRoomOrder([]);
                         clearRoomPageBootstrap();
-                        try {
-                            await SecureStore.deleteItemAsync('room_reorder_config');
-                        } catch {
-                            // ignore
-                        }
+                        const nextOrder = await loadLocalRoomOrder(activeProfileId);
+                        setSavedRoomOrder(Array.isArray(nextOrder) ? nextOrder : []);
                     }
                     homeKeyRef.current = nextHomeKey;
                     profileIdRef.current = activeProfileId;
@@ -250,6 +249,12 @@ export default function DashboardV2Tablet() {
                     const snapshot = await loadDashboardSnapshot(activeProfileId, { haUrl: cfg.url });
                     if (snapshot && !haLiveRef.current) {
                         applyDashboardSnapshot(snapshot, dashboardUiSetters);
+                    }
+                    if (!homeChanged) {
+                        const localOrder = await loadLocalRoomOrder(activeProfileId);
+                        if (Array.isArray(localOrder) && localOrder.length) {
+                            setSavedRoomOrder(localOrder);
+                        }
                     }
                     setConnectionConfig(cfg);
                     return;
@@ -282,19 +287,47 @@ export default function DashboardV2Tablet() {
     };
 
     const handleAccountSwitched = useCallback(async (account) => {
-        const nextName = account?.name || '';
+        const nextName = account?.username || account?.name || '';
         const nextId = account?.userId || '';
+        const homeChanging = !!(account?.profileId && account.profileId !== profileIdRef.current);
+        const roleGen = ++roleFetchGenRef.current;
+        setRolesLoading(true);
         router.setParams({
-            userName: nextName,
+            userName: account?.name || nextName,
             userId: nextId,
             switchKey: String(Date.now()),
         });
         setActiveTab('tablet');
         setRoomSheetVisible(false);
         setSelectedRoom(null);
-        setAppRole(null);
-        setAllowedScreens(null);
-        haLiveRef.current = false;
+        setBackendCameras(null);
+        setUserHomeCameras(null);
+        if (homeChanging) {
+            haLiveRef.current = false;
+            setConnectionConfig({ url: '', token: '', adminUrl: '', loaded: false });
+        } else {
+            const cfg = connectionConfigRef.current;
+            if (cfg?.adminUrl && (nextId || nextName)) {
+                fetchAppRole({
+                    adminUrl: cfg.adminUrl,
+                    token: cfg.token,
+                    userId: nextId,
+                    username: nextName,
+                }).then((role) => {
+                    if (roleGen !== roleFetchGenRef.current) return;
+                    if (role) {
+                        setAppRole(role);
+                        setAllowedScreens(Array.isArray(role.screens) ? role.screens : ['home', 'settings']);
+                    }
+                    setRolesLoading(false);
+                }).catch(() => {
+                    if (roleGen !== roleFetchGenRef.current) return;
+                    setRolesLoading(false);
+                });
+            } else {
+                setRolesLoading(false);
+            }
+        }
         loadConnectionConfig();
     }, [router]);
 
@@ -361,28 +394,31 @@ export default function DashboardV2Tablet() {
 
     useEffect(() => {
         if (!switchKey) return;
-        haLiveRef.current = false;
         loadConnectionConfig();
     }, [switchKey]);
 
     const refreshAppRole = useCallback(() => {
         if (!connectionConfig.loaded || !connectionConfig.adminUrl) return;
         if (!hasAppUserIdentity(userId, userName)) {
-            setAppRole(PENDING_APP_ROLE);
-            setAllowedScreens(PENDING_APP_ROLE.screens);
+            setRolesLoading(true);
             return;
         }
+        const roleGen = ++roleFetchGenRef.current;
+        setRolesLoading(true);
         fetchAppRole({
             adminUrl: connectionConfig.adminUrl,
             token: connectionConfig.token,
             userId,
             username: userName,
         }).then((role) => {
-            setAppRole(role || PENDING_APP_ROLE);
-            setAllowedScreens(Array.isArray(role?.screens) ? role.screens : PENDING_APP_ROLE.screens);
-        }).catch(() => {
-            setAppRole(PENDING_APP_ROLE);
-            setAllowedScreens(PENDING_APP_ROLE.screens);
+            if (roleGen !== roleFetchGenRef.current) return;
+            if (role) {
+                setAppRole(role);
+                setAllowedScreens(Array.isArray(role.screens) ? role.screens : ['home', 'settings']);
+            }
+        }).finally(() => {
+            if (roleGen !== roleFetchGenRef.current) return;
+            setRolesLoading(false);
         });
     }, [connectionConfig.loaded, connectionConfig.adminUrl, connectionConfig.token, userId, userName]);
 
@@ -392,6 +428,19 @@ export default function DashboardV2Tablet() {
     useEffect(() => {
         refreshAppRole();
     }, [refreshAppRole]);
+
+    useEffect(() => {
+        if (rolesLoading || !Array.isArray(allowedScreens)) return;
+        const current = activeTab === 'ai' ? 'butler' : activeTab;
+        if (current !== 'home' && current !== 'settings' && current !== 'tablet' && !canShowScreen(allowedScreens, current)) {
+            setActiveTab('tablet');
+        }
+    }, [allowedScreens, activeTab, rolesLoading]);
+
+    useEffect(() => {
+        if (!connectionConfig.loaded || !connectionConfig.adminUrl) return;
+        registerForPushNotificationsAsync().catch(() => {});
+    }, [connectionConfig.loaded, connectionConfig.adminUrl, userId]);
 
     useEffect(() => {
         if (!connectionConfig.loaded || !connectionConfig.adminUrl) return undefined;
@@ -459,7 +508,13 @@ export default function DashboardV2Tablet() {
             headers: { ...authHeaders, 'Cache-Control': 'no-cache', 'Pragma': 'no-cache' },
         })
             .then((res) => res.json())
-            .then((data) => setBadgeConfig(data))
+            .then((data) => {
+                setBadgeConfig(data);
+                const backendOrder = parentIdsFromConfig(data);
+                if (backendOrder.length) {
+                    setSavedRoomOrder((prev) => (Array.isArray(prev) && prev.length ? prev : backendOrder));
+                }
+            })
             .catch((e) => {
                 if (e.name !== 'AbortError') console.log('[Dashboard] Config mappings error:', e);
             });
@@ -546,12 +601,9 @@ export default function DashboardV2Tablet() {
 
     useEffect(() => {
         fetchMappings();
-        // Also re-run when the HA token changes: two accounts can point at the
-        // exact same admin/home URL, so `adminUrl` alone doesn't change when
-        // switching between them — without `token` here, quick scenes (and the
-        // other mappings fetched below) would keep showing empty/stale data
-        // after resetHomeDashboardState() cleared them for the new account.
-    }, [connectionConfig.loaded, connectionConfig.adminUrl, connectionConfig.token]);
+        // Also re-run when the HA token or user changes: two accounts can share
+        // the same admin/home URL, so adminUrl alone does not change on switch.
+    }, [connectionConfig.loaded, connectionConfig.adminUrl, connectionConfig.token, userId]);
 
     useEffect(() => {
         if (!connectionConfig.loaded || !connectionConfig.adminUrl) return undefined;
@@ -602,6 +654,8 @@ export default function DashboardV2Tablet() {
         console.log('DEBUG: Fetching Admin Config from:', adminUrl);
 
         const configAbort = new AbortController();
+        const configTimer = setTimeout(() => configAbort.abort(), 12000);
+        const connectGen = ++haConnectGenRef.current;
 
         void probeDashboard(
             connectionConfig.adminUrlLive || adminUrl,
@@ -631,6 +685,10 @@ export default function DashboardV2Tablet() {
                 .then(data => {
                     console.log('DEBUG: Fetched Admin Config Keys:', Object.keys(data));
                     setBadgeConfig(data);
+                    const backendOrder = parentIdsFromConfig(data);
+                    if (backendOrder.length) {
+                        setSavedRoomOrder((prev) => (Array.isArray(prev) && prev.length ? prev : backendOrder));
+                    }
                 })
                 .catch(err => {
                     if (err.name === 'AbortError') return;
@@ -682,6 +740,7 @@ export default function DashboardV2Tablet() {
                         setEntities,
                         setRegistryAreas,
                         setRegistryFloors,
+                        setRegistryEntities,
                     });
                 })
                 .catch((e) => {
@@ -727,38 +786,45 @@ export default function DashboardV2Tablet() {
                 }
                 if (data.type === 'connected') {
                     service.current.getStates().then(states => {
+                        if (connectGen !== haConnectGenRef.current) return;
+                        if (!Array.isArray(states)) return;
                         haLiveRef.current = true;
-                        setEntities(states || []);
-                        saveDashboardSnapshot(profileIdRef.current, { entities: states || [] });
-                    });
+                        setEntities(states);
+                        saveDashboardSnapshot(profileIdRef.current, { entities: states });
+                    }).catch((e) => console.log('[Dashboard] getStates error:', e.message));
                     service.current.getConfig().then(config => {
+                        if (connectGen !== haConnectGenRef.current) return;
                         if (config && config.location_name) {
                             setCityName(config.location_name);
                         }
-                    });
+                    }).catch(() => {});
 
                     // Fetch Registries
                     service.current.getDeviceRegistry().then(devices => {
+                        if (connectGen !== haConnectGenRef.current) return;
                         setRegistryDevices(devices || []);
-                    });
+                    }).catch(() => {});
                     service.current.getEntityRegistry().then(regs => {
+                        if (connectGen !== haConnectGenRef.current) return;
                         setRegistryEntities(regs || []);
-                    });
+                    }).catch(() => {});
                     service.current.getAreaRegistry().then(areas => {
+                        if (connectGen !== haConnectGenRef.current) return;
                         if (areas && areas.length > 0) {
                             console.log('DEBUG: First Area:', JSON.stringify(areas[0]));
                         }
                         setRegistryAreas(areas || []);
-                    });
+                    }).catch(() => {});
                     service.current.getFloorRegistry().then(floors => {
+                        if (connectGen !== haConnectGenRef.current) return;
                         setRegistryFloors(floors || []);
                         if (floors && floors.length > 0) {
-                            // Sort floors by level (optional) or just use default order
                             const sorted = floors.sort((a, b) => (a.level || 0) - (b.level || 0));
                             setSelectedFloor(sorted[0].floor_id);
                         }
-                    });
+                    }).catch(() => {});
                     service.current.getConfigEntries().catch(() => []).then(configEntries => {
+                        if (connectGen !== haConnectGenRef.current) return;
                         const maIds = (Array.isArray(configEntries) ? configEntries : [])
                             .filter(e => e?.domain === 'music_assistant' && e?.entry_id)
                             .map(e => e.entry_id);
@@ -789,7 +855,9 @@ export default function DashboardV2Tablet() {
         frigateService.current.getConfig().catch(() => {});
 
         return () => {
+            clearTimeout(configTimer);
             configAbort.abort();
+            haConnectGenRef.current += 1;
             if (mappingsAbortRef.current) mappingsAbortRef.current.abort();
             if (service.current) {
                 if (service.current.disconnect) {
@@ -1124,7 +1192,12 @@ export default function DashboardV2Tablet() {
 
     const handleTabPress = (tabId) => {
         const permissionId = tabId === 'ai' ? 'butler' : tabId;
-        if (permissionId !== 'home' && permissionId !== 'settings' && !canShowScreen(allowedScreens, permissionId)) {
+        if (
+            !rolesLoading
+            && permissionId !== 'home'
+            && permissionId !== 'settings'
+            && !canShowScreen(allowedScreens, permissionId)
+        ) {
             return;
         }
         if (tabId === 'home') {
@@ -1390,41 +1463,22 @@ export default function DashboardV2Tablet() {
     }, []);
 
     const handleRoomReorder = (data) => {
-        // IDs of the rooms in their new order
-        const reorderedIds = data.map(r => r.area_id);
-
-        // Update Saved Order
-        setSavedRoomOrder(prev => {
-            // Start with the existing full order or use the current list if none exists
-            const currentFullOrder = prev && prev.length > 0 ? [...prev] : roomsWithCounts.map(a => a.area_id);
-
-            // Build a set of IDs from the reordered group for quick lookup
-            const reorderedSet = new Set(reorderedIds);
-
-            // Find the active indices in the full list that correspond to the items being reordered
-            // We only care about the relative position of the items that were actually visible/draggable
-            const indicesToUpdate = [];
-            currentFullOrder.forEach((id, index) => {
-                if (reorderedSet.has(id)) {
-                    indicesToUpdate.push(index);
+        const reorderedIds = data.map((r) => r.area_id);
+        const fallbackIds = roomsWithCounts.map((a) => a.area_id);
+        setSavedRoomOrder((prev) => {
+            const newOrder = mergeRoomOrder(prev, reorderedIds, fallbackIds);
+            persistRoomOrder({
+                adminUrl: connectionConfigRef.current?.adminUrl,
+                token: connectionConfigRef.current?.token,
+                profileId: profileIdRef.current,
+                order: newOrder,
+            }).then((result) => {
+                if (result?.config) {
+                    const next = parentIdsFromConfig(result.config);
+                    if (next.length) setSavedRoomOrder(next);
+                    setBadgeConfig((cfg) => (cfg ? { ...cfg, ...result.config } : result.config));
                 }
             });
-
-            // If mismatch (e.g. first time save), just use the reordered IDs + rest
-            if (indicesToUpdate.length !== reorderedIds.length) {
-                const others = currentFullOrder.filter(id => !reorderedSet.has(id));
-                const newOrder = [...reorderedIds, ...others];
-                SecureStore.setItemAsync('room_reorder_config', JSON.stringify(newOrder));
-                return newOrder;
-            }
-
-            // Place the new order into the found slots
-            const newOrder = [...currentFullOrder];
-            indicesToUpdate.forEach((originalIndex, i) => {
-                newOrder[originalIndex] = reorderedIds[i]; // reorderedIds is already in the new visual order
-            });
-
-            SecureStore.setItemAsync('room_reorder_config', JSON.stringify(newOrder));
             return newOrder;
         });
     };
@@ -1441,6 +1495,7 @@ export default function DashboardV2Tablet() {
                         cityName={cityName}
                         userName={userName}
                         onUserPress={() => setShowAccountSwitcher(true)}
+                        loadHint={rolesLoading ? 'Loading account…' : (!connectionConfig.loaded ? 'Opening home…' : '')}
                     />
                     <StatusBadges
                         lightsOn={lightsOn}
@@ -1870,7 +1925,7 @@ export default function DashboardV2Tablet() {
             {renderContent()}
 
             {isLandscape ? (
-                <TabletSidebar activeTab={activeTab} onTabPress={handleTabPress} allowedTabs={allowedScreens} />
+                <TabletSidebar activeTab={activeTab} onTabPress={handleTabPress} allowedTabs={allowedScreens} rolesLoading={rolesLoading} />
             ) : (
                 <View style={{ ...StyleSheet.absoluteFillObject, zIndex: 10000, elevation: 10000 }} pointerEvents="box-none">
                     <TabBar
@@ -1878,6 +1933,7 @@ export default function DashboardV2Tablet() {
                         onTabPress={handleTabPress}
                         butlerActive={showButlerCall}
                         allowedTabs={allowedScreens}
+                        rolesLoading={rolesLoading}
                     />
                 </View>
             )}
@@ -1916,6 +1972,15 @@ export default function DashboardV2Tablet() {
                     appRole={appRole}
                 />
             )}
+
+            <IntercomCallModal
+                adminUrl={connectionConfig.adminUrl}
+                userId={userId}
+                userName={userName}
+                callService={callService}
+                homeLocks={homeLocks}
+                token={connectionConfig.token}
+            />
         </View >
     );
 }

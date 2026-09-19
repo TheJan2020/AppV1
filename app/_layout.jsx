@@ -8,7 +8,7 @@ import { useEffect, useCallback } from 'react';
 import { LogBox, Dimensions } from 'react-native';
 import { useFonts } from 'expo-font';
 import * as ScreenOrientation from 'expo-screen-orientation';
-import { NotifContext } from '../services/NotifContext';
+import { PushNotifProvider } from '../services/NotifContext';
 import { preloadLocalLightIcons } from '../utils/lightTypeAssets';
 import { CF } from '../utils/typography';
 import * as SplashScreen from 'expo-splash-screen';
@@ -94,7 +94,7 @@ export default function RootLayout() {
     }
 
     return (
-        <NotifContext.Provider value={{ pendingNotif: null, clearNotif: () => {} }}>
+        <PushNotifProvider>
             <ErrorBoundary>
                 <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayoutRootView}>
                     <StatusBar style="light" />
@@ -125,6 +125,6 @@ export default function RootLayout() {
                     <PurpleTopGlow />
                 </GestureHandlerRootView>
             </ErrorBoundary>
-        </NotifContext.Provider>
+        </PushNotifProvider>
     );
 }

@@ -30,13 +30,13 @@ export function hasAppUserIdentity(userId, username) {
 
 export async function fetchAppRole({ adminUrl, token, userId, username }) {
     if (!hasAppUserIdentity(userId, username)) {
-        return { ...PENDING_APP_ROLE };
+        return null;
     }
     const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = controller ? setTimeout(() => controller.abort(), 8000) : null;
     try {
         const base = String(adminUrl || '').replace(/\/+$/, '');
-        if (!base) return { ...PENDING_APP_ROLE };
+        if (!base) return null;
         const qs = new URLSearchParams({
             userId: String(userId || ''),
             username: String(username || ''),
@@ -49,7 +49,7 @@ export async function fetchAppRole({ adminUrl, token, userId, username }) {
             signal: controller?.signal,
         });
         const data = await res.json().catch(() => null);
-        if (res.ok && data && (data.roleId || Array.isArray(data.screens))) {
+        if (res.ok && data && !data.pending && data.roleId !== 'pending' && (data.roleId || Array.isArray(data.screens))) {
             const role = {
                 roleId: data.roleId || 'admin',
                 roleName: data.roleName || 'Admin',
@@ -68,7 +68,7 @@ export async function fetchAppRole({ adminUrl, token, userId, username }) {
     } finally {
         if (timer) clearTimeout(timer);
     }
-    return { ...PENDING_APP_ROLE };
+    return null;
 }
 
 export function canShowScreen(screens, id) {

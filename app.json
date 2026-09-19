@@ -2,7 +2,7 @@
   "expo": {
     "name": "Primewave",
     "slug": "ha-app",
-    "version": "1.1.5",
+    "version": "1.1.6",
     "orientation": "default",
     "icon": "./assets/app-icon.png",
     "userInterfaceStyle": "light",
@@ -33,12 +33,16 @@
         "backgroundColor": "#4B2FA8"
       },
       "softwareKeyboardLayoutMode": "pan",
-      "versionCode": 7,
+      "versionCode": 8,
       "permissions": [
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT",
         "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.VIBRATE",
+        "android.permission.WAKE_LOCK",
+        "android.permission.USE_FULL_SCREEN_INTENT"
       ],
       "package": "ai.primewave.app"
     },

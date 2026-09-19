@@ -5,7 +5,10 @@ import {
     createAudioPlayer,
     requestRecordingPermissionsAsync,
     setAudioModeAsync,
+    setIsAudioActiveAsync,
 } from 'expo-audio';
+
+const RINGTONE_ASSET = require('../assets/sounds/intercom-ring.wav');
 
 export {
     RecordingPresets,
@@ -53,9 +56,59 @@ export async function stopAudioRecording(recorder) {
 export function releaseAudioPlayer(player) {
     if (!player) return;
     try {
+        player._pwRingSub?.remove?.();
+    } catch (_) { /* ignore */ }
+    try {
         player.pause();
     } catch (_) { /* ignore */ }
     try {
         player.release?.();
     } catch (_) { /* ignore */ }
+}
+
+/** Speaker + voice-call audio mode. Uses the local PCM module when a native build is present. */
+export async function routeCallAudioToSpeaker() {
+    await setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: true,
+        interruptionMode: 'doNotMix',
+        shouldRouteThroughEarpiece: false,
+        shouldPlayInBackground: true,
+    });
+    try {
+        const pcm = require('../modules/expo-pcm-player').default;
+        await pcm.setRoute('SPEAKER');
+    } catch {
+        /* Expo Go has no ExpoPcmPlayer; expo-audio mode above still applies. */
+    }
+}
+
+export async function startIntercomRingtone() {
+    try {
+        await setIsAudioActiveAsync(true);
+    } catch { /* Expo Go still plays without this */ }
+    setAudioModeAsync({
+        playsInSilentMode: true,
+        allowsRecording: false,
+        interruptionMode: 'doNotMix',
+        shouldRouteThroughEarpiece: false,
+        shouldPlayInBackground: true,
+    }).catch(() => {});
+
+    const player = createAudioPlayer(RINGTONE_ASSET);
+    player.loop = true;
+    player.volume = 1;
+    player.muted = false;
+    player.play();
+    const sub = player.addListener?.('playbackStatusUpdate', (status) => {
+        if (status?.error) {
+            console.warn('[Intercom] ringtone status', status.error);
+        }
+        if (status?.isLoaded && !status.playing && !status.didJustFinish) {
+            try { player.play(); } catch { /* ignore */ }
+        }
+    });
+    player._pwRingSub = sub;
+    console.log('[Intercom] ringtone start');
+    return player;
 }

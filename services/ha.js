@@ -242,7 +242,7 @@ export class HAService {
                 httpUrl: httpUrlFromWs(this.url),
             });
         }
-        this.sendMessage({ type: 'subscribe_events', event_type: 'state_changed' });
+        this.sendMessage({ type: 'subscribe_events', event_type: 'state_changed' }).catch(() => {});
     }
 
     handleAllRaceFailed(event) {
@@ -258,10 +258,7 @@ export class HAService {
             code: closeCode,
             reason: closeReason || undefined,
         });
-        this.pending.forEach(({ resolve }) => {
-            try { resolve(null); } catch { /* ignore */ }
-        });
-        this.pending.clear();
+        this.rejectPending('HA disconnected');
         this.scheduleReconnect(closeCode, closeReason, host);
     }
 
@@ -291,10 +288,7 @@ export class HAService {
             reason: closeReason || undefined,
         });
 
-        this.pending.forEach(({ resolve }) => {
-            try { resolve(null); } catch { /* ignore */ }
-        });
-        this.pending.clear();
+        this.rejectPending('HA disconnected');
 
         if (this.appState === 'active' && this.fallbackUrl && this.primaryUrl) {
             if (!wasFallback) {
@@ -430,10 +424,7 @@ export class HAService {
             this.appStateSubscription = null;
         }
 
-        this.pending.forEach(({ resolve }) => {
-            try { resolve(null); } catch { /* ignore */ }
-        });
-        this.pending.clear();
+        this.rejectPending('HA disconnected');
 
         this.dropSocketsForSwitch();
         this.authenticated = false;
@@ -448,7 +439,7 @@ export class HAService {
         } else if (data.type === 'auth_ok') {
             this.authenticated = true;
             this.notifyListeners({ type: 'connected' });
-            this.sendMessage({ type: 'subscribe_events', event_type: 'state_changed' });
+            this.sendMessage({ type: 'subscribe_events', event_type: 'state_changed' }).catch(() => {});
         } else if (data.type === 'event' && data.event && data.event.event_type === 'state_changed') {
             this.notifyListeners({ type: 'state_changed', event: data.event });
         } else if (data.id && this.pending.has(data.id)) {
@@ -549,14 +540,67 @@ export class HAService {
         });
     }
 
-    sendMessage(msg) {
+    rejectPending(reason) {
+        const err = reason instanceof Error ? reason : new Error(String(reason || 'HA disconnected'));
+        this.pending.forEach((pending) => {
+            try {
+                if (typeof pending.reject === 'function') pending.reject(err);
+                else pending.resolve?.(null);
+            } catch { /* ignore */ }
+        });
+        this.pending.clear();
+    }
+
+    sendMessage(msg, timeoutMs) {
         if (!this.socket) return Promise.reject(new Error('No socket — HA not connected'));
+        const type = msg?.type || 'unknown';
+        const waitMs = timeoutMs ?? (
+            type === 'subscribe_events' ? 0
+                : type === 'get_states' ? 90000
+                    : 20000
+        );
 
         return new Promise((resolve, reject) => {
             const id = this.id++;
-            this.pending.set(id, { resolve, reject });
-            const payload = { ...msg, id };
-            this.socket.send(JSON.stringify(payload));
+            const pending = {
+                type,
+                resolve: (value) => {
+                    if (pending.timer) clearTimeout(pending.timer);
+                    resolve(value);
+                },
+                reject: (err) => {
+                    if (pending.timer) clearTimeout(pending.timer);
+                    reject(err);
+                },
+            };
+            if (waitMs > 0) {
+                pending.timer = setTimeout(() => {
+                    if (!this.pending.has(id)) return;
+                    if (type === 'get_states') {
+                        pending.timedOut = true;
+                        const err = new Error(`HA request timed out (${type})`);
+                        pending.reject(err);
+                        pending.reject = () => {};
+                        pending.resolve = (value) => {
+                            this.pending.delete(id);
+                            if (Array.isArray(value)) {
+                                this.notifyListeners({ type: 'states', states: value });
+                            }
+                        };
+                        return;
+                    }
+                    this.pending.delete(id);
+                    pending.reject(new Error(`HA request timed out (${type})`));
+                }, waitMs);
+            }
+            this.pending.set(id, pending);
+            try {
+                this.socket.send(JSON.stringify({ ...msg, id }));
+            } catch (err) {
+                this.pending.delete(id);
+                if (pending.timer) clearTimeout(pending.timer);
+                reject(err);
+            }
         });
     }
 

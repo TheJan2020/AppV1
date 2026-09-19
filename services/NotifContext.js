@@ -1,13 +1,67 @@
 /**
- * NotifContext
- *
- * Provides the last-tapped push notification to any screen that needs it.
- * Captured once in _layout.jsx (which is always mounted first) and consumed
- * in dashboard-v2.jsx to show the AlertNotificationModal.
+ * Last tapped / cold-start push notification.
+ * Intercom taps open the door-call screen; other taps keep the existing alert modal.
  */
-import { createContext } from 'react';
+import { createContext, useCallback, useEffect, useMemo, useState } from 'react';
+import Constants from 'expo-constants';
+
+const isExpoGo = Constants.appOwnership === 'expo'
+    || Constants.executionEnvironment === 'storeClient';
 
 export const NotifContext = createContext({
-    pendingNotif: null,       // { title, body, category, timestamp } | null
-    clearNotif:   () => {},   // call after consuming to avoid re-showing
+    pendingNotif: null,
+    clearNotif: () => {},
 });
+
+function parseResponse(response) {
+    const content = response?.notification?.request?.content;
+    if (!content) return null;
+    const data = content.data && typeof content.data === 'object' ? content.data : {};
+    return {
+        title: content.title || '',
+        body: content.body || '',
+        category: data.category || data.type || '',
+        timestamp: Date.now(),
+        data,
+        type: data.type || '',
+    };
+}
+
+export function PushNotifProvider({ children }) {
+    const [pendingNotif, setPendingNotif] = useState(null);
+    const clearNotif = useCallback(() => setPendingNotif(null), []);
+
+    useEffect(() => {
+        if (isExpoGo) return undefined;
+        let Notifications;
+        try {
+            Notifications = require('expo-notifications');
+        } catch {
+            return undefined;
+        }
+
+        let sub;
+        (async () => {
+            try {
+                const last = await Notifications.getLastNotificationResponseAsync();
+                const parsed = parseResponse(last);
+                if (parsed) setPendingNotif(parsed);
+            } catch { /* ignore */ }
+        })();
+
+        sub = Notifications.addNotificationResponseReceivedListener((response) => {
+            const parsed = parseResponse(response);
+            if (parsed) setPendingNotif(parsed);
+        });
+        return () => {
+            try { sub?.remove(); } catch { /* ignore */ }
+        };
+    }, []);
+
+    const value = useMemo(() => ({ pendingNotif, clearNotif }), [pendingNotif, clearNotif]);
+    return (
+        <NotifContext.Provider value={value}>
+            {children}
+        </NotifContext.Provider>
+    );
+}

@@ -10,6 +10,7 @@ import { connectionConfigFromProfile } from '../services/connectionEndpoints';
 import { Colors } from '../constants/Colors';
 
 const MIN_SPLASH_MS = 2000;
+const INTERCOM_SPLASH_MS = 400;
 
 export default function Splash() {
     const router = useRouter();
@@ -19,8 +20,28 @@ export default function Splash() {
     const navigationTarget = useRef(null);
 
     useEffect(() => {
-        const timer = setTimeout(() => setMinTimeElapsed(true), MIN_SPLASH_MS);
-        return () => clearTimeout(timer);
+        let timer;
+        let cancelled = false;
+        (async () => {
+            let ms = MIN_SPLASH_MS;
+            try {
+                const Constants = require('expo-constants').default;
+                const isExpoGo = Constants.appOwnership === 'expo'
+                    || Constants.executionEnvironment === 'storeClient';
+                if (!isExpoGo) {
+                    const Notifications = require('expo-notifications');
+                    const last = await Notifications.getLastNotificationResponseAsync();
+                    if (last?.notification?.request?.content?.data?.type === 'intercom') {
+                        ms = INTERCOM_SPLASH_MS;
+                    }
+                }
+            } catch { /* Expo Go / no push */ }
+            if (!cancelled) timer = setTimeout(() => setMinTimeElapsed(true), ms);
+        })();
+        return () => {
+            cancelled = true;
+            if (timer) clearTimeout(timer);
+        };
     }, []);
 
     useEffect(() => {

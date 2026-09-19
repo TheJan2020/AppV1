@@ -2,7 +2,9 @@ import { useRef, useState, useEffect, useMemo, useCallback, useContext } from 'r
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import NotificationModal from '../components/DashboardV2/NotificationModal';
 import ButlerVoiceModal from '../components/DashboardV2/ButlerVoiceModal';
+import IntercomCallModal from '../components/DashboardV2/IntercomCallModal';
 import { canOpenButlerCall, requestButlerMicPermission, runButlerBackgroundSetup } from '../services/butler/openButlerCall';
+import { registerForPushNotificationsAsync } from '../services/notifications';
 import { getButlerBackendUrl } from '../utils/butlerBackend';
 import { fetchEnrichedLightMappings } from '../utils/lightMappingsClient';
 import { CF } from '../utils/typography';
@@ -70,7 +72,6 @@ import {
     areaVisibleForRole,
     selectedCameraIdsForRole,
     camerasForRoleDisplay,
-    PENDING_APP_ROLE,
     hasAppUserIdentity,
 } from '../services/appRole';
 import { fetchBackendHaSnapshot, applyBackendHaSnapshot, fetchLockStates, mergeEntitySlice } from '../services/haBackendCache';
@@ -100,7 +101,7 @@ import {
     withFailoverUrls,
 } from '../services/connectionEndpoints';
 import { probeDashboard, applyBootstrapHaToConfig } from '../services/homeBootstrap';
-import { authFetch } from '../utils/authFetch';
+import { persistRoomOrder, loadLocalRoomOrder, parentIdsFromConfig, mergeRoomOrder } from '../services/roomOrder';
 import {
     disableCamerasGlobally as disableCamerasGloballyApi,
     requestEnableCameras as requestEnableCamerasApi,
@@ -123,14 +124,21 @@ export default function DashboardV2() {
 
     // Config State
     const [connectionConfig, setConnectionConfig] = useState(() => connectionConfigFromBoot(bootProf));
+    const connectionConfigRef = useRef(connectionConfig);
+    connectionConfigRef.current = connectionConfig;
     const [haStatus, setHaStatus] = useState(HA_STATUS.LOADING);
     const [adminStatus, setAdminStatus] = useState(ADMIN_STATUS.UNKNOWN);
+    const [registryReady, setRegistryReady] = useState(() => {
+        const areas = bootValue('registryAreas', []);
+        return Array.isArray(areas) && areas.length > 0;
+    });
 
     const service = useRef(null);
     const frigateService = useRef(null); // Frigate Service Ref
     const profileIdRef = useRef(bootProf?.profileId || null);
     const homeKeyRef = useRef(`${bootProf?.profileId || ''}::${toHaHttpUrl(bootProf?.url || '').replace(/\/+$/, '').toLowerCase()}`);
     const haLiveRef = useRef(false);
+    const haConnectGenRef = useRef(0);
     const saveTimerRef = useRef(null);
     /**
      * Guards against overlapping loadConnectionConfig() calls. Account switching
@@ -144,6 +152,7 @@ export default function DashboardV2() {
      */
     const loadConnectionInFlightRef = useRef(false);
     const loadConnectionPendingRef = useRef(false);
+    const roleFetchGenRef = useRef(0);
 
     const [entities, setEntities] = useState(() => bootValue('entities', []));
     const [cityName, setCityName] = useState(() => bootValue('cityName', 'Home'));
@@ -153,6 +162,7 @@ export default function DashboardV2() {
     const [cctvView, setCctvView] = useState('cameras'); // 'cameras' | 'events'
     const [allowedScreens, setAllowedScreens] = useState(null);
     const [appRole, setAppRole] = useState(null);
+    const [rolesLoading, setRolesLoading] = useState(true);
     const [frigateCameras, setFrigateCameras] = useState(() => bootValue('frigateCameras', []));
     const [haCameras, setHaCameras] = useState([]);
     const [backendCameras, setBackendCameras] = useState(null);
@@ -206,25 +216,18 @@ export default function DashboardV2() {
                     autoVisitVal,
                     autoResumeVal,
                     prefBtnVal,
-                    roomOrderVal,
                 ] = await Promise.all([
                     SecureStore.getItemAsync('settings_show_family'),
                     SecureStore.getItemAsync('settings_auto_room_visit'),
                     SecureStore.getItemAsync('settings_auto_room_resume'),
                     SecureStore.getItemAsync('settings_show_preference_button'),
-                    SecureStore.getItemAsync('room_reorder_config'),
                 ]);
                 if (showFamilyVal !== null) setShowFamily(showFamilyVal === 'true');
                 if (autoVisitVal !== null) setAutoRoomVisit(autoVisitVal === 'true');
                 if (autoResumeVal !== null) setAutoRoomResume(autoResumeVal === 'true');
                 if (prefBtnVal !== null) setShowPreferenceButton(prefBtnVal === 'true');
-                if (roomOrderVal !== null) {
-                    try {
-                        setSavedRoomOrder(JSON.parse(roomOrderVal));
-                    } catch (e) {
-                        console.log('Error parsing room order:', e);
-                    }
-                }
+                const bootOrder = await loadLocalRoomOrder(bootProf?.profileId || profileIdRef.current);
+                if (Array.isArray(bootOrder) && bootOrder.length) setSavedRoomOrder(bootOrder);
             } catch (e) {
                 console.log('[Dashboard] Settings load error:', e);
             }
@@ -294,25 +297,24 @@ export default function DashboardV2() {
                     console.log('[Dashboard] Loaded active profile:', activeProfile.name);
                     if (homeChanged) {
                         haLiveRef.current = false;
+                        haConnectGenRef.current += 1;
                         if (saveTimerRef.current) {
                             clearTimeout(saveTimerRef.current);
                             saveTimerRef.current = null;
                         }
                         HAService.disconnectAll();
                         resetHomeDashboardState(dashboardUiSetters);
+                        setRolesLoading(true);
                         setAppRole(null);
                         setAllowedScreens(null);
-                        setSavedRoomOrder([]);
                         setFrigateConfigResolved(false);
+                        setRegistryReady(false);
                         setHaCameras([]);
                         setBackendCameras(null);
                         setUserHomeCameras(null);
                         clearRoomPageBootstrap();
-                        try {
-                            await SecureStore.deleteItemAsync('room_reorder_config');
-                        } catch {
-                            // ignore
-                        }
+                        const nextOrder = await loadLocalRoomOrder(activeProfileId);
+                        setSavedRoomOrder(Array.isArray(nextOrder) ? nextOrder : []);
                     }
                     homeKeyRef.current = nextHomeKey;
                     profileIdRef.current = activeProfileId;
@@ -329,6 +331,15 @@ export default function DashboardV2() {
                     const snapshot = await loadDashboardSnapshot(activeProfileId, { haUrl: cfg.url });
                     if (snapshot && !haLiveRef.current) {
                         applyDashboardSnapshot(snapshot, dashboardUiSetters);
+                        if (Array.isArray(snapshot.registryAreas) && snapshot.registryAreas.length) {
+                            setRegistryReady(true);
+                        }
+                    }
+                    if (!homeChanged) {
+                        const localOrder = await loadLocalRoomOrder(activeProfileId);
+                        if (Array.isArray(localOrder) && localOrder.length) {
+                            setSavedRoomOrder(localOrder);
+                        }
                     }
                     setConnectionConfig(cfg);
                     return;
@@ -361,21 +372,46 @@ export default function DashboardV2() {
     }, []);
 
     const handleAccountSwitched = useCallback(async (account) => {
-        const nextName = account?.name || '';
+        const nextName = account?.username || account?.name || '';
         const nextId = account?.userId || '';
+        const homeChanging = !!(account?.profileId && account.profileId !== profileIdRef.current);
+        const roleGen = ++roleFetchGenRef.current;
+        setRolesLoading(true);
         router.setParams({
-            userName: nextName,
+            userName: account?.name || nextName,
             userId: nextId,
             switchKey: String(Date.now()),
         });
         setActiveTab('home');
         setRoomSheetVisible(false);
         setSelectedRoom(null);
-        setAppRole(null);
-        setAllowedScreens(null);
-        haLiveRef.current = false;
-        if (account?.profileId && account.profileId !== profileIdRef.current) {
+        setBackendCameras(null);
+        setUserHomeCameras(null);
+        if (homeChanging) {
+            haLiveRef.current = false;
             setConnectionConfig({ url: '', token: '', adminUrl: '', loaded: false });
+        } else {
+            const cfg = connectionConfigRef.current;
+            if (cfg?.adminUrl && (nextId || nextName)) {
+                fetchAppRole({
+                    adminUrl: cfg.adminUrl,
+                    token: cfg.token,
+                    userId: nextId,
+                    username: nextName,
+                }).then((role) => {
+                    if (roleGen !== roleFetchGenRef.current) return;
+                    if (role) {
+                        setAppRole(role);
+                        setAllowedScreens(Array.isArray(role.screens) ? role.screens : ['home', 'settings']);
+                    }
+                    setRolesLoading(false);
+                }).catch(() => {
+                    if (roleGen !== roleFetchGenRef.current) return;
+                    setRolesLoading(false);
+                });
+            } else {
+                setRolesLoading(false);
+            }
         }
         setTimeout(() => {
             loadConnectionConfig();
@@ -448,7 +484,6 @@ export default function DashboardV2() {
 
     useEffect(() => {
         if (!switchKey) return;
-        haLiveRef.current = false;
         loadConnectionConfig();
     }, [switchKey]);
 
@@ -600,12 +635,9 @@ export default function DashboardV2() {
 
     useEffect(() => {
         fetchMappings();
-        // Also re-run when the HA token changes: two accounts can point at the
-        // exact same admin/home URL, so `adminUrl` alone doesn't change when
-        // switching between them — without `token` here, quick scenes (and the
-        // other mappings fetched below) would keep showing empty/stale data
-        // after resetHomeDashboardState() cleared them for the new account.
-    }, [connectionConfig.loaded, connectionConfig.adminUrl, connectionConfig.token]);
+        // Also re-run when the HA token or user changes: two accounts can share
+        // the same admin/home URL, so adminUrl alone does not change on switch.
+    }, [connectionConfig.loaded, connectionConfig.adminUrl, connectionConfig.token, userId]);
 
     // Initial Load Logic
     useEffect(() => {
@@ -620,6 +652,8 @@ export default function DashboardV2() {
 
         // ... (Admin Config Fetch remains) ...
         const configAbort = new AbortController();
+        const configTimer = setTimeout(() => configAbort.abort(), 12000);
+        const connectGen = ++haConnectGenRef.current;
 
         void probeDashboard(
             connectionConfig.adminUrlLive || adminUrl,
@@ -659,6 +693,10 @@ export default function DashboardV2() {
                             if (pc?.sensor_entity_id) sensorMap[pc.sensor_entity_id] = lockId;
                         });
                         lockSensorMapRef.current = sensorMap;
+                    }
+                    const backendOrder = parentIdsFromConfig(data);
+                    if (backendOrder.length) {
+                        setSavedRoomOrder((prev) => (Array.isArray(prev) && prev.length ? prev : backendOrder));
                     }
                     setAdminStatus(ADMIN_STATUS.OK);
                 })
@@ -710,14 +748,16 @@ export default function DashboardV2() {
                 })
                 .catch(e => { if (e.name !== 'AbortError') console.log("[Room Tracking] Error loading lookup:", e); });
 
-            fetchBackendHaSnapshot(adminUrl, haToken, configAbort.signal)
+            fetchBackendHaSnapshot(adminUrl, haToken)
                 .then((snapshot) => {
-                    applyBackendHaSnapshot(snapshot, {
+                    const applied = applyBackendHaSnapshot(snapshot, {
                         haLiveRef,
                         setEntities,
                         setRegistryAreas,
                         setRegistryFloors,
+                        setRegistryEntities,
                     });
+                    if (applied && snapshot?.registryEntities?.length) setRegistryReady(true);
                 })
                 .catch((e) => {
                     if (e?.name !== 'AbortError') console.log('[Dashboard] Backend HA cache skipped:', e?.message || e);
@@ -754,28 +794,28 @@ export default function DashboardV2() {
                 }
                 if (data.type === 'connected') {
                     setHaStatus(HA_STATUS.CONNECTED);
-                    // Apply current states immediately. Registries can land after —
-                    // waiting for all seven WS calls made Home feel stuck on a large house.
-                    service.current.getStates()
+                    const loadLiveStates = service.current.getStates()
                         .then((states) => {
+                            if (connectGen !== haConnectGenRef.current) return;
+                            if (!Array.isArray(states)) return;
                             haLiveRef.current = true;
-                            setEntities(states || []);
-                            saveDashboardSnapshot(profileIdRef.current, { entities: states || [] });
+                            setEntities(states);
+                            saveDashboardSnapshot(profileIdRef.current, { entities: states });
                         })
                         .catch((e) => console.log('[Dashboard] getStates error:', e.message));
 
-                    Promise.all([
-                        service.current.getConfig(),
-                        service.current.getDeviceRegistry(),
-                        service.current.getEntityRegistry(),
-                        service.current.getAreaRegistry(),
-                        service.current.getFloorRegistry(),
+                    const loadRegistries = () => Promise.all([
+                        service.current.getConfig().catch(() => null),
+                        service.current.getDeviceRegistry().catch(() => []),
+                        service.current.getEntityRegistry().catch(() => []),
+                        service.current.getAreaRegistry().catch(() => []),
+                        service.current.getFloorRegistry().catch(() => []),
                         service.current.getConfigEntries().catch(() => []),
                     ]).then(([config, devices, regs, areas, floors, configEntries]) => {
-                        haLiveRef.current = true;
+                        if (connectGen !== haConnectGenRef.current) return;
                         if (config?.location_name) setCityName(config.location_name);
                         setRegistryDevices(devices || []);
-                        setRegistryEntities(regs || []);
+                        if (Array.isArray(regs) && regs.length) setRegistryEntities(regs);
                         setRegistryAreas(areas || []);
                         if (floors && floors.length > 0) {
                             const sorted = [...floors].sort((a, b) => (a.level || 0) - (b.level || 0));
@@ -810,10 +850,23 @@ export default function DashboardV2() {
                             roomTrackingLookup,
                             alertRules,
                         });
+                        setRegistryReady(true);
                     }).catch((e) => {
                         console.log('[Dashboard] Registry load error:', e.message);
+                        setRegistryReady(true);
                     });
 
+                    loadLiveStates.finally(() => {
+                        if (connectGen !== haConnectGenRef.current) return;
+                        loadRegistries();
+                    });
+
+                } else if (data.type === 'states') {
+                    if (connectGen !== haConnectGenRef.current) return;
+                    if (!Array.isArray(data.states) || !data.states.length) return;
+                    haLiveRef.current = true;
+                    setEntities(data.states);
+                    saveDashboardSnapshot(profileIdRef.current, { entities: data.states });
                 } else if (data.type === 'auth_failed') {
                     setHaStatus(HA_STATUS.AUTH_FAILED);
                 } else if (data.type === 'disconnected') {
@@ -968,7 +1021,9 @@ export default function DashboardV2() {
         });
 
         return () => {
+            clearTimeout(configTimer);
             configAbort.abort();
+            haConnectGenRef.current += 1;
             if (mappingsAbortRef.current) mappingsAbortRef.current.abort();
             if (service.current) {
                 if (service.current.disconnect) {
@@ -978,7 +1033,7 @@ export default function DashboardV2() {
                 }
             }
         };
-    }, [connectionConfig.loaded, connectionConfig.token, connectionConfig.haUrlLive, connectionConfig.haUrlLocal]);
+    }, [connectionConfig.loaded, connectionConfig.token, connectionConfig.haUrlLive]);
 
     const weather = useMemo(() => entities.find(e => e.entity_id.startsWith('weather.')), [entities]);
 
@@ -1109,27 +1164,37 @@ export default function DashboardV2() {
     const handledNotifRef = useRef(false);
 
     useEffect(() => {
-        console.log('[Dashboard] pendingNotif from context:', pendingNotif);
-        if (pendingNotif && !handledNotifRef.current) {
-            handledNotifRef.current = true;
-            console.log('[Dashboard] ✅ Showing alert modal for:', pendingNotif.title);
-            setAlertNotif(pendingNotif);
+        if (!pendingNotif || handledNotifRef.current) return;
+        handledNotifRef.current = true;
+        if (pendingNotif.type === 'intercom' || pendingNotif.data?.type === 'intercom') {
+            if (pendingNotif.data?.event === 'answered') {
+                const who = pendingNotif.data.answeredByName || pendingNotif.body || 'Someone';
+                setAlertNotif({
+                    title: pendingNotif.title || 'Main Door',
+                    body: who.includes('picked') ? who : `${who} picked up the call`,
+                    category: 'intercom',
+                    timestamp: pendingNotif.timestamp,
+                });
+            }
             clearNotif();
+            return;
         }
-    }, [pendingNotif]);
+        setAlertNotif(pendingNotif);
+        clearNotif();
+    }, [pendingNotif, clearNotif]);
 
     // All entity_ids present in MonitoredEntity table (regardless of ignored flag)
     const monitoredEntitiesRef = useRef(new Set());
     // Entity_ids where ignored=1 (user has muted them)
     const ignoredEntitiesRef = useRef(new Set());
 
-    const sensorsRequestedRef = useRef(false);
+    const sensorsRequestedForRef = useRef('');
     const ensureSensorMappings = useCallback(() => {
-        if (sensorsRequestedRef.current) return;
         const adminUrl = connectionConfig.adminUrl;
         const haToken = connectionConfig.token;
-        if (!adminUrl || !haToken) return;
-        sensorsRequestedRef.current = true;
+        const requestKey = `${adminUrl || ''}::${haToken || ''}`;
+        if (!adminUrl || !haToken || sensorsRequestedForRef.current === requestKey) return;
+        sensorsRequestedForRef.current = requestKey;
         const base = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
         fetch(`${base}api/sensors`, {
             headers: { Authorization: `Bearer ${haToken}`, Accept: 'application/json' },
@@ -1138,7 +1203,7 @@ export default function DashboardV2() {
             .then((data) => {
                 if (data.success && Array.isArray(data.sensors)) setSensorMappings(data.sensors);
             })
-            .catch(() => { sensorsRequestedRef.current = false; });
+            .catch(() => { sensorsRequestedForRef.current = ''; });
     }, [connectionConfig.adminUrl, connectionConfig.token]);
 
     useEffect(() => {
@@ -1239,8 +1304,7 @@ export default function DashboardV2() {
 
     // Save locks_armed to backend config + update local state + ref
     const handleLockArmToggle = useCallback(async (newArmed) => {
-        const updatedConfig = { ...badgeConfig, locks_armed: newArmed };
-        setBadgeConfig(updatedConfig);
+        setBadgeConfig((prev) => ({ ...(prev || {}), locks_armed: newArmed }));
         locksArmedRef.current = newArmed;
         const adminUrl = connectionConfig.adminUrl;
         if (!adminUrl) return;
@@ -1249,12 +1313,12 @@ export default function DashboardV2() {
             await fetch(configUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${connectionConfig.token}` },
-                body: JSON.stringify(updatedConfig),
+                body: JSON.stringify({ locks_armed: newArmed }),
             });
         } catch (e) {
             console.warn('[LockArm] Failed to save to backend:', e.message);
         }
-    }, [badgeConfig, connectionConfig]);
+    }, [connectionConfig]);
 
     // Fast entity map for sensor overlays on camera cards
     const haEntityMap = useMemo(() => buildEntityMap(entities), [entities]);
@@ -1518,21 +1582,25 @@ export default function DashboardV2() {
     const refreshAppRole = useCallback(() => {
         if (!connectionConfig.loaded || !connectionConfig.adminUrl) return;
         if (!hasAppUserIdentity(userId, userName)) {
-            setAppRole(PENDING_APP_ROLE);
-            setAllowedScreens(PENDING_APP_ROLE.screens);
+            setRolesLoading(true);
             return;
         }
+        const roleGen = ++roleFetchGenRef.current;
+        setRolesLoading(true);
         fetchAppRole({
             adminUrl: connectionConfig.adminUrl,
             token: connectionConfig.token,
             userId,
             username: userName,
         }).then((role) => {
-            setAppRole(role || PENDING_APP_ROLE);
-            setAllowedScreens(Array.isArray(role?.screens) ? role.screens : PENDING_APP_ROLE.screens);
-        }).catch(() => {
-            setAppRole(PENDING_APP_ROLE);
-            setAllowedScreens(PENDING_APP_ROLE.screens);
+            if (roleGen !== roleFetchGenRef.current) return;
+            if (role) {
+                setAppRole(role);
+                setAllowedScreens(Array.isArray(role.screens) ? role.screens : ['home', 'settings']);
+            }
+        }).finally(() => {
+            if (roleGen !== roleFetchGenRef.current) return;
+            setRolesLoading(false);
         });
     }, [connectionConfig.loaded, connectionConfig.adminUrl, connectionConfig.token, userId, userName]);
 
@@ -1542,6 +1610,11 @@ export default function DashboardV2() {
     useEffect(() => {
         refreshAppRole();
     }, [refreshAppRole]);
+
+    useEffect(() => {
+        if (!connectionConfig.loaded || !connectionConfig.adminUrl) return;
+        registerForPushNotificationsAsync().catch(() => {});
+    }, [connectionConfig.loaded, connectionConfig.adminUrl, userId]);
 
     const reloadCameras = useCallback(() => {
         if (!connectionConfig.loaded || !connectionConfig.adminUrl) {
@@ -1677,14 +1750,36 @@ export default function DashboardV2() {
     }, [connectionConfig.adminUrl, userName, enableCamerasCode, reloadCameras]);
 
     useEffect(() => {
-        if (!Array.isArray(allowedScreens)) return;
+        if (rolesLoading || !Array.isArray(allowedScreens)) return;
         const current = activeTab === 'ai' ? 'butler' : activeTab;
         if (current !== 'home' && current !== 'settings' && !canShowScreen(allowedScreens, current)) {
             setActiveTab('home');
         }
-    }, [allowedScreens, activeTab]);
+    }, [allowedScreens, activeTab, rolesLoading]);
 
     const systemHealth = useHaSystemHealth({ entities, haStatus, adminStatus });
+
+    const loadHint = useMemo(() => {
+        if (!connectionConfig.loaded) return 'Opening home…';
+        if (haStatus === HA_STATUS.LOADING) return 'Connecting to Home Assistant…';
+        if (haStatus === HA_STATUS.DISCONNECTED) return 'Reconnecting to Home Assistant…';
+        if (haStatus === HA_STATUS.AUTH_FAILED) return 'Home Assistant sign-in failed';
+        if (adminStatus === ADMIN_STATUS.UNKNOWN && !badgeConfig) return 'Loading home settings…';
+        if (rolesLoading) return 'Loading account…';
+        if (!registryReady) return 'Loading rooms…';
+        if (!Array.isArray(entities) || entities.length === 0) return 'Loading devices…';
+        if (!frigateConfigResolved) return 'Loading cameras…';
+        return '';
+    }, [
+        connectionConfig.loaded,
+        haStatus,
+        adminStatus,
+        badgeConfig,
+        rolesLoading,
+        registryReady,
+        frigateConfigResolved,
+        entities,
+    ]);
 
     const callService = useCallback((domain, serviceName, serviceData) => {
         if (!systemHealth.canControlHa) {
@@ -1826,7 +1921,12 @@ export default function DashboardV2() {
 
     const handleTabPress = useCallback((tabId) => {
         const permissionId = tabId === 'ai' ? 'butler' : tabId;
-        if (permissionId !== 'home' && permissionId !== 'settings' && !canShowScreen(allowedScreens, permissionId)) {
+        if (
+            !rolesLoading
+            && permissionId !== 'home'
+            && permissionId !== 'settings'
+            && !canShowScreen(allowedScreens, permissionId)
+        ) {
             return;
         }
         if (tabId === 'tablet') {
@@ -1837,7 +1937,7 @@ export default function DashboardV2() {
         } else {
             setActiveTab(tabId);
         }
-    }, [allowedScreens, router]);
+    }, [allowedScreens, router, rolesLoading]);
 
     const handleSettingChange = useCallback((key, val) => {
         if (key === 'showFamily') setShowFamily(val);
@@ -2077,41 +2177,22 @@ export default function DashboardV2() {
     }), [userName, roomsWithCounts]);
 
     const handleRoomReorder = (data) => {
-        // IDs of the rooms in their new order
-        const reorderedIds = data.map(r => r.area_id);
-
-        // Update Saved Order
-        setSavedRoomOrder(prev => {
-            // Start with the existing full order or use the current list if none exists
-            const currentFullOrder = prev && prev.length > 0 ? [...prev] : roomsWithCounts.map(a => a.area_id);
-
-            // Build a set of IDs from the reordered group for quick lookup
-            const reorderedSet = new Set(reorderedIds);
-
-            // Find the active indices in the full list that correspond to the items being reordered
-            // We only care about the relative position of the items that were actually visible/draggable
-            const indicesToUpdate = [];
-            currentFullOrder.forEach((id, index) => {
-                if (reorderedSet.has(id)) {
-                    indicesToUpdate.push(index);
+        const reorderedIds = data.map((r) => r.area_id);
+        const fallbackIds = roomsWithCounts.map((a) => a.area_id);
+        setSavedRoomOrder((prev) => {
+            const newOrder = mergeRoomOrder(prev, reorderedIds, fallbackIds);
+            persistRoomOrder({
+                adminUrl: connectionConfigRef.current?.adminUrl,
+                token: connectionConfigRef.current?.token,
+                profileId: profileIdRef.current,
+                order: newOrder,
+            }).then((result) => {
+                if (result?.config) {
+                    const next = parentIdsFromConfig(result.config);
+                    if (next.length) setSavedRoomOrder(next);
+                    setBadgeConfig((cfg) => (cfg ? { ...cfg, ...result.config } : result.config));
                 }
             });
-
-            // If mismatch (e.g. first time save), just use the reordered IDs + rest
-            if (indicesToUpdate.length !== reorderedIds.length) {
-                const others = currentFullOrder.filter(id => !reorderedSet.has(id));
-                const newOrder = [...reorderedIds, ...others];
-                SecureStore.setItemAsync('room_reorder_config', JSON.stringify(newOrder));
-                return newOrder;
-            }
-
-            // Place the new order into the found slots
-            const newOrder = [...currentFullOrder];
-            indicesToUpdate.forEach((originalIndex, i) => {
-                newOrder[originalIndex] = reorderedIds[i]; // reorderedIds is already in the new visual order
-            });
-
-            SecureStore.setItemAsync('room_reorder_config', JSON.stringify(newOrder));
             return newOrder;
         });
     };
@@ -2321,6 +2402,7 @@ export default function DashboardV2() {
                         onUserPress={() => setShowAccountSwitcher(true)}
                         activeUsersCount={activeUsers.length}
                         onActiveUsersPress={showFamily ? () => setShowActiveUsers(true) : undefined}
+                        loadHint={loadHint}
                     />
                     <StatusBadges
                         lightsOn={lightsOn}
@@ -2673,13 +2755,14 @@ export default function DashboardV2() {
             </View>
 
             {isLandscape ? (
-                <TabletSidebar activeTab={activeTab} onTabPress={handleTabPress} allowedTabs={allowedScreens} />
+                <TabletSidebar activeTab={activeTab} onTabPress={handleTabPress} allowedTabs={allowedScreens} rolesLoading={rolesLoading} />
             ) : (
                 <TabBar
                     activeTab={activeTab}
                     onTabPress={handleTabPress}
                     butlerActive={showButlerCall}
                     allowedTabs={allowedScreens}
+                    rolesLoading={rolesLoading}
                 />
             )}
 
@@ -2737,6 +2820,15 @@ export default function DashboardV2() {
                     appRole={appRole}
                 />
             )}
+
+            <IntercomCallModal
+                adminUrl={connectionConfig.adminUrl}
+                userId={userId}
+                userName={userName}
+                callService={callService}
+                homeLocks={homeLocks}
+                token={connectionConfig.token}
+            />
         </View >
     );
 }
