@@ -7,7 +7,9 @@ import AuthedCameraImage from './AuthedCameraImage';
 
 const SNAPSHOT_MS = 1500;
 const GRID_SNAPSHOT_H = 360;
-const VIEWABILITY = { itemVisiblePercentThreshold: 15, minimumViewTime: 50 };
+const LOAD_TIMEOUT_MS = 10000;
+const VIEWABILITY = { itemVisiblePercentThreshold: 1, minimumViewTime: 1 };
+const PRELOAD_ROWS = 3;
 
 function snapshotBase(cam, service, useHa) {
     if (!service || !cam) return '';
@@ -61,8 +63,17 @@ const CameraPreview = memo(function CameraPreview({
     }, [cam?.id, cam?.entity_id, cam?.name]);
 
     useEffect(() => {
-        if (!active) setHasFrame(false);
-    }, [active]);
+        if (!active || hasFrame || failed) return undefined;
+        const timer = setTimeout(() => {
+            if (useHa) {
+                setUseHa(false);
+                setFailed(false);
+                return;
+            }
+            setFailed(true);
+        }, LOAD_TIMEOUT_MS);
+        return () => clearTimeout(timer);
+    }, [active, hasFrame, failed, useHa, cam?.id]);
 
     if (!service || !cam || !base) {
         return (
@@ -133,10 +144,13 @@ function CamerasList({
     visibleRef.current = visibleRows;
 
     const onViewableItemsChanged = useCallback(({ viewableItems }) => {
-        const next = new Set(viewableItems.map((item) => item.index).filter((i) => i != null));
-        if (next.size === 0) return;
-        const prev = visibleRef.current;
-        if (prev.size === next.size && [...next].every((i) => prev.has(i))) return;
+        const next = new Set(visibleRef.current);
+        viewableItems.forEach((item) => {
+            if (item.index == null) return;
+            next.add(item.index);
+            next.add(item.index + 1);
+        });
+        if (next.size === visibleRef.current.size && [...next].every((i) => visibleRef.current.has(i))) return;
         setVisibleRows(next);
     }, []);
 
@@ -167,7 +181,7 @@ function CamerasList({
     );
 
     const renderRow = ({ item, index }) => {
-        const live = active && (!scrollable || visibleRows.has(index));
+        const live = active && (!scrollable || index < PRELOAD_ROWS || visibleRows.has(index));
         const width = item.full ? '100%' : (isTabletGrid ? tabletWidth : '48%');
         return (
             <View style={styles.row}>
@@ -186,10 +200,10 @@ function CamerasList({
                 renderItem={renderRow}
                 style={styles.list}
                 contentContainerStyle={[styles.container, contentContainerStyle]}
-                initialNumToRender={3}
-                maxToRenderPerBatch={2}
-                windowSize={5}
-                removeClippedSubviews
+                initialNumToRender={6}
+                maxToRenderPerBatch={4}
+                windowSize={8}
+                removeClippedSubviews={false}
                 onViewableItemsChanged={onViewableItemsChanged}
                 viewabilityConfig={VIEWABILITY}
             />

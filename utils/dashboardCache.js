@@ -540,13 +540,15 @@ export function applyDashboardSnapshot(snapshot, setters) {
         setRegistryFloors(snapshot.registryFloors);
     }
     if (snapshot.badgeConfig && setBadgeConfig) setBadgeConfig(snapshot.badgeConfig);
-    if (Array.isArray(snapshot.allowedQuickScenes) && setAllowedQuickScenes) {
+    // Empty arrays are the reset/default cache shape. Applying them after a live
+    // /api/quick-scenes or /api/home-access fetch wipes Home on account switch.
+    if (Array.isArray(snapshot.allowedQuickScenes) && snapshot.allowedQuickScenes.length && setAllowedQuickScenes) {
         setAllowedQuickScenes(snapshot.allowedQuickScenes);
     }
-    if (snapshot.selectedLockIds !== undefined && setSelectedLockIds) {
+    if (Array.isArray(snapshot.selectedLockIds) && snapshot.selectedLockIds.length && setSelectedLockIds) {
         setSelectedLockIds(snapshot.selectedLockIds);
     }
-    if (snapshot.selectedCoverIds !== undefined && setSelectedCoverIds) {
+    if (Array.isArray(snapshot.selectedCoverIds) && snapshot.selectedCoverIds.length && setSelectedCoverIds) {
         setSelectedCoverIds(snapshot.selectedCoverIds);
     }
     if (snapshot.lockPassageConfigs && setLockPassageConfigs) {

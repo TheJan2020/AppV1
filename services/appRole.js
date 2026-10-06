@@ -421,6 +421,7 @@ export function areaVisibleForRole(areaId, role, badgeConfig) {
 
 export function filterRoomsForRole(rooms, role, badgeConfig) {
     if (!Array.isArray(rooms)) return [];
-    if (!role || role.roleId === 'pending') return [];
+    // Don't hide the house while the role request is in flight or failed.
+    if (!role || role.roleId === 'pending') return rooms;
     return rooms.filter((r) => areaVisibleForRole(r?.area_id, role, badgeConfig));
 }

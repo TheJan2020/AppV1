@@ -31,7 +31,11 @@ export default function Splash() {
                 if (!isExpoGo) {
                     const Notifications = require('expo-notifications');
                     const last = await Notifications.getLastNotificationResponseAsync();
-                    if (last?.notification?.request?.content?.data?.type === 'intercom') {
+                    let nativePending = false;
+                    try {
+                        nativePending = !!require('../modules/expo-intercom-call').default.hasPending();
+                    } catch { /* Expo Go / old binary */ }
+                    if (nativePending || last?.notification?.request?.content?.data?.type === 'intercom') {
                         ms = INTERCOM_SPLASH_MS;
                     }
                 }

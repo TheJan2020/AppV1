@@ -5,6 +5,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { HAService } from '../services/ha';
 import RoomDetailView from '../components/DashboardV2/RoomDetailView';
 import { peekRoomPageBootstrap } from '../utils/roomPageBootstrap';
+import { mergeRegistryAreaStamps } from '../services/haBackendCache';
 import { useRoomAreaEntities } from '../hooks/useRoomAreaEntities';
 import { applyHaStateChangedEvent, applyClimateServiceToEntity } from '../utils/haEntityMerge';
 import { HA_STATUS, ADMIN_STATUS } from '../utils/haEntityHealth';
@@ -129,7 +130,7 @@ export default function RoomPage() {
                     setEntities(states || []);
                     setRegistryAreas(areas || []);
                     setRegistryDevices(devices || []);
-                    setRegistryEntities(regs || []);
+                    setRegistryEntities((prev) => mergeRegistryAreaStamps(prev, regs || []));
                     const maIds = (Array.isArray(configEntries) ? configEntries : [])
                         .filter(e => e?.domain === 'music_assistant' && e?.entry_id)
                         .map(e => e.entry_id);

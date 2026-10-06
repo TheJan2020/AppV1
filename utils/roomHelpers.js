@@ -27,6 +27,7 @@ export function isMusicAssistantMediaPlayer(re, stateObj, musicAssistantConfigEn
 /** Infer temperature / humidity when admin sensorType is unset ("Auto"). */
 export function inferSensorType(entityId, stateObj, mappedType = null) {
     if (mappedType) return mappedType;
+    if (isDeviceChipTemperature(entityId, stateObj)) return null;
 
     const dc = (stateObj?.attributes?.device_class || '').toLowerCase();
     if (dc === 'temperature') return 'temperature';
@@ -51,6 +52,35 @@ export function inferSensorType(entityId, stateObj, mappedType = null) {
         return 'temperature';
     }
     return null;
+}
+
+/** Light/switch board temps are not room climate. */
+export function isDeviceChipTemperature(entityId, stateObj) {
+    const id = String(entityId || '').toLowerCase();
+    if (id.includes('device_temperature') || id.includes('_device_temp')) return true;
+    const name = String(stateObj?.attributes?.friendly_name || '').toLowerCase();
+    if (name.includes('device temperature')) return true;
+    if (name.includes('switch') && name.includes('temperature') && !name.includes('air quality')) return true;
+    return false;
+}
+
+function isAirQualityClimateSensor(entityId) {
+    return String(entityId || '').toLowerCase().includes('air_quality');
+}
+
+/** SmartThings AC companion sensors — often hidden in HA, so they flash then vanish. */
+function isAcCompanionClimateSensor(entityId) {
+    const id = String(entityId || '').toLowerCase();
+    return id.includes('_ac_humidity') || id.includes('_ac_temperature');
+}
+
+/** Backend structure rows only have entity_id + area_id — no hidden_by yet. */
+function isStructureOnlyRegistryRow(re) {
+    return !re?.device_id
+        && re?.hidden_by == null
+        && re?.disabled_by == null
+        && re?.entity_category == null
+        && !re?.platform;
 }
 
 /** Temp/humidity sensors are often HA "diagnostic" — still show them in rooms. */
@@ -298,3 +328,60 @@ export const getRoomEntities = (
         })),
     };
 };
+
+/** Temp/humidity shown on home room cards — same area membership as the room page. */
+export function getRoomClimateSummary(
+    room,
+    registryDevices = [],
+    registryEntities = [],
+    allEntities = [],
+    sensorMappings = [],
+) {
+    const packed = getRoomEntities(
+        room,
+        registryDevices,
+        registryEntities,
+        allEntities,
+        sensorMappings,
+    );
+    const usable = (item) => {
+        const state = item?.stateObj?.state;
+        if (state == null || state === 'unavailable' || state === 'unknown') return false;
+        if (item?.hidden_by || item?.disabled_by) return false;
+        if (isAcCompanionClimateSensor(item.entity_id) && isStructureOnlyRegistryRow(item)) return false;
+        return !Number.isNaN(parseFloat(state));
+    };
+    const pick = (type) => {
+        const list = (packed.sensors || []).filter((s) => s.sensorType === type && usable(s));
+        const aq = list.filter((s) => isAirQualityClimateSensor(s.entity_id));
+        return aq.length ? aq : list;
+    };
+    const temps = pick('temperature');
+    const humiditys = pick('humidity');
+
+    let avgTemp = temps.length
+        ? (temps.reduce((sum, s) => sum + parseFloat(s.stateObj.state), 0) / temps.length).toFixed(1)
+        : null;
+    if (avgTemp == null) {
+        const climates = (packed.climates || []).filter(
+            (c) => c.stateObj?.attributes?.current_temperature != null,
+        );
+        if (climates.length) {
+            const sum = climates.reduce((s, c) => s + Number(c.stateObj.attributes.current_temperature), 0);
+            avgTemp = (sum / climates.length).toFixed(1);
+        }
+    }
+    let avgHum = humiditys.length
+        ? (humiditys.reduce((sum, s) => sum + parseFloat(s.stateObj.state), 0) / humiditys.length).toFixed(0)
+        : null;
+    if (avgHum == null) {
+        const climates = (packed.climates || []).filter(
+            (c) => c.stateObj?.attributes?.current_humidity != null,
+        );
+        if (climates.length) {
+            const sum = climates.reduce((s, c) => s + Number(c.stateObj.attributes.current_humidity), 0);
+            avgHum = (sum / climates.length).toFixed(0);
+        }
+    }
+    return { avgTemp, avgHum };
+}

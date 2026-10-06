@@ -5,11 +5,13 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import ErrorBoundary from '../components/ErrorBoundary';
 import PurpleTopGlow from '../components/PurpleTopGlow';
 import { useEffect, useCallback } from 'react';
-import { LogBox, Dimensions } from 'react-native';
+import { LogBox, Dimensions, View } from 'react-native';
 import { useFonts } from 'expo-font';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { PushNotifProvider } from '../services/NotifContext';
 import { preloadLocalLightIcons } from '../utils/lightTypeAssets';
+import { startNativeIncomingCalls } from '../services/notifications';
+import IntercomHost from '../components/DashboardV2/IntercomHost';
 import { CF } from '../utils/typography';
 import * as SplashScreen from 'expo-splash-screen';
 import * as SecureStore from 'expo-secure-store';
@@ -62,6 +64,7 @@ export default function RootLayout() {
     }, []);
 
     useEffect(() => {
+        startNativeIncomingCalls();
         preloadLocalLightIcons().catch(() => {});
         (async () => {
             try {
@@ -89,40 +92,55 @@ export default function RootLayout() {
         }
     }, []);
 
-    if (!fontsLoaded) {
-        return null;
-    }
-
     return (
         <PushNotifProvider>
             <ErrorBoundary>
                 <GestureHandlerRootView style={{ flex: 1 }} onLayout={onLayoutRootView}>
-                    <StatusBar style="light" />
-                    <Stack
-                        screenOptions={{
-                            headerStyle: {
-                                backgroundColor: Colors.background,
-                            },
-                            headerTintColor: Colors.text,
-                            headerTitleStyle: {
-                                fontFamily: CF.bold,
-                            },
-                            contentStyle: {
-                                backgroundColor: '#09091A',
-                            },
-                            animation: 'slide_from_right',
+                    {fontsLoaded ? (
+                        <>
+                            <StatusBar style="light" />
+                            <Stack
+                                screenOptions={{
+                                    headerStyle: {
+                                        backgroundColor: Colors.background,
+                                    },
+                                    headerTintColor: Colors.text,
+                                    headerTitleStyle: {
+                                        fontFamily: CF.bold,
+                                    },
+                                    contentStyle: {
+                                        backgroundColor: '#09091A',
+                                    },
+                                    animation: 'slide_from_right',
+                                }}
+                            >
+                                <Stack.Screen name="index" options={{ headerShown: false }} />
+                                <Stack.Screen name="login" options={{ headerShown: false, gestureEnabled: false }} />
+                                <Stack.Screen name="dashboard" options={{ headerShown: false, gestureEnabled: false }} />
+                                <Stack.Screen name="dashboard-v2" options={{ headerShown: false, gestureEnabled: false }} />
+                                <Stack.Screen name="dashboard-v2-tablet" options={{ headerShown: false, gestureEnabled: false }} />
+                                <Stack.Screen name="room" options={{ headerShown: false }} />
+                                <Stack.Screen name="tv-lab" options={{ headerShown: false }} />
+                                <Stack.Screen name="dashboard-v3" options={{ headerShown: false }} />
+                            </Stack>
+                            <PurpleTopGlow />
+                        </>
+                    ) : null}
+                    <View
+                        pointerEvents="box-none"
+                        collapsable={false}
+                        style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            zIndex: 99999,
+                            elevation: 99999,
                         }}
                     >
-                        <Stack.Screen name="index" options={{ headerShown: false }} />
-                        <Stack.Screen name="login" options={{ headerShown: false, gestureEnabled: false }} />
-                        <Stack.Screen name="dashboard" options={{ headerShown: false, gestureEnabled: false }} />
-                        <Stack.Screen name="dashboard-v2" options={{ headerShown: false, gestureEnabled: false }} />
-                        <Stack.Screen name="dashboard-v2-tablet" options={{ headerShown: false, gestureEnabled: false }} />
-                        <Stack.Screen name="room" options={{ headerShown: false }} />
-                        <Stack.Screen name="tv-lab" options={{ headerShown: false }} />
-                        <Stack.Screen name="dashboard-v3" options={{ headerShown: false }} />
-                    </Stack>
-                    <PurpleTopGlow />
+                        <IntercomHost />
+                    </View>
                 </GestureHandlerRootView>
             </ErrorBoundary>
         </PushNotifProvider>

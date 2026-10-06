@@ -7,7 +7,9 @@ import {
     Modal, View, Text, StyleSheet,
     TouchableOpacity, ScrollView, ActivityIndicator,
 } from 'react-native';
-import { X, Smartphone, Users } from 'lucide-react-native';
+import { X, Users, Clock, ChevronRight } from 'lucide-react-native';
+import { router } from 'expo-router';
+import PlatformGlyph from './PlatformGlyph';
 import { GestureDetector, Gesture } from 'react-native-gesture-handler';
 import ModalBackdrop from '../ModalBackdrop';
 import Animated, {
@@ -33,18 +35,14 @@ function formatTimeAgo(date) {
     return `${days}d ago`;
 }
 
-function platformEmoji(platform) {
-    if (platform === 'ios') return '🍎';
-    if (platform === 'android') return '🤖';
-    return '📱';
-}
-
 export default function ActiveUsersSheetModal({
     visible,
     onClose,
     users = [],
     loading = false,
     error = null,
+    onRefresh,
+    showHistory = false,
 }) {
     // ── Slide-in / drag-to-dismiss ────────────────────────────────────────────
     const sheetY = useSharedValue(700);
@@ -53,6 +51,7 @@ export default function ActiveUsersSheetModal({
         if (visible) {
             sheetY.value = 700;
             sheetY.value = withTiming(0, { duration: 300 });
+            onRefresh?.();
         }
     }, [visible]);
 
@@ -98,9 +97,9 @@ export default function ActiveUsersSheetModal({
                         {user.userName || 'Unknown user'}
                     </Text>
                     <View style={styles.deviceLine}>
-                        <Smartphone size={12} color="rgba(237,237,245,0.4)" />
+                        <PlatformGlyph platform={user.platform} size={13} />
                         <Text style={styles.deviceText} numberOfLines={1}>
-                            {platformEmoji(user.platform)} {user.deviceName || 'Unknown device'}
+                            {user.deviceName || 'Unknown device'}
                         </Text>
                     </View>
                 </View>
@@ -160,23 +159,45 @@ export default function ActiveUsersSheetModal({
                         </TouchableOpacity>
                     </View>
 
+                    {showHistory && (
+                        <TouchableOpacity
+                            style={styles.historyLink}
+                            onPress={() => {
+                                onClose();
+                                router.push('/active-users-history');
+                            }}
+                            activeOpacity={0.75}
+                        >
+                            <View style={styles.historyIconWrap}>
+                                <Clock size={16} color={C_PURPLE} />
+                            </View>
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.historyTitle}>Active users history</Text>
+                                <Text style={styles.historySub}>Who used the app, on which device</Text>
+                            </View>
+                            <ChevronRight size={18} color="rgba(255,255,255,0.35)" />
+                        </TouchableOpacity>
+                    )}
+
                     <Text style={styles.sectionLabel}>SESSIONS</Text>
 
-                    {loading && users.length === 0 ? (
-                        <ActivityIndicator size="small" color={C_PURPLE} style={{ marginTop: 24, marginBottom: 24 }} />
-                    ) : error ? (
-                        <Text style={styles.emptyText}>Unable to load active users</Text>
-                    ) : users.length === 0 ? (
-                        <Text style={styles.emptyText}>No active users right now</Text>
-                    ) : (
-                        <ScrollView
-                            style={styles.scroll}
-                            showsVerticalScrollIndicator={false}
-                            contentContainerStyle={styles.scrollContent}
-                        >
-                            {users.map(renderUserRow)}
-                        </ScrollView>
-                    )}
+                    <View style={styles.listWrap}>
+                        {loading && users.length === 0 ? (
+                            <ActivityIndicator size="small" color={C_PURPLE} style={{ marginTop: 24, marginBottom: 24 }} />
+                        ) : error ? (
+                            <Text style={styles.emptyText}>Unable to load active users</Text>
+                        ) : users.length === 0 ? (
+                            <Text style={styles.emptyText}>No active users right now</Text>
+                        ) : (
+                            <ScrollView
+                                style={styles.scroll}
+                                showsVerticalScrollIndicator={false}
+                                contentContainerStyle={styles.scrollContent}
+                            >
+                                {users.map(renderUserRow)}
+                            </ScrollView>
+                        )}
+                    </View>
 
                 </Animated.View>
             </View>
@@ -256,6 +277,9 @@ const styles = StyleSheet.create({
         letterSpacing: 1.2,
         paddingHorizontal: 20,
         marginBottom: 8,
+    },
+    listWrap: {
+        maxHeight: 320,
     },
     scroll: {
         paddingHorizontal: 16,
@@ -351,5 +375,37 @@ const styles = StyleSheet.create({
         marginTop: 32,
         marginBottom: 32,
         paddingHorizontal: 8,
+    },
+    historyLink: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginHorizontal: 16,
+        marginBottom: 12,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        borderRadius: 14,
+        backgroundColor: 'rgba(137,71,202,0.08)',
+        borderWidth: 1,
+        borderColor: 'rgba(137,71,202,0.22)',
+        gap: 12,
+    },
+    historyIconWrap: {
+        width: 32,
+        height: 32,
+        borderRadius: 10,
+        backgroundColor: 'rgba(137,71,202,0.16)',
+        alignItems: 'center',
+        justifyContent: 'center',
+    },
+    historyTitle: {
+        color: '#fff',
+        fontSize: 14,
+        fontFamily: CF.medium,
+    },
+    historySub: {
+        color: 'rgba(255,255,255,0.4)',
+        fontSize: 12,
+        fontFamily: CF.regular,
+        marginTop: 1,
     },
 });

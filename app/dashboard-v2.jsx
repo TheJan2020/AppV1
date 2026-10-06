@@ -2,7 +2,7 @@ import { useRef, useState, useEffect, useMemo, useCallback, useContext } from 'r
 import FrigateCameraModal from '../components/DashboardV2/FrigateCameraModal';
 import NotificationModal from '../components/DashboardV2/NotificationModal';
 import ButlerVoiceModal from '../components/DashboardV2/ButlerVoiceModal';
-import IntercomCallModal from '../components/DashboardV2/IntercomCallModal';
+import { setIntercomUnlockService } from '../services/intercomHaBridge';
 import { canOpenButlerCall, requestButlerMicPermission, runButlerBackgroundSetup } from '../services/butler/openButlerCall';
 import { registerForPushNotificationsAsync } from '../services/notifications';
 import { getButlerBackendUrl } from '../utils/butlerBackend';
@@ -50,8 +50,8 @@ import { getRoomEntities, getEntityIdsForAreaIds } from '../utils/roomHelpers';
 import { isClimatePoweredOn, collectRoomClimatesForModal } from '../utils/acPowerSwitch';
 import { isCoverUiOpen } from '../utils/coverWindows';
 import {
-    collectGroupedLightMemberIds,
-    isLightCountableUnit,
+    countActiveCountableLights,
+    filterCountableLights,
 } from '../utils/lightCapabilities';
 import {
     filterParentRoomsForDashboard,
@@ -74,7 +74,7 @@ import {
     camerasForRoleDisplay,
     hasAppUserIdentity,
 } from '../services/appRole';
-import { fetchBackendHaSnapshot, applyBackendHaSnapshot, fetchLockStates, mergeEntitySlice } from '../services/haBackendCache';
+import { fetchBackendHaSnapshot, applyBackendHaSnapshot, fetchLockStates, mergeEntitySlice, mergeRegistryAreaStamps } from '../services/haBackendCache';
 import { setRoomPageBootstrap, clearRoomPageBootstrap } from '../utils/roomPageBootstrap';
 import { applyHaStateChangedEvent, applyClimateServiceToEntity } from '../utils/haEntityMerge';
 import { HA_STATUS, ADMIN_STATUS, isBadEntityState } from '../utils/haEntityHealth';
@@ -101,7 +101,7 @@ import {
     withFailoverUrls,
 } from '../services/connectionEndpoints';
 import { probeDashboard, applyBootstrapHaToConfig } from '../services/homeBootstrap';
-import { persistRoomOrder, loadLocalRoomOrder, parentIdsFromConfig, mergeRoomOrder } from '../services/roomOrder';
+import { persistRoomOrder, loadLocalRoomOrder, saveLocalRoomOrder, parentIdsFromConfig, mergeRoomOrder, sameRoomOrder } from '../services/roomOrder';
 import {
     disableCamerasGlobally as disableCamerasGloballyApi,
     requestEnableCameras as requestEnableCamerasApi,
@@ -136,6 +136,7 @@ export default function DashboardV2() {
     const service = useRef(null);
     const frigateService = useRef(null); // Frigate Service Ref
     const profileIdRef = useRef(bootProf?.profileId || null);
+    const roomOrderSavingRef = useRef(false);
     const homeKeyRef = useRef(`${bootProf?.profileId || ''}::${toHaHttpUrl(bootProf?.url || '').replace(/\/+$/, '').toLowerCase()}`);
     const haLiveRef = useRef(false);
     const haConnectGenRef = useRef(0);
@@ -153,6 +154,7 @@ export default function DashboardV2() {
     const loadConnectionInFlightRef = useRef(false);
     const loadConnectionPendingRef = useRef(false);
     const roleFetchGenRef = useRef(0);
+    const snapshotRef = useRef(null);
 
     const [entities, setEntities] = useState(() => bootValue('entities', []));
     const [cityName, setCityName] = useState(() => bootValue('cityName', 'Home'));
@@ -268,7 +270,7 @@ export default function DashboardV2() {
                 if (activeProfile) {
                     const cfg = connectionConfigFromProfile(activeProfile);
                     const nextHomeKey = `${activeProfileId}::${toHaHttpUrl(cfg.url).replace(/\/+$/, '').toLowerCase()}`;
-                    const homeChanged = homeKeyRef.current !== nextHomeKey;
+                    const homeChanged = !!profileIdRef.current && profileIdRef.current !== activeProfileId;
                     const dashboardUiSetters = {
                         setEntities,
                         setCityName,
@@ -341,7 +343,19 @@ export default function DashboardV2() {
                             setSavedRoomOrder(localOrder);
                         }
                     }
-                    setConnectionConfig(cfg);
+                    setConnectionConfig((prev) => {
+                        if (homeChanged || !prev?.loaded || prev.token !== cfg.token) return cfg;
+                        return {
+                            ...cfg,
+                            url: prev.url || cfg.url,
+                            adminUrl: prev.adminUrl || cfg.adminUrl,
+                            haUrlLive: prev.haUrlLive || cfg.haUrlLive,
+                            haUrlLocal: prev.haUrlLocal || cfg.haUrlLocal,
+                            adminUrlLive: prev.adminUrlLive || cfg.adminUrlLive,
+                            adminUrlLocal: prev.adminUrlLocal || cfg.adminUrlLocal,
+                            loaded: true,
+                        };
+                    });
                     return;
                 }
             }
@@ -452,26 +466,16 @@ export default function DashboardV2() {
                         router.setParams({
                             userName: nextName,
                             userId: nextId,
-                            switchKey: String(Date.now()),
                         });
                     }
-                    let nextHomeKey = homeKeyRef.current;
-                    if (activeProfileId) {
-                        const profiles = await loadHaProfiles();
-                        const activeProfile = profiles.find((p) => p.id === activeProfileId);
-                        const cfg = activeProfile ? connectionConfigFromProfile(activeProfile) : null;
-                        nextHomeKey = `${activeProfileId}::${toHaHttpUrl(cfg?.url || activeProfile?.haUrl || '').replace(/\/+$/, '').toLowerCase()}`;
-                        if (cfg && nextHomeKey === homeKeyRef.current) {
-                            setConnectionConfig(cfg);
-                        }
-                    }
-                    if (activeProfileId && nextHomeKey !== homeKeyRef.current) {
-                        haLiveRef.current = false;
-                        setConnectionConfig({ url: '', token: '', adminUrl: '', loaded: false });
-                        setTimeout(() => {
-                            loadConnectionConfig();
-                        }, 0);
-                    }
+                    // Lock / minimize re-fires focus. Same home must not reload
+                    // or scenes/locks get wiped by a stale config fetch.
+                    if (!activeProfileId || activeProfileId === profileIdRef.current) return;
+                    haLiveRef.current = false;
+                    setConnectionConfig({ url: '', token: '', adminUrl: '', loaded: false });
+                    setTimeout(() => {
+                        loadConnectionConfig();
+                    }, 0);
                 } catch (e) {
                     console.log('[Dashboard] Account focus sync failed:', e);
                 }
@@ -524,16 +528,16 @@ export default function DashboardV2() {
     const mappingsAbortRef = useRef(null);
 
     const fetchMappings = () => {
-        if (!connectionConfig.loaded) return;
-        if (!connectionConfig.adminUrl) return;
+        const cfg = connectionConfigRef.current;
+        if (!cfg?.loaded || !cfg.adminUrl) return;
 
         // Abort any in-flight mapping requests
         if (mappingsAbortRef.current) mappingsAbortRef.current.abort();
         const controller = new AbortController();
         mappingsAbortRef.current = controller;
 
-    const adminUrl = connectionConfig.adminUrl;
-        const haToken = connectionConfig.token;
+    const adminUrl = cfg.adminUrl;
+        const haToken = cfg.token;
         const baseUrl = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
         const authHeaders = {
             'Authorization': `Bearer ${haToken}`,
@@ -695,8 +699,9 @@ export default function DashboardV2() {
                         lockSensorMapRef.current = sensorMap;
                     }
                     const backendOrder = parentIdsFromConfig(data);
-                    if (backendOrder.length) {
-                        setSavedRoomOrder((prev) => (Array.isArray(prev) && prev.length ? prev : backendOrder));
+                    if (backendOrder.length && !roomOrderSavingRef.current) {
+                        setSavedRoomOrder((prev) => (sameRoomOrder(prev, backendOrder) ? prev : backendOrder));
+                        saveLocalRoomOrder(profileIdRef.current, backendOrder);
                     }
                     setAdminStatus(ADMIN_STATUS.OK);
                 })
@@ -797,7 +802,7 @@ export default function DashboardV2() {
                     const loadLiveStates = service.current.getStates()
                         .then((states) => {
                             if (connectGen !== haConnectGenRef.current) return;
-                            if (!Array.isArray(states)) return;
+                            if (!Array.isArray(states) || !states.length) return;
                             haLiveRef.current = true;
                             setEntities(states);
                             saveDashboardSnapshot(profileIdRef.current, { entities: states });
@@ -814,9 +819,11 @@ export default function DashboardV2() {
                     ]).then(([config, devices, regs, areas, floors, configEntries]) => {
                         if (connectGen !== haConnectGenRef.current) return;
                         if (config?.location_name) setCityName(config.location_name);
-                        setRegistryDevices(devices || []);
-                        if (Array.isArray(regs) && regs.length) setRegistryEntities(regs);
-                        setRegistryAreas(areas || []);
+                        if (Array.isArray(devices) && devices.length) setRegistryDevices(devices);
+                        if (Array.isArray(regs) && regs.length) {
+                            setRegistryEntities((prev) => mergeRegistryAreaStamps(prev, regs));
+                        }
+                        if (Array.isArray(areas) && areas.length) setRegistryAreas(areas);
                         if (floors && floors.length > 0) {
                             const sorted = [...floors].sort((a, b) => (a.level || 0) - (b.level || 0));
                             setRegistryFloors(sorted);
@@ -1024,7 +1031,6 @@ export default function DashboardV2() {
             clearTimeout(configTimer);
             configAbort.abort();
             haConnectGenRef.current += 1;
-            if (mappingsAbortRef.current) mappingsAbortRef.current.abort();
             if (service.current) {
                 if (service.current.disconnect) {
                     service.current.disconnect();
@@ -1037,7 +1043,7 @@ export default function DashboardV2() {
 
     const weather = useMemo(() => entities.find(e => e.entity_id.startsWith('weather.')), [entities]);
 
-    const { users: activeUsers, loading: activeUsersLoading, error: activeUsersError } =
+    const { users: activeUsers, loading: activeUsersLoading, error: activeUsersError, refetch: refetchActiveUsers } =
         useActiveUsers(connectionConfig.adminUrl, connectionConfig.token);
 
     // Humidity: from weather entity attributes, or from a dedicated humidity sensor
@@ -1176,6 +1182,7 @@ export default function DashboardV2() {
                     timestamp: pendingNotif.timestamp,
                 });
             }
+            // ringing: IntercomCallModal refetches when the app is opened from the push
             clearNotif();
             return;
         }
@@ -1284,13 +1291,6 @@ export default function DashboardV2() {
     const dashboardEntityIds = useMemo(
         () => getEntityIdsForAreaIds(dashboardParentAreaIds, registryDevices, registryEntities),
         [dashboardParentAreaIds, registryDevices, registryEntities],
-    );
-
-    const groupedLightMemberIds = useMemo(
-        () => collectGroupedLightMemberIds(
-            entities.filter((e) => e?.entity_id?.startsWith('light.')),
-        ),
-        [entities],
     );
 
     const handleBadgePress = useCallback((type) => {
@@ -1484,7 +1484,7 @@ export default function DashboardV2() {
     const refreshNotificationsRef = useRef(refreshNotifications);
     refreshNotificationsRef.current = refreshNotifications;
 
-    const snapshotRef = useRef(null);
+    const lastRoomsRef = useRef([]);
     snapshotRef.current = {
         entities,
         cityName,
@@ -1551,18 +1551,12 @@ export default function DashboardV2() {
                 }
             }
             if (
-                appState.current.match(/inactive|background/) &&
+                appState.current === 'background' &&
                 nextAppState === 'active'
             ) {
-                // Re-check presence on resume
                 lastActiveRoomRef.current = null;
                 navigateToPresenceRoomRef.current(true);
-                // Refresh config
-                fetchMappings();
                 refreshAppRoleRef.current?.();
-
-                // Note: notification tap modal (alertNotif) is handled automatically
-                // by useLastNotificationResponse() — no SecureStore polling needed here.
             }
             appState.current = nextAppState;
             updateAppState(nextAppState === 'active' ? 'foreground' : 'background');
@@ -1654,9 +1648,8 @@ export default function DashboardV2() {
 
     // Owner status — used to show the global camera on/off switch only to the HA owner.
     useEffect(() => {
-        const effectiveUser = userName;
         const adminUrl = connectionConfig.adminUrl;
-        if (!effectiveUser || !adminUrl) {
+        if ((!userName && !userId) || !adminUrl) {
             setIsHaOwner(false);
             return;
         }
@@ -1664,7 +1657,10 @@ export default function DashboardV2() {
         (async () => {
             try {
                 const base = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
-                const res = await authFetch(`${base}api/auth/owner-status?username=${encodeURIComponent(effectiveUser)}`);
+                const qs = new URLSearchParams();
+                if (userName) qs.set('username', String(userName));
+                if (userId) qs.set('userId', String(userId));
+                const res = await authFetch(`${base}api/auth/owner-status?${qs.toString()}`);
                 const data = await res.json().catch(() => ({}));
                 if (!cancelled) setIsHaOwner(!!data.isOwner);
             } catch {
@@ -1672,7 +1668,7 @@ export default function DashboardV2() {
             }
         })();
         return () => { cancelled = true; };
-    }, [userName, connectionConfig.adminUrl]);
+    }, [userName, userId, connectionConfig.adminUrl]);
 
     const handleDisableCameras = useCallback(() => {
         Alert.alert(
@@ -1853,6 +1849,11 @@ export default function DashboardV2() {
         return Promise.resolve();
     }, [systemHealth.canControlHa]);
 
+    useEffect(() => {
+        setIntercomUnlockService(callService);
+        return () => setIntercomUnlockService(null);
+    }, [callService]);
+
     const handleScenePress = useCallback((sceneId) => {
         console.log('Scene pressed:', sceneId);
         const domain = sceneId.split('.')[0];
@@ -2004,9 +2005,7 @@ export default function DashboardV2() {
                 climateMappings,
             );
 
-            const activeLights = roomEntities.lights.filter(
-                (l) => l.stateObj?.state === 'on' && isLightCountableUnit(l, groupedLightMemberIds)
-            ).length;
+            const activeLights = countActiveCountableLights(roomEntities.lights);
 
             const activeAC = roomEntities.climates.filter(isClimatePoweredOn).length;
 
@@ -2094,13 +2093,20 @@ export default function DashboardV2() {
         mediaMappings,
         musicAssistantEntryIds,
         savedRoomOrder,
-        groupedLightMemberIds,
         climateMappings,
         appRole,
     ]);
-    const roomsWithCounts = liveRoomsWithCounts.length > 0
-        ? liveRoomsWithCounts
-        : filterRoomsForRole(cachedRoomsForHome(cachedHomeRooms, badgeConfig), appRole, badgeConfig);
+    const roomsWithCounts = (() => {
+        const live = liveRoomsWithCounts;
+        const cached = filterRoomsForRole(
+            cachedRoomsForHome(cachedHomeRooms, badgeConfig),
+            appRole,
+            badgeConfig,
+        );
+        const next = (live.length ? live : cached.length ? cached : lastRoomsRef.current) || [];
+        if (next.length) lastRoomsRef.current = next;
+        return next;
+    })();
     if (snapshotRef.current) snapshotRef.current.rooms = roomsWithCounts;
 
     const displayCameras = useMemo(() => {
@@ -2130,9 +2136,8 @@ export default function DashboardV2() {
     const roomLightsForModal = useMemo(() => {
         const byId = new Map();
         for (const room of roomsWithCounts) {
-            const lights = room._entities?.lights || [];
+            const lights = filterCountableLights(room._entities?.lights || []);
             for (const l of lights) {
-                if (!isLightCountableUnit(l, groupedLightMemberIds)) continue;
                 if (byId.has(l.entity_id)) continue;
                 const stateObj = l.stateObj || entities.find((e) => e.entity_id === l.entity_id);
                 if (!stateObj || stateObj.state === 'unavailable') continue;
@@ -2150,7 +2155,7 @@ export default function DashboardV2() {
             }
         }
         return [...byId.values()];
-    }, [roomsWithCounts, groupedLightMemberIds, entities]);
+    }, [roomsWithCounts, entities]);
 
     const roomClimatesForModal = useMemo(
         () => collectRoomClimatesForModal(roomsWithCounts, entities),
@@ -2181,6 +2186,7 @@ export default function DashboardV2() {
         const fallbackIds = roomsWithCounts.map((a) => a.area_id);
         setSavedRoomOrder((prev) => {
             const newOrder = mergeRoomOrder(prev, reorderedIds, fallbackIds);
+            roomOrderSavingRef.current = true;
             persistRoomOrder({
                 adminUrl: connectionConfigRef.current?.adminUrl,
                 token: connectionConfigRef.current?.token,
@@ -2192,6 +2198,8 @@ export default function DashboardV2() {
                     if (next.length) setSavedRoomOrder(next);
                     setBadgeConfig((cfg) => (cfg ? { ...cfg, ...result.config } : result.config));
                 }
+            }).finally(() => {
+                roomOrderSavingRef.current = false;
             });
             return newOrder;
         });
@@ -2386,6 +2394,8 @@ export default function DashboardV2() {
                 users={activeUsers}
                 loading={activeUsersLoading}
                 error={activeUsersError}
+                onRefresh={refetchActiveUsers}
+                showHistory={isHaOwner}
             />
 
             {/* ===== HOME TAB ===== */}
@@ -2445,6 +2455,7 @@ export default function DashboardV2() {
                     <RoomsList
                         rooms={roomsWithCounts}
                         registryEntities={registryEntities}
+                        registryDevices={registryDevices}
                         allEntities={entities}
                         onRoomPress={handleRoomPress}
                         onAllRoomsPress={() => setActiveTab('rooms')}
@@ -2542,6 +2553,7 @@ export default function DashboardV2() {
                                 <RoomsList
                                     rooms={filteredRooms}
                                     registryEntities={registryEntities}
+                                    registryDevices={registryDevices}
                                     allEntities={entities}
                                     onRoomPress={handleRoomPress}
                                     layout="grid"
@@ -2821,14 +2833,6 @@ export default function DashboardV2() {
                 />
             )}
 
-            <IntercomCallModal
-                adminUrl={connectionConfig.adminUrl}
-                userId={userId}
-                userName={userName}
-                callService={callService}
-                homeLocks={homeLocks}
-                token={connectionConfig.token}
-            />
         </View >
     );
 }

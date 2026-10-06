@@ -603,14 +603,14 @@ function SettingsView({
             <View style={styles.section}>
                 <Text style={styles.sectionHeader}>Display</Text>
 
-                {/* Show Family Toggle */}
+                {/* Show Active Users Toggle */}
                 <View style={styles.listItem}>
                     <View style={styles.itemInfo}>
                         <View style={styles.iconContainer}>
-                            <User size={20} color={Colors.text} />
+                            <Users size={20} color={Colors.text} />
                         </View>
                         <View>
-                            <Text style={styles.itemName}>Show Family</Text>
+                            <Text style={styles.itemName}>Show Active Users</Text>
                             <Text style={styles.itemSub}>Show active users icon & count on Home</Text>
                         </View>
                     </View>
@@ -911,6 +911,21 @@ function SettingsView({
                             <View>
                                 <Text style={styles.itemName}>App Roles & Access</Text>
                                 <Text style={styles.itemSub}>Create roles and control screens, cameras & rooms (Owner)</Text>
+                            </View>
+                        </View>
+                        <ChevronRight size={20} color={Colors.textDim} />
+                    </TouchableOpacity>
+                )}
+
+                {isHaOwner && (
+                    <TouchableOpacity style={styles.listItem} onPress={() => router.push('/active-users-history')}>
+                        <View style={styles.itemInfo}>
+                            <View style={styles.iconContainer}>
+                                <Clock size={20} color={Colors.text} />
+                            </View>
+                            <View>
+                                <Text style={styles.itemName}>Active Users History</Text>
+                                <Text style={styles.itemSub}>Recent app sessions by user and device (Owner)</Text>
                             </View>
                         </View>
                         <ChevronRight size={20} color={Colors.textDim} />

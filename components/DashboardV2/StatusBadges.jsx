@@ -1,12 +1,12 @@
 import { memo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
-import { ChevronRight, Lightbulb, Snowflake } from 'lucide-react-native';
+import { ChevronRight, Lightbulb, Snowflake, Lock, LockOpen } from 'lucide-react-native';
 
 /**
  * StatusBadges
  *
  * Row layout:
- *   [ ● ● ●  Locks · All locked  > ]     [💡 35] [❄ 1]
+ *   [ 🔓 ● ● ●  > ]     [💡 35] [❄ 1]
  *
  * Locks pill is tappable. Lights / AC counts sit outside it on the right.
  */
@@ -37,12 +37,8 @@ function StatusBadges({
             { name: 'Lock 4', unlocked: false },
           ];
 
-    const unlockedCount = lockDots.filter(l => l.unlocked).length;
-    const hasUnlocked = unlockedCount > 0;
-
-    const subLabel = hasUnlocked
-        ? `${unlockedCount} unlocked`
-        : 'All locked';
+    const hasUnlocked = lockDots.some(l => l.unlocked);
+    const LockIcon = hasUnlocked ? LockOpen : Lock;
 
     return (
         <View style={styles.row}>
@@ -50,7 +46,13 @@ function StatusBadges({
                 style={styles.pill}
                 onPress={() => onPress && onPress('locks')}
                 activeOpacity={0.75}
+                accessibilityLabel={hasUnlocked ? 'Locks, some unlocked' : 'Locks, all locked'}
             >
+                <LockIcon
+                    size={14}
+                    color={hasUnlocked ? '#26C6DA' : 'rgba(237,237,245,0.45)'}
+                    strokeWidth={2.2}
+                />
                 <View style={styles.dotsRow}>
                     {lockDots.map((lock, i) => (
                         <View
@@ -62,14 +64,6 @@ function StatusBadges({
                         />
                     ))}
                 </View>
-
-                <Text style={styles.label} numberOfLines={1}>
-                    <Text style={[styles.labelBold, hasUnlocked && styles.labelUnlocked]}>
-                        Locks
-                    </Text>
-                    <Text style={styles.labelSep}>{' · '}</Text>
-                    <Text style={styles.labelSub}>{subLabel}</Text>
-                </Text>
 
                 <ChevronRight size={16} color="rgba(237,237,245,0.35)" />
             </TouchableOpacity>
@@ -130,6 +124,7 @@ const styles = StyleSheet.create({
         gap: 10,
     },
     dotsRow: {
+        flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 5,
@@ -144,26 +139,6 @@ const styles = StyleSheet.create({
     },
     dotLocked: {
         backgroundColor: 'rgba(237,237,245,0.18)',
-    },
-    label: {
-        flex: 1,
-        fontSize: 13,
-        minWidth: 0,
-    },
-    labelBold: {
-        color: 'rgba(237,237,245,0.9)',
-        fontWeight: '600',
-    },
-    labelUnlocked: {
-        color: '#26C6DA',
-    },
-    labelSep: {
-        color: 'rgba(237,237,245,0.3)',
-        fontWeight: '400',
-    },
-    labelSub: {
-        color: 'rgba(237,237,245,0.5)',
-        fontWeight: '400',
     },
     countsRow: {
         flexDirection: 'row',

@@ -119,6 +119,23 @@ export async function fetchLockStates(adminUrl, token, signal) {
     }
 }
 
+/** Keep structure-stamped area_id when live registry rows have none (membership is via the device). */
+export function mergeRegistryAreaStamps(prev, next) {
+    if (!Array.isArray(next) || !next.length) {
+        return Array.isArray(prev) ? prev : [];
+    }
+    const prevArea = new Map();
+    for (const row of Array.isArray(prev) ? prev : []) {
+        if (row?.entity_id && row.area_id) prevArea.set(row.entity_id, row.area_id);
+    }
+    if (!prevArea.size) return next;
+    return next.map((row) => {
+        if (!row?.entity_id || row.area_id) return row;
+        const stamped = prevArea.get(row.entity_id);
+        return stamped ? { ...row, area_id: stamped } : row;
+    });
+}
+
 export function applyBackendHaSnapshot(snapshot, {
     haLiveRef,
     setEntities,

@@ -691,6 +691,7 @@ const styles = StyleSheet.create({
     },
     windowTabPanel: {
         width: '100%',
+        zIndex: 2,
     },
     windowTabPanelHidden: {
         position: 'absolute',

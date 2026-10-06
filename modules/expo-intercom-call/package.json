@@ -1,0 +1,12 @@
+{
+  "name": "expo-intercom-call",
+  "version": "0.1.0",
+  "description": "Lock-screen incoming door calls (CallKit + PushKit on iOS, full-screen intent on Android)",
+  "main": "index.js",
+  "license": "MIT",
+  "author": "Primewave",
+  "homepage": "https://primewave.ai",
+  "peerDependencies": {
+    "expo": "*"
+  }
+}

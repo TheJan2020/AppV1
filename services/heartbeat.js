@@ -5,23 +5,31 @@ import { authFetch } from '../utils/authFetch';
 
 let heartbeatInterval = null;
 let currentAppState = 'foreground';
+let cachedDevice = null;
 
-async function getDeviceId() {
+async function getDeviceInfo() {
+    if (cachedDevice) return cachedDevice;
+    let deviceId = null;
     try {
-        if (Platform.OS === 'ios') {
-            return await Application.getIosIdForVendorAsync();
-        }
-        return Application.getAndroidId();
+        deviceId = Platform.OS === 'ios'
+            ? await Application.getIosIdForVendorAsync()
+            : Application.getAndroidId();
     } catch {
-        return null;
+        deviceId = null;
     }
+    cachedDevice = {
+        deviceId,
+        deviceName: Device.modelName || 'Unknown Device',
+        platform: Platform.OS,
+    };
+    return cachedDevice;
 }
 
 async function sendHeartbeat(adminUrl, userId, userName) {
     if (!adminUrl || !userId) return;
 
     try {
-        const deviceId = await getDeviceId();
+        const device = await getDeviceInfo();
         const url = `${adminUrl.replace(/\/$/, '')}/api/sessions/heartbeat`;
 
         await authFetch(url, {
@@ -30,15 +38,15 @@ async function sendHeartbeat(adminUrl, userId, userName) {
             body: JSON.stringify({
                 userId,
                 userName,
-                deviceName: Device.modelName || 'Unknown Device',
-                deviceId,
-                platform: Platform.OS,
-                appState: currentAppState
-            })
+                deviceName: device.deviceName,
+                deviceId: device.deviceId,
+                platform: device.platform,
+                appState: currentAppState,
+            }),
+            timeoutMs: 5000,
         });
     } catch (e) {
         // Silent fail — heartbeat is best-effort
-        console.log('[Heartbeat] Error:', e.message);
     }
 }
 

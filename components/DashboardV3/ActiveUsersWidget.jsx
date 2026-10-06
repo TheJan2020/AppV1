@@ -7,6 +7,7 @@ import { CF } from '../../utils/typography';
 import WidgetCard from './WidgetCard';
 import ActiveUsersModal from './ActiveUsersModal';
 import { useActiveUsers } from '../../hooks/useActiveUsers';
+import PlatformGlyph from '../DashboardV2/PlatformGlyph';
 
 /**
  * ActiveUsersWidget
@@ -33,12 +34,6 @@ export default function ActiveUsersWidget({ weather, span = 2, totalColumns = 4,
     const handleCloseModal = () => {
         setModalVisible(false);
         setSelectedUser(null);
-    };
-
-    const getPlatformEmoji = (platform) => {
-        if (platform === 'ios') return '🍎';
-        if (platform === 'android') return '🤖';
-        return '📱';
     };
 
     const getWeatherEmoji = () => {
@@ -162,9 +157,7 @@ export default function ActiveUsersWidget({ weather, span = 2, totalColumns = 4,
                                             {user.userName}
                                         </Text>
                                         <View style={styles.platformRow}>
-                                            <Text style={styles.platformEmoji}>
-                                                {getPlatformEmoji(user.platform)}
-                                            </Text>
+                                            <PlatformGlyph platform={user.platform} size={12} framed={false} />
                                             <Text style={styles.deviceName} numberOfLines={1}>
                                                 {user.deviceName || 'Unknown'}
                                             </Text>

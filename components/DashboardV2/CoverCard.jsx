@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
 import { ChevronUp, ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react-native';
 import * as Haptics from 'expo-haptics';
 import { Colors } from '../../constants/Colors';
@@ -16,8 +16,8 @@ import {
     COVER_BORDER_WIDTH,
     COVER_BORDER_GRADIENT,
 } from '../../utils/coverVisualStyle';
-import { resolveCoverType, getCoverControlIcons, VERTICAL_COVER_TYPES, coverPositionFromTouchX, coverPositionFromPanelTouchX, coverPositionFromPanDelta } from '../../utils/coverControls';
-import { coversInStackOrder, inferCoverLayer, shouldShowLayerInAllTab, readCoverOpenPercent, uiOpenPercentToHaPosition, coverOpenStatusLabel, isCoverUiOpen } from '../../utils/coverWindows';
+import { resolveCoverType, VERTICAL_COVER_TYPES, coverPositionFromTouchX, coverPositionFromPanelTouchX, coverPositionFromPanDelta } from '../../utils/coverControls';
+import { coversInStackOrder, inferCoverLayer, shouldShowLayerInAllTab, readCoverOpenPercent, uiOpenPercentToHaPosition, coverOpenStatusLabel } from '../../utils/coverWindows';
 import CoverWindowSky from './CoverWindowSky';
 
 function readCoverPosition(cover) {
@@ -64,58 +64,13 @@ const SlatBar = memo(function SlatBar({ barHeight, colors }) {
     );
 });
 
-const CHEVRON_BY_DIR = {
-    up: ChevronUp,
-    down: ChevronDown,
-    left: ChevronLeft,
-    right: ChevronRight,
-};
-
-/** Figma: curtains → ←/→, shutter/roll/garage → ↓/↑ */
-function CoverControlButtons({ coverType, isOpen, onClose, onOpen, inline = false }) {
-    const icons = useMemo(() => getCoverControlIcons(coverType, isOpen), [coverType, isOpen]);
-    const CloseIcon = CHEVRON_BY_DIR[icons.close];
-    const OpenIcon = CHEVRON_BY_DIR[icons.open];
-
-    return (
-        <View style={[curtainStyles.btnRow, inline && curtainStyles.btnRowInline]}>
-            <TouchableOpacity
-                style={curtainStyles.ctrlBtn}
-                onPress={onClose}
-                activeOpacity={0.75}
-                accessibilityRole="button"
-                accessibilityLabel="Close cover"
-            >
-                <CloseIcon size={20} color="rgba(255,255,255,0.9)" strokeWidth={2.5} />
-            </TouchableOpacity>
-            <TouchableOpacity
-                style={curtainStyles.ctrlBtn}
-                onPress={onOpen}
-                activeOpacity={0.75}
-                accessibilityRole="button"
-                accessibilityLabel="Open cover"
-            >
-                <OpenIcon size={20} color="rgba(255,255,255,0.9)" strokeWidth={2.5} />
-            </TouchableOpacity>
-        </View>
-    );
-}
-
-/** Cover name + status on the left, open/close controls on the right */
-function CoverCardFooter({ name, status, coverType, isOpen, onClose, onOpen }) {
+function CoverCardFooter({ name, status }) {
     return (
         <View style={curtainStyles.footerRow}>
             <View style={curtainStyles.footerTextCol}>
                 <Text style={curtainStyles.name} numberOfLines={1}>{name}</Text>
                 <Text style={curtainStyles.status}>{status}</Text>
             </View>
-            <CoverControlButtons
-                coverType={coverType}
-                isOpen={isOpen}
-                onClose={onClose}
-                onOpen={onOpen}
-                inline
-            />
         </View>
     );
 }
@@ -546,7 +501,6 @@ export function AllLayersCoverCard({
     const isMovingUp = anyOpening;
     const isMovingDown = anyClosing;
     const isMoving = isMovingUp || isMovingDown;
-    const isOpen = groupPosition >= 5;
 
     useEffect(() => {
         if (groupDraggingRef.current) return;
@@ -623,10 +577,11 @@ export function AllLayersCoverCard({
 
     const groupCoverType = useMemo(() => {
         if (!stackedCovers.length) return 'curtain_middle';
-        const typed = stackedCovers.find((c) => c.coverType);
-        return resolveCoverType(typed || stackedCovers[stackedCovers.length - 1]);
+        return resolveCoverType(stackedCovers[stackedCovers.length - 1]);
     }, [stackedCovers]);
     const isMiddleGroup = groupCoverType === 'curtain_middle';
+    const isVerticalGroup = VERTICAL_COVER_TYPES.includes(groupCoverType)
+        || groupCoverType === 'curtain_roll';
 
     const makePanGesture = (usePanelCoords) => Gesture.Pan()
         .minDistance(5)
@@ -690,31 +645,31 @@ export function AllLayersCoverCard({
 
     if (!stackedCovers.length) return null;
 
-    return (
-        <View style={curtainStyles.card}>
-            <View
-                style={curtainStyles.windowArea}
-                onLayout={(e) => {
-                    const w = e.nativeEvent.layout.width - 4;
-                    const h = e.nativeEvent.layout.height - 4;
-                    frameWidth.value = w;
-                    frameHeight.value = h;
-                    setFabricExtents({
-                        w: Math.ceil(w),
-                        h: Math.ceil(h),
-                    });
-                }}
-            >
-                <CoverGradientBorder style={windowPleatStyles.outer} borderRadius={14}>
-                    <View style={windowPleatStyles.frame}>
-                        <CoverWindowSky weather={weather} />
-                        <WindowCrossLines />
-                        {stackedCovers.map((cover, i) => {
-                            const isOuter = i === stackedCovers.length - 1;
-                            const showLayer = shouldShowLayerInAllTab(stackedCovers, i)
-                                && (isOuter || !groupDragging);
-                            if (!showLayer) return null;
-                            return (
+    const windowVisual = (
+        <View
+            style={curtainStyles.windowArea}
+            collapsable={false}
+            onLayout={(e) => {
+                const w = e.nativeEvent.layout.width - 4;
+                const h = e.nativeEvent.layout.height - 4;
+                frameWidth.value = w;
+                frameHeight.value = h;
+                setFabricExtents({
+                    w: Math.ceil(w),
+                    h: Math.ceil(h),
+                });
+            }}
+        >
+            <CoverGradientBorder style={windowPleatStyles.outer} borderRadius={14}>
+                <View style={windowPleatStyles.frame}>
+                    <CoverWindowSky weather={weather} />
+                    <WindowCrossLines />
+                    {stackedCovers.map((cover, i) => {
+                        const isOuter = i === stackedCovers.length - 1;
+                        const showLayer = shouldShowLayerInAllTab(stackedCovers, i)
+                            && (isOuter || !groupDragging);
+                        if (!showLayer) return null;
+                        return (
                             <StackedCoverLayer
                                 key={cover.entity_id}
                                 cover={cover}
@@ -731,42 +686,44 @@ export function AllLayersCoverCard({
                                 groupSyncMode={isOuter}
                                 isOuterLayer={isOuter}
                                 outerGesture={
-                                    !isMiddleGroup && isOuter
+                                    isVerticalGroup && isOuter
                                         ? outerPanelGesture
                                         : null
                                 }
                             />
-                            );
-                        })}
-                        {isMiddleGroup && (
-                            <GestureDetector gesture={frameGesture}>
-                                <View style={curtainStyles.allTabFrameTouch} />
-                            </GestureDetector>
-                        )}
-                            {isMoving && (
-                                <>
-                                    <Animated.View style={[curtainStyles.arrowOverlayLeft, arrowAnimStyle]} pointerEvents="none">
-                                        {isMovingUp
-                                            ? <ChevronLeft size={WINDOW_ARROW_MIDDLE} color="rgba(255,255,255,0.85)" />
-                                            : <ChevronRight size={WINDOW_ARROW_MIDDLE} color="rgba(255,255,255,0.85)" />}
-                                    </Animated.View>
-                                    <Animated.View style={[curtainStyles.arrowOverlayRight, arrowAnimStyle2]} pointerEvents="none">
-                                        {isMovingUp
-                                            ? <ChevronRight size={WINDOW_ARROW_MIDDLE} color="rgba(255,255,255,0.85)" />
-                                            : <ChevronLeft size={WINDOW_ARROW_MIDDLE} color="rgba(255,255,255,0.85)" />}
-                                    </Animated.View>
-                                </>
-                            )}
-                        </View>
-                    </CoverGradientBorder>
-            </View>
+                        );
+                    })}
+                    {isMoving && (
+                        <>
+                            <Animated.View style={[curtainStyles.arrowOverlayLeft, arrowAnimStyle]} pointerEvents="none">
+                                {isMovingUp
+                                    ? <ChevronLeft size={WINDOW_ARROW_MIDDLE} color="rgba(255,255,255,0.85)" />
+                                    : <ChevronRight size={WINDOW_ARROW_MIDDLE} color="rgba(255,255,255,0.85)" />}
+                            </Animated.View>
+                            <Animated.View style={[curtainStyles.arrowOverlayRight, arrowAnimStyle2]} pointerEvents="none">
+                                {isMovingUp
+                                    ? <ChevronRight size={WINDOW_ARROW_MIDDLE} color="rgba(255,255,255,0.85)" />
+                                    : <ChevronLeft size={WINDOW_ARROW_MIDDLE} color="rgba(255,255,255,0.85)" />}
+                            </Animated.View>
+                        </>
+                    )}
+                </View>
+            </CoverGradientBorder>
+        </View>
+    );
+
+    return (
+        <View style={curtainStyles.card}>
+            {isVerticalGroup
+                ? windowVisual
+                : (
+                    <GestureDetector gesture={frameGesture}>
+                        {windowVisual}
+                    </GestureDetector>
+                )}
             <CoverCardFooter
                 name={displayName}
                 status={statusText}
-                coverType={groupCoverType}
-                isOpen={isOpen}
-                onClose={() => handleAction('close')}
-                onOpen={() => handleAction('open')}
             />
         </View>
     );
@@ -1045,7 +1002,6 @@ function HorizontalCurtainCard({ cover, sensor, weather, onUpdate, needsChange, 
     const rollGesture = Gesture.Simultaneous(rollPanGesture, rollTapGesture);
 
     const posText = coverOpenStatusLabel(cover);
-    const isOpen = isCoverUiOpen(cover);
 
     // Animated curtain panel widths (for left/right/middle)
     // Min 8% of half-frame so pulled-back curtain is always a thin sliver
@@ -1232,10 +1188,6 @@ function HorizontalCurtainCard({ cover, sensor, weather, onUpdate, needsChange, 
             <CoverCardFooter
                 name={friendlyName}
                 status={statusText}
-                coverType={coverType}
-                isOpen={isOpen}
-                onClose={() => handleAction('close')}
-                onOpen={() => handleAction('open')}
             />
         </View>
     );
@@ -1277,7 +1229,6 @@ function VerticalShutterCard({ cover, sensor, weather, onUpdate, needsChange, on
     const isMoving = isMovingUp || isMovingDown;
 
     const posText = coverOpenStatusLabel(cover);
-    const isOpen = isCoverUiOpen(cover);
 
     // Shared values — mirrors roll curtain exactly
     const visualPos = useSharedValue(currentPosition);
@@ -1427,10 +1378,6 @@ function VerticalShutterCard({ cover, sensor, weather, onUpdate, needsChange, on
             <CoverCardFooter
                 name={friendlyName}
                 status={isMovingUp ? 'Opening...' : isMovingDown ? 'Closing...' : posText}
-                coverType={coverType}
-                isOpen={isOpen}
-                onClose={() => handleAction('close')}
-                onOpen={() => handleAction('open')}
             />
         </View>
     );
@@ -1763,32 +1710,6 @@ const curtainStyles = StyleSheet.create({
     footerTextCol: {
         flex: 1,
         minWidth: 0,
-    },
-    btnRow: {
-        flexDirection: 'row',
-        gap: 20,
-        justifyContent: 'center',
-        alignItems: 'center',
-        width: '100%',
-        marginTop: 6,
-        paddingBottom: 2,
-    },
-    btnRowInline: {
-        width: 'auto',
-        marginTop: 0,
-        paddingBottom: 0,
-        gap: 12,
-        flexShrink: 0,
-    },
-    ctrlBtn: {
-        width: 40,
-        height: 40,
-        borderRadius: 20,
-        backgroundColor: 'rgba(255,255,255,0.08)',
-        alignItems: 'center',
-        justifyContent: 'center',
-        borderWidth: 1,
-        borderColor: 'rgba(255,255,255,0.18)',
     },
     btnImg: {
         width: 32,

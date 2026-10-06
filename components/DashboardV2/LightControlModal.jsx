@@ -9,7 +9,7 @@
  */
 import React, { useState, useEffect } from 'react';
 import {
-    View, Text, StyleSheet, TouchableOpacity,
+    View, Text, StyleSheet, TouchableOpacity, Modal,
 } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { X, Power } from 'lucide-react-native';
@@ -143,10 +143,18 @@ export default function LightControlModal({ visible, onClose, light, colorCapabi
     const hueColorStr = `rgb(${hr},${hg},${hb})`;
 
     return (
-        <View style={styles.overlay}>
-            <TouchableOpacity style={styles.backdrop} onPress={onClose} activeOpacity={1} />
+        <Modal
+            visible={!!visible}
+            transparent
+            animationType="fade"
+            presentationStyle="overFullScreen"
+            statusBarTranslucent
+            onRequestClose={onClose}
+        >
+            <View style={styles.overlay}>
+                <TouchableOpacity style={styles.backdrop} onPress={onClose} activeOpacity={1} />
 
-            <View style={styles.sheet}>
+                <View style={styles.sheet}>
                 {/* Header */}
                 <View style={styles.header}>
                     <View style={{ flex: 1 }}>
@@ -267,24 +275,26 @@ export default function LightControlModal({ visible, onClose, light, colorCapabi
                         </View>
                     </>
                 )}
+                </View>
             </View>
-        </View>
+        </Modal>
     );
 }
 
 const styles = StyleSheet.create({
     overlay: {
-        ...StyleSheet.absoluteFillObject,
+        flex: 1,
         justifyContent: 'center',
         alignItems: 'center',
-        zIndex: 200,
+        paddingHorizontal: 20,
     },
     backdrop: {
         ...StyleSheet.absoluteFillObject,
         backgroundColor: 'rgba(0,0,0,0.75)',
     },
     sheet: {
-        width: '90%',
+        width: '100%',
+        maxWidth: 420,
         backgroundColor: '#12122a',
         borderRadius: 28,
         padding: 22,

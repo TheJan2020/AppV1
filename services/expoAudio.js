@@ -90,7 +90,7 @@ export async function startIntercomRingtone() {
     setAudioModeAsync({
         playsInSilentMode: true,
         allowsRecording: false,
-        interruptionMode: 'doNotMix',
+        interruptionMode: 'mixWithOthers',
         shouldRouteThroughEarpiece: false,
         shouldPlayInBackground: true,
     }).catch(() => {});

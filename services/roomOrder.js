@@ -34,6 +34,11 @@ export async function saveLocalRoomOrder(profileId, order) {
     return ids;
 }
 
+export function sameRoomOrder(a, b) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    return a.every((id, i) => id === b[i]);
+}
+
 export function mergeRoomOrder(prev, reorderedIds, fallbackIds = []) {
     const currentFullOrder = Array.isArray(prev) && prev.length
         ? [...prev]

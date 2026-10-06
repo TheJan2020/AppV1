@@ -1,5 +1,6 @@
 import { Modal, View, Text, StyleSheet, TouchableOpacity, ScrollView } from 'react-native';
-import { X, Smartphone, Clock, Zap } from 'lucide-react-native';
+import { X, Clock, Zap } from 'lucide-react-native';
+import PlatformGlyph from '../DashboardV2/PlatformGlyph';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Colors } from '../../constants/Colors';
@@ -18,12 +19,6 @@ export default function ActiveUsersModal({ visible, onClose, user, weather }) {
     const insets = useSafeAreaInsets();
 
     if (!user) return null;
-
-    const getPlatformEmoji = () => {
-        if (user.platform === 'ios') return '🍎';
-        if (user.platform === 'android') return '🤖';
-        return '📱';
-    };
 
     const getWeatherEmoji = () => {
         if (!weather) return '☀️';
@@ -123,7 +118,7 @@ export default function ActiveUsersModal({ visible, onClose, user, weather }) {
                         <View style={styles.section}>
                             <Text style={styles.sectionTitle}>Device Information</Text>
                             <View style={styles.infoRow}>
-                                <Smartphone size={18} color={Colors.accent} />
+                                <PlatformGlyph platform={user.platform} size={18} />
                                 <View style={styles.infoContent}>
                                     <Text style={styles.infoLabel}>Device</Text>
                                     <Text style={styles.infoValue}>{user.deviceName || 'Unknown'}</Text>
@@ -135,11 +130,11 @@ export default function ActiveUsersModal({ visible, onClose, user, weather }) {
                         <View style={styles.section}>
                             <Text style={styles.sectionTitle}>Platform</Text>
                             <View style={styles.infoRow}>
-                                <Text style={styles.platformEmoji}>{getPlatformEmoji()}</Text>
+                                <PlatformGlyph platform={user.platform} size={22} />
                                 <View style={styles.infoContent}>
                                     <Text style={styles.infoLabel}>Platform</Text>
                                     <Text style={styles.infoValue}>
-                                        {user.platform === 'ios' ? 'iPhone/iPad' : user.platform === 'android' ? 'Android' : 'Unknown'}
+                                        {user.platform === 'ios' ? 'iPhone' : user.platform === 'android' ? 'Android' : 'Unknown'}
                                     </Text>
                                 </View>
                             </View>

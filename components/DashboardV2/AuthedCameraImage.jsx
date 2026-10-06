@@ -103,9 +103,7 @@ function LiveAuthedImage({
 
             const started = Date.now();
             try {
-                const next = Platform.OS === 'android'
-                    ? await downloadLiveFrame(uri, headers, instanceId)
-                    : `${uri}${uri.includes('?') ? '&' : '?'}t=${Date.now()}`;
+                const next = await downloadLiveFrame(uri, headers, instanceId);
                 if (cancelled || !next) return;
                 rememberFile(next);
                 const slot = loadedRef.current ? 1 - visibleRef.current : visibleRef.current;
@@ -115,7 +113,7 @@ function LiveAuthedImage({
                     return copy;
                 });
             } catch {
-                if (!cancelled && !loadedRef.current) onError?.();
+                // Keep polling. CameraPreview times out if no frame ever arrives.
             }
 
             if (!cancelled) {
@@ -153,7 +151,7 @@ function LiveAuthedImage({
                 src ? (
                     <Image
                         key={i}
-                        source={Platform.OS === 'android' ? { uri: src } : { uri: src, headers }}
+                        source={{ uri: src }}
                         style={[
                             StyleSheet.absoluteFill,
                             { zIndex: i === visible ? 2 : 1, opacity: 1 },
@@ -164,6 +162,7 @@ function LiveAuthedImage({
                         transition={0}
                         pointerEvents="none"
                         onLoad={() => onSlotLoad(i)}
+                        onError={() => {}}
                     />
                 ) : null
             ))}

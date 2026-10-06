@@ -56,9 +56,8 @@ export function sipWsCandidates(wssUrl) {
         const normalized = String(wssUrl || '').replace(/^wss:/i, 'https:').replace(/^ws:/i, 'http:');
         const u = new URL(normalized);
         const path = u.pathname && u.pathname !== '/' ? u.pathname : '/ws';
-        // WKWebView hangs on the PBX self-signed WSS cert. Clear WS on 8088 did connect.
-        add(`ws://${u.hostname}:8088${path}`);
         add(wssUrl);
+        add(`ws://${u.hostname}:8088${path}`);
     } catch {
         add(wssUrl);
     }

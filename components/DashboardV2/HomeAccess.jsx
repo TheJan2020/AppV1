@@ -138,27 +138,50 @@ export function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, 
     const pulseOpacity      = useSharedValue(1);
     const userInitiatedRef  = useRef(false);
     const hasSnappedRef     = useRef(false);
+    const widthRef          = useRef(0);
 
     // Knob is absolutely positioned at left:0.
-    // locked   → translateX = 0            (knob at left edge)
-    // unlocked → translateX = pillW - KNOB (knob at right edge)
-    useEffect(() => {
-        if (pillW === 0 || inTransit) return;
-        maxTravelSV.value = pillW - KNOB;
-        const target = isUnlocked ? pillW - KNOB : 0;
-        if (!hasSnappedRef.current) {
-            // First measurement after mount (incl. remounts on tab re-show) —
-            // snap instantly instead of animating, so the knob never renders
-            // on the wrong side (overlapping the label) for a frame.
-            translateX.value = target;
-            hasSnappedRef.current = true;
-        } else if (userInitiatedRef.current) {
+    // locked   → translateX = 0
+    // unlocked → translateX = pillW - KNOB
+    const snapKnob = (w, mode = 'instant') => {
+        if (w <= 0) return;
+        const max = Math.max(0, w - KNOB);
+        maxTravelSV.value = max;
+        if (inTransit) return;
+        const target = isUnlocked ? max : 0;
+        if (mode === 'spring') {
             translateX.value = withSpring(target, { damping: 18 });
-        } else {
+        } else if (mode === 'timing') {
             translateX.value = withTiming(target, { duration: 280 });
+        } else {
+            translateX.value = target;
         }
+        hasSnappedRef.current = true;
+    };
+
+    useEffect(() => {
+        hasSnappedRef.current = false;
+        snapKnob(widthRef.current, 'instant');
+    }, [focusKey]);
+
+    useEffect(() => {
+        if (widthRef.current <= 0 || inTransit) return;
+        snapKnob(
+            widthRef.current,
+            userInitiatedRef.current ? 'spring' : (hasSnappedRef.current ? 'timing' : 'instant'),
+        );
         userInitiatedRef.current = false;
-    }, [isUnlocked, inTransit, pillW, focusKey]);
+    }, [isUnlocked, inTransit]);
+
+    const onLayout = (e) => {
+        const w = e.nativeEvent.layout.width;
+        // display:none / overlay layouts report 0 — keep the last good width
+        // so an already-open lock does not snap back to the left.
+        if (w <= 0) return;
+        widthRef.current = w;
+        if (w !== pillW) setPillW(w);
+        snapKnob(w, 'instant');
+    };
 
     // Pulse label during transit
     useEffect(() => {
@@ -178,8 +201,6 @@ export function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, 
             userInitiatedRef.current = false;
         }
     }, [inTransit]);
-
-    const onLayout = (e) => setPillW(e.nativeEvent.layout.width);
 
     const confirm = () => {
         userInitiatedRef.current = true;
@@ -247,8 +268,11 @@ export function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, 
 
     return (
         <GestureDetector gesture={pan}>
-            <Animated.View style={[styles.pill, { backgroundColor: pillBg, borderColor: border }]} onLayout={onLayout}>
-
+            <Animated.View
+                collapsable={false}
+                style={[styles.pill, { backgroundColor: pillBg, borderColor: border }]}
+                onLayout={onLayout}
+            >
                 {isPassage ? (
                     /* ── Passage mode — unlocked style, disabled, with badge ── */
                     <>
@@ -260,7 +284,7 @@ export function LockPill({ name, isUnlocked, isLocking, isUnlocking, isPassage, 
                             </View>
                         </Animated.View>
                         <Animated.View
-                            style={[styles.knob, { transform: [{ translateX: pillW > 0 ? pillW - KNOB : 0 }] }]}
+                            style={[styles.knob, knobStyle]}
                             pointerEvents="none"
                         >
                             <View style={[StyleSheet.absoluteFill, { borderRadius: KNOB / 2, borderWidth: 2, borderColor: C_PURPLE, backgroundColor: 'transparent' }]} />
@@ -389,29 +413,49 @@ function GaragePill({
     const progress          = useSharedValue(0);
     const arrowY            = useSharedValue(0);
     const hasSnappedRef     = useRef(false);
+    const widthRef          = useRef(0);
 
-    useEffect(() => {
-        if (pillW === 0) return;
-        maxTravelSV.value = pillW - KNOB;
-    }, [pillW]);
+    const [dragging, setDragging] = useState(false);
 
-    // Snap knob when idle. locked=left(0), open=right(pillW-KNOB)
-    useEffect(() => {
-        if (pillW === 0 || inTransit) return;
-        const target = isOpen ? pillW - KNOB : 0;
-        if (!hasSnappedRef.current) {
-            // First measurement after mount (incl. remounts on tab re-show) —
-            // snap instantly instead of animating, so the knob never renders
-            // on the wrong side (overlapping the label) for a frame.
-            translateX.value = target;
-            hasSnappedRef.current = true;
-        } else if (userInitiatedRef.current) {
+    const snapKnob = (w, mode = 'instant') => {
+        if (w <= 0) return;
+        const max = Math.max(0, w - KNOB);
+        maxTravelSV.value = max;
+        if (inTransit) return;
+        const target = isOpen ? max : 0;
+        if (mode === 'spring') {
             translateX.value = withSpring(target, { damping: 18 });
-        } else {
+        } else if (mode === 'timing') {
             translateX.value = withTiming(target, { duration: 280 });
+        } else {
+            translateX.value = target;
         }
+        hasSnappedRef.current = true;
+    };
+
+    useEffect(() => {
+        hasSnappedRef.current = false;
+        snapKnob(widthRef.current, 'instant');
+    }, [focusKey]);
+
+    useEffect(() => {
+        if (widthRef.current <= 0 || inTransit) return;
+        snapKnob(
+            widthRef.current,
+            userInitiatedRef.current ? 'spring' : (hasSnappedRef.current ? 'timing' : 'instant'),
+        );
         userInitiatedRef.current = false;
-    }, [isOpen, inTransit, pillW, focusKey]);
+    }, [isOpen, inTransit]);
+
+    const onLayout = (e) => {
+        const w = e.nativeEvent.layout.width;
+        // display:none / overlay layouts report 0 — keep the last good width
+        // so an already-open garage does not snap back to the left.
+        if (w <= 0) return;
+        widthRef.current = w;
+        if (w !== pillW) setPillW(w);
+        snapKnob(w, 'instant');
+    };
 
     useEffect(() => {
         if (inTransit) {
@@ -439,8 +483,6 @@ function GaragePill({
         }
     }, [inTransit, goingUp]);
 
-    const onLayout = (e) => setPillW(e.nativeEvent.layout.width);
-
     const startTransit = (direction) => {
         userInitiatedRef.current = true;
         clearTimeout(timerRef.current);
@@ -456,11 +498,19 @@ function GaragePill({
     };
 
     const pan = Gesture.Pan()
-        .enabled(!inTransit)
-        .activeOffsetX([-8, 8])
-        .failOffsetY([-20, 20])
+        .enabled(!inTransit && pillW - KNOB >= 48)
+        .activeOffsetX([-20, 20])
+        .failOffsetY([-12, 12])
+        .onBegin(() => {
+            const max = maxTravelSV.value;
+            if (isOpen) translateX.value = max;
+        })
+        .onStart(() => {
+            runOnJS(setDragging)(true);
+        })
         .onUpdate(e => {
             const max = maxTravelSV.value;
+            if (max < 48) return;
             if (isOpen) {
                 translateX.value = Math.min(Math.max(max + e.translationX, 0), max);
             } else {
@@ -469,7 +519,12 @@ function GaragePill({
         })
         .onEnd(() => {
             const max = maxTravelSV.value;
-            const mid = max / 2;
+            if (max < 48) {
+                translateX.value = isOpen ? max : 0;
+                runOnJS(setDragging)(false);
+                return;
+            }
+            const mid = max * 0.55;
             if (isOpen) {
                 if (translateX.value < mid) runOnJS(startTransit)('closing');
                 else translateX.value = withSpring(max);
@@ -477,6 +532,10 @@ function GaragePill({
                 if (translateX.value > mid) runOnJS(startTransit)('opening');
                 else translateX.value = withSpring(0);
             }
+            runOnJS(setDragging)(false);
+        })
+        .onFinalize(() => {
+            runOnJS(setDragging)(false);
         });
 
     const knobAnimStyle = useAnimatedStyle(() => ({
@@ -509,10 +568,17 @@ function GaragePill({
     const idlePad = isOpen
         ? { paddingLeft: 14, paddingRight: KNOB + 8 }
         : { paddingLeft: KNOB + 8, paddingRight: 14 };
+    // Idle-open: pin to the right so it is correct on first paint (app load)
+    // before onLayout. `left: undefined` does not clear styles.knob.left.
+    const pinOpenRight = isOpen && !inTransit && !dragging;
 
     return (
         <GestureDetector gesture={pan}>
-            <Animated.View style={[styles.pill, { backgroundColor: pillBg, borderColor: border }]} onLayout={onLayout}>
+            <Animated.View
+                collapsable={false}
+                style={[styles.pill, { backgroundColor: pillBg, borderColor: border }]}
+                onLayout={onLayout}
+            >
 
                 {inTransit ? (
                     <View style={styles.garageTransitCenter} pointerEvents="none">
@@ -528,7 +594,13 @@ function GaragePill({
                         <Animated.View style={[styles.pillLabelWrap, idlePad, idleLabelStyle]} pointerEvents="none">
                             <Text style={styles.pillLabelName} numberOfLines={1}>{name}</Text>
                         </Animated.View>
-                        <Animated.View style={[styles.knob, knobAnimStyle]} pointerEvents="none">
+                        <Animated.View
+                            style={[
+                                styles.knob,
+                                pinOpenRight ? { left: 'auto', right: 0 } : knobAnimStyle,
+                            ]}
+                            pointerEvents="none"
+                        >
                             {isOpen ? (
                                 // Outlined circle for open
                                 <View style={[StyleSheet.absoluteFill, { borderRadius: KNOB / 2, borderWidth: 2, borderColor: C_PURPLE, backgroundColor: 'transparent' }]} />

@@ -3,10 +3,6 @@
  * Intercom taps open the door-call screen; other taps keep the existing alert modal.
  */
 import { createContext, useCallback, useEffect, useMemo, useState } from 'react';
-import Constants from 'expo-constants';
-
-const isExpoGo = Constants.appOwnership === 'expo'
-    || Constants.executionEnvironment === 'storeClient';
 
 export const NotifContext = createContext({
     pendingNotif: null,
@@ -32,7 +28,6 @@ export function PushNotifProvider({ children }) {
     const clearNotif = useCallback(() => setPendingNotif(null), []);
 
     useEffect(() => {
-        if (isExpoGo) return undefined;
         let Notifications;
         try {
             Notifications = require('expo-notifications');
