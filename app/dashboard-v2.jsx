@@ -12,7 +12,7 @@ import AlertNotificationModal from '../components/DashboardV2/AlertNotificationM
 import SecurityAlertModal from '../components/DashboardV2/SecurityAlertModal';
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, Alert, InteractionManager, Modal, TextInput, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, Alert, Modal, TextInput, ActivityIndicator } from 'react-native';
 import HomeCameraStrip from '../components/DashboardV2/HomeCameraStrip';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
@@ -60,6 +60,7 @@ import {
     cachedRoomsForHome,
 } from '../utils/roomAreas';
 import { filterHomeLocks, readHomeAccessFromConfig } from '../utils/homeAccess';
+import { doorContactSensors, doorOpenScripts } from '../utils/haHouseDevices';
 import {
     fetchAppRole,
     fetchRoleCameras,
@@ -72,6 +73,7 @@ import {
     areaVisibleForRole,
     selectedCameraIdsForRole,
     camerasForRoleDisplay,
+    frigateCamerasOnly,
     hasAppUserIdentity,
 } from '../services/appRole';
 import { fetchBackendHaSnapshot, applyBackendHaSnapshot, fetchLockStates, mergeEntitySlice, mergeRegistryAreaStamps } from '../services/haBackendCache';
@@ -1021,7 +1023,10 @@ export default function DashboardV2() {
         }
 
         // 3. Connect to Frigate (proxied through admin backend)
-    frigateService.current = new FrigateService('', null, null, connectionConfig.adminUrl, haToken);
+    frigateService.current = new FrigateService('', null, null, connectionConfig.adminUrl, haToken, haUrl);
+        if (connectionConfig.url) {
+            frigateService.current.haUrl = String(connectionConfig.url).replace(/\/$/, '');
+        }
 
         frigateService.current.getConfig().catch(() => {}).finally(() => {
             if (!adminUrl) setFrigateConfigResolved(true);
@@ -1224,25 +1229,23 @@ export default function DashboardV2() {
         };
         const base = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
         let cancelled = false;
-        const task = InteractionManager.runAfterInteractions(() => {
-            setTimeout(() => {
-                if (cancelled) return;
-                ensureSensorMappings();
-                fetch(`${base}api/entities`, { headers })
-                    .then((res) => res.json())
-                    .then((data) => {
-                        if (cancelled || !data.success || !Array.isArray(data.entities)) return;
-                        monitoredEntitiesRef.current = new Set(data.entities.map((e) => e.entity_id));
-                        ignoredEntitiesRef.current = new Set(
-                            data.entities.filter((e) => e.ignored).map((e) => e.entity_id),
-                        );
-                    })
-                    .catch(() => {});
-            }, 4000);
-        });
+        const timer = setTimeout(() => {
+            if (cancelled) return;
+            ensureSensorMappings();
+            fetch(`${base}api/entities`, { headers })
+                .then((res) => res.json())
+                .then((data) => {
+                    if (cancelled || !data.success || !Array.isArray(data.entities)) return;
+                    monitoredEntitiesRef.current = new Set(data.entities.map((e) => e.entity_id));
+                    ignoredEntitiesRef.current = new Set(
+                        data.entities.filter((e) => e.ignored).map((e) => e.entity_id),
+                    );
+                })
+                .catch(() => {});
+        }, 4000);
         return () => {
             cancelled = true;
-            task?.cancel?.();
+            clearTimeout(timer);
         };
     }, [connectionConfig.loaded, connectionConfig.adminUrl, connectionConfig.token, ensureSensorMappings]);
     // Mirror of alertRules in a ref so the socket closure always reads the latest
@@ -1440,7 +1443,7 @@ export default function DashboardV2() {
     // Presence navigation logic — only runs when trackerState actually changes
     const navigateToPresenceRoom = useCallback((isResume = false) => {
         if (!roomsWithCounts.length || !userName) return;
-        const shouldRun = isResume ? autoRoomResume : autoRoomVisit;
+        const shouldRun = autoRoomVisit && autoRoomResume;
         if (!shouldRun) return;
         if (!trackerState) return;
 
@@ -2113,13 +2116,15 @@ export default function DashboardV2() {
         if (!camerasGloballyEnabled) return [];
         if (!appRole || appRole.roleId === 'pending') return [];
         if (!roleCanSeeCameras(appRole, allowedScreens)) return [];
-        if (Array.isArray(backendCameras) && backendCameras.length > 0) return backendCameras;
-        return camerasForRoleDisplay(
-            frigateCameras,
-            haCameras,
-            appRole,
-            badgeConfig?.selected_cameras,
-        );
+        const base = Array.isArray(backendCameras) && backendCameras.length > 0
+            ? backendCameras
+            : camerasForRoleDisplay(
+                frigateCameras,
+                haCameras,
+                appRole,
+                badgeConfig?.selected_cameras,
+            );
+        return frigateCamerasOnly(base);
     }, [camerasGloballyEnabled, backendCameras, frigateCameras, haCameras, appRole, allowedScreens, badgeConfig?.selected_cameras]);
 
     const homeCameraIds = useMemo(() => {
@@ -2222,6 +2227,9 @@ export default function DashboardV2() {
         }),
         [roomsWithCounts, registryAreas, availableFloors, selectedFloor]
     );
+
+    const doorSensors = useMemo(() => doorContactSensors(entities), [entities]);
+    const doorOpeners = useMemo(() => doorOpenScripts(entities), [entities]);
 
     const homeLocks = useMemo(() => filterHomeLocks(entities, {
         selectedLockIds,
@@ -2332,6 +2340,9 @@ export default function DashboardV2() {
                     locks={entities.filter(e => e.entity_id.startsWith('lock.'))}
                     lockPassageConfigs={lockPassageConfigs}
                     entities={entities}
+                    doorSensors={doorSensors}
+                    doorOpeners={doorOpeners}
+                    onOpenDoor={(entityId) => callService('script', 'turn_on', { entity_id: entityId })}
                     onClose={() => setLocksModalVisible(false)}
                     isArmed={!!badgeConfig?.locks_armed}
                     onArmToggle={handleLockArmToggle}
@@ -2358,17 +2369,6 @@ export default function DashboardV2() {
                 />
             )}
 
-            {showFrigateModal && (
-                <FrigateCameraModal
-                    visible={showFrigateModal}
-                    camera={selectedFrigateCamera}
-                    service={frigateService.current}
-                    initialView={frigateInitialView}
-                    onClose={() => setShowFrigateModal(false)}
-                    cameraSensors={badgeConfig?.camera_sensors || {}}
-                    haEntities={entities}
-                />
-            )}
 
             {showNetworkModal && (
                 <NetworkModal
@@ -2418,9 +2418,11 @@ export default function DashboardV2() {
                         lightsOn={lightsOn}
                         acOn={acOn}
                         onPress={handleBadgePress}
-                        locks={entities.filter(e => e.entity_id.startsWith('lock.'))}
+                        locks={entities.filter((e) => e.entity_id?.startsWith('lock.'))}
                         lockPassageConfigs={lockPassageConfigs}
                         entities={entities}
+                        doorSensors={doorSensors}
+                        doorOpeners={doorOpeners}
                     />
                     <HaSystemBanner banner={systemHealth.banner} />
 
@@ -2443,6 +2445,9 @@ export default function DashboardV2() {
                         adminUrl={connectionConfig.adminUrl}
                         haToken={connectionConfig.token}
                         onConfigSaved={fetchMappings}
+                        doorOpeners={doorOpeners}
+                        doorSensors={doorSensors}
+                        onOpenDoor={(entityId) => callService('script', 'turn_on', { entity_id: entityId })}
                         onToggleLock={(entityId, state) => {
                             const isUnlocked = state === 'unlocked' || state === 'open';
                             callService('lock', isUnlocked ? 'lock' : 'unlock', { entity_id: entityId });
@@ -2830,6 +2835,21 @@ export default function DashboardV2() {
                     canControlHa={systemHealth.canControlHa}
                     badgeConfig={badgeConfig}
                     appRole={appRole}
+                    onCameraPress={handleFrigateCameraPress}
+                />
+            )}
+
+            {showFrigateModal && (
+                <FrigateCameraModal
+                    visible={showFrigateModal}
+                    camera={selectedFrigateCamera}
+                    service={frigateService.current}
+                    initialView={frigateInitialView}
+                    onClose={() => setShowFrigateModal(false)}
+                    cameraSensors={badgeConfig?.camera_sensors || {}}
+                    haEntities={entities}
+                    userId={userId}
+                    userName={userName}
                 />
             )}
 

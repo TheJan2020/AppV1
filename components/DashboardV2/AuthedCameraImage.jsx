@@ -66,6 +66,8 @@ function LiveAuthedImage({
     const visibleRef = useRef(0);
     const loadedRef = useRef(false);
     const filesRef = useRef([]);
+    const frameGen = useRef(0);
+    const slotGen = useRef([0, 0]);
     const instanceId = useRef(`c${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`).current;
     const auth = headers?.Authorization || '';
 
@@ -106,7 +108,10 @@ function LiveAuthedImage({
                 const next = await downloadLiveFrame(uri, headers, instanceId);
                 if (cancelled || !next) return;
                 rememberFile(next);
+                const gen = frameGen.current + 1;
+                frameGen.current = gen;
                 const slot = loadedRef.current ? 1 - visibleRef.current : visibleRef.current;
+                slotGen.current[slot] = gen;
                 setSlots((prev) => {
                     const copy = [...prev];
                     copy[slot] = next;
@@ -137,6 +142,7 @@ function LiveAuthedImage({
     }, [uri, auth, refreshMs, startDelayMs]);
 
     const onSlotLoad = (slot) => {
+        if (slotGen.current[slot] !== frameGen.current) return;
         visibleRef.current = slot;
         setVisible(slot);
         if (!loadedRef.current) {

@@ -37,6 +37,9 @@ import { windowsForRoom } from '../../utils/coverWindows';
 import { filterCamerasForRole } from '../../services/appRole';
 import { getLightMapping } from '../../utils/lightMappingsClient';
 import { formatCameraName, formatDisplayName } from '../../utils/formatDisplayName';
+import AuthedCameraImage from './AuthedCameraImage';
+import HaCameraView from './HaCameraView';
+import { cameraAccessToken } from '../../utils/haHouseDevices';
 
 // Convert area_id-style names (e.g. "living_room") to proper display names ("Living Room")
 const roomScenesPrefsKey = (areaId) => `room_scenes_show_prefs_${areaId}`;
@@ -370,6 +373,7 @@ export default function RoomDetailView({
     activeAreaKey,
     onSelectArea,
     appRole = null,
+    onCameraPress,
 }) {
     const { isTablet } = useDeviceType();
     const isTabletModal = isModal && isTablet;
@@ -1192,22 +1196,50 @@ export default function RoomDetailView({
                                     const name = formatCameraName(
                                         attrs.friendly_name || cam.displayName || cam.entity_id,
                                     );
-                                    const pictureUrl = attrs.entity_picture
-                                        ? `${(haUrl || '').replace(/\/$/, '')}${attrs.entity_picture}`
-                                        : null;
+                                    const haBase = (haUrl || '').replace(/\/$/, '');
+                                    const pictureUrl = haBase
+                                        ? `${haBase}/api/camera_proxy/${cam.entity_id}`
+                                        : (attrs.entity_picture ? `${haBase}${attrs.entity_picture}` : null);
                                     const isUnavailable = stateObj.state === 'unavailable';
                                     const cameraName = cam.entity_id.replace('camera.', '');
+                                    const accessToken = cameraAccessToken(stateObj);
                                     const motionEntityId = `binary_sensor.${cameraName}`;
                                     const motionSensor = allEntities?.find(e => e.entity_id === motionEntityId);
                                     const hasMotion = motionSensor?.state === 'on';
                                     return (
-                                        <View key={cam.entity_id} style={{ width: cardWidth }}>
+                                        <TouchableOpacity
+                                            key={cam.entity_id}
+                                            style={{ width: cardWidth }}
+                                            activeOpacity={0.85}
+                                            onPress={() => {
+                                                if (isUnavailable || !onCameraPress) return;
+                                                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                                                onCameraPress({
+                                                    id: cam.entity_id,
+                                                    name: cameraName,
+                                                    entity_id: cam.entity_id,
+                                                    friendly_name: attrs.friendly_name || name,
+                                                    feed: 'ha',
+                                                    source: 'ha',
+                                                    access_token: accessToken,
+                                                });
+                                            }}
+                                        >
                                             <View style={styles.cameraCard}>
-                                                {pictureUrl && !isUnavailable ? (
-                                                    <Image
-                                                        source={{ uri: pictureUrl, headers: { Authorization: `Bearer ${haToken}` } }}
+                                                {haBase && accessToken && !isUnavailable ? (
+                                                    <HaCameraView
+                                                        haUrl={haBase}
+                                                        entityId={cam.entity_id}
+                                                        accessToken={accessToken}
                                                         style={styles.cameraThumb}
-                                                        resizeMode="cover"
+                                                    />
+                                                ) : pictureUrl && !isUnavailable ? (
+                                                    <AuthedCameraImage
+                                                        uri={pictureUrl}
+                                                        headers={{ Authorization: `Bearer ${haToken}` }}
+                                                        refreshMs={500}
+                                                        style={styles.cameraThumb}
+                                                        contentFit="contain"
                                                     />
                                                 ) : (
                                                     <View style={[styles.cameraThumb, styles.cameraThumbPlaceholder]}>
@@ -1227,7 +1259,7 @@ export default function RoomDetailView({
                                                 )}
                                                 <Text style={styles.cameraCardName} numberOfLines={1}>{name}</Text>
                                             </View>
-                                        </View>
+                                        </TouchableOpacity>
                                     );
                                 })}
                             </View>

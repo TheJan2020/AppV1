@@ -622,7 +622,28 @@ function SettingsView({
                     />
                 </View>
 
-                {/* Auto-Room (Visit), Automations, Auto-Room (Resume), Voice Assistant and
+                <View style={styles.listItem}>
+                    <View style={styles.itemInfo}>
+                        <View style={styles.iconContainer}>
+                            <Map size={20} color={Colors.text} />
+                        </View>
+                        <View style={{ flex: 1, paddingRight: 8 }}>
+                            <Text style={styles.itemName}>Open room automatically</Text>
+                            <Text style={styles.itemSub}>Open the room when radar sees you in a specific room</Text>
+                        </View>
+                    </View>
+                    <Switch
+                        value={!!autoRoomVisit && !!autoRoomResume}
+                        onValueChange={(val) => {
+                            handleToggleSetting('autoRoomVisit', val);
+                            handleToggleSetting('autoRoomResume', val);
+                        }}
+                        trackColor={{ false: '#767577', true: Colors.primary }}
+                        thumbColor={(autoRoomVisit && autoRoomResume) ? '#fff' : '#f4f3f4'}
+                    />
+                </View>
+
+                {/* Automations, Voice Assistant and
                     Show Preference Button are not used right now — re-enable by
                     uncommenting this block.
                 <View style={styles.listItem}>

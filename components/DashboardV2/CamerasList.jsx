@@ -1,11 +1,24 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { FlatList, Platform, View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { WebView } from 'react-native-webview';
+import { Eye } from 'lucide-react-native';
 import { formatCameraName } from '../../utils/formatDisplayName';
 import CameraSensorOverlay, { resolveSensorIds } from './CameraSensorOverlay';
 import { cameraUsesHaFeed } from '../../services/appRole';
 import AuthedCameraImage from './AuthedCameraImage';
+import HaCameraView from './HaCameraView';
+import { cameraWatchName, fetchLiveWatchers } from '../../services/cameraWatch';
 
-const SNAPSHOT_MS = 1500;
+const SNAPSHOT_MS = 450;
+
+const STREAM_JS = `
+  (function() {
+    var style = document.createElement('style');
+    style.textContent = 'html,body{margin:0;padding:0;background:#000;overflow:hidden;width:100%;height:100%}img,video{position:fixed;inset:0;width:100%;height:100%;object-fit:cover}';
+    (document.head || document.documentElement).appendChild(style);
+  })();
+  true;
+`;
 const GRID_SNAPSHOT_H = 360;
 const LOAD_TIMEOUT_MS = 10000;
 const VIEWABILITY = { itemVisiblePercentThreshold: 1, minimumViewTime: 1 };
@@ -48,24 +61,32 @@ const CameraPreview = memo(function CameraPreview({
     active = true,
     startDelayMs = 0,
     itemWidth,
+    viewerCount = 0,
 }) {
     const [failed, setFailed] = useState(false);
     const [useHa, setUseHa] = useState(() => cameraUsesHaFeed(cam));
+    const [streamFailed, setStreamFailed] = useState(false);
     const [hasFrame, setHasFrame] = useState(false);
+    const haOnly = cam?.feed === 'ha' || cam?.source === 'ha';
 
     const base = snapshotBase(cam, service, useHa);
     const headers = service?.getMediaHeaders?.() || {};
+    const frigateName = cameraWatchName(cam);
+    const haLive = useHa && !!service?.haUrl && !!cam?.access_token;
+    const useSnapshot = !haLive && (Platform.OS === 'android' || useHa || streamFailed);
+    const streamUrl = !useSnapshot && service && frigateName ? service.getStreamUrl(frigateName) : '';
 
     useEffect(() => {
         setFailed(false);
         setHasFrame(false);
+        setStreamFailed(false);
         setUseHa(cameraUsesHaFeed(cam));
     }, [cam?.id, cam?.entity_id, cam?.name]);
 
     useEffect(() => {
-        if (!active || hasFrame || failed) return undefined;
+        if (!active || hasFrame || failed || haLive) return undefined;
         const timer = setTimeout(() => {
-            if (useHa) {
+            if (useHa && !haOnly) {
                 setUseHa(false);
                 setFailed(false);
                 return;
@@ -73,7 +94,7 @@ const CameraPreview = memo(function CameraPreview({
             setFailed(true);
         }, LOAD_TIMEOUT_MS);
         return () => clearTimeout(timer);
-    }, [active, hasFrame, failed, useHa, cam?.id]);
+    }, [active, hasFrame, failed, useHa, haOnly, haLive, cam?.id]);
 
     if (!service || !cam || !base) {
         return (
@@ -88,7 +109,22 @@ const CameraPreview = memo(function CameraPreview({
     return (
         <View style={[styles.cameraWrapper, itemWidth ? { width: itemWidth } : null]}>
             <View style={styles.imageContainer}>
-                {active && !failed ? (
+                {active && !failed && haLive ? (
+                    <HaCameraView
+                        haUrl={service.haUrl}
+                        entityId={cam.entity_id || cam.id}
+                        accessToken={cam.access_token}
+                        style={StyleSheet.absoluteFill}
+                        onFirstFrame={() => {
+                            setHasFrame(true);
+                            setFailed(false);
+                        }}
+                        onFail={() => {
+                            if (!hasFrame) setFailed(true);
+                        }}
+                    />
+                ) : null}
+                {active && !failed && !haLive && useSnapshot ? (
                     <AuthedCameraImage
                         uri={base}
                         headers={headers}
@@ -99,7 +135,7 @@ const CameraPreview = memo(function CameraPreview({
                             setFailed(false);
                         }}
                         onError={() => {
-                            if (useHa) {
+                            if (useHa && !haOnly) {
                                 setUseHa(false);
                                 setFailed(false);
                                 return;
@@ -108,9 +144,27 @@ const CameraPreview = memo(function CameraPreview({
                         }}
                     />
                 ) : null}
-                {!hasFrame && !failed ? (
-                    <View style={[StyleSheet.absoluteFill, styles.loadingOverlay]} pointerEvents="none">
-                        <ActivityIndicator color="rgba(255,255,255,0.45)" />
+                {active && !failed && !useSnapshot && streamUrl ? (
+                    <WebView
+                        source={{ uri: streamUrl, headers }}
+                        style={StyleSheet.absoluteFill}
+                        backgroundColor="black"
+                        scrollEnabled={false}
+                        allowsInlineMediaPlayback
+                        mediaPlaybackRequiresUserAction={false}
+                        originWhitelist={['*']}
+                        javaScriptEnabled
+                        injectedJavaScriptBeforeContentLoaded={STREAM_JS}
+                        onLoadStart={() => setHasFrame(true)}
+                        onLoadEnd={() => setHasFrame(true)}
+                        onError={() => setStreamFailed(true)}
+                        onHttpError={() => setStreamFailed(true)}
+                    />
+                ) : null}
+                {viewerCount > 0 ? (
+                    <View style={styles.eyeBadge} pointerEvents="none">
+                        <Eye size={13} color="#fff" />
+                        <Text style={styles.eyeText}>{viewerCount}</Text>
                     </View>
                 ) : null}
                 {failed && !hasFrame ? (
@@ -140,8 +194,31 @@ function CamerasList({
     const tabletWidth = `${Math.floor(100 / columns) - 2}%`;
     const rows = useMemo(() => buildRows(frigateCameras, columns), [frigateCameras, columns]);
     const [visibleRows, setVisibleRows] = useState(() => new Set([0, 1, 2]));
+    const [watchers, setWatchers] = useState([]);
     const visibleRef = useRef(visibleRows);
     visibleRef.current = visibleRows;
+
+    useEffect(() => {
+        const adminUrl = service?.adminUrl;
+        if (!active || !adminUrl) return undefined;
+        let stopped = false;
+        const tick = async () => {
+            const rows = await fetchLiveWatchers(adminUrl);
+            if (!stopped) setWatchers(rows);
+        };
+        tick();
+        const timer = setInterval(tick, 4000);
+        return () => {
+            stopped = true;
+            clearInterval(timer);
+        };
+    }, [active, service?.adminUrl]);
+
+    const viewerCountFor = useCallback((cam) => {
+        const name = cameraWatchName(cam).toLowerCase();
+        if (!name) return 0;
+        return watchers.filter((row) => String(row.camera || '').replace(/^camera\./, '').trim().toLowerCase() === name).length;
+    }, [watchers]);
 
     const onViewableItemsChanged = useCallback(({ viewableItems }) => {
         const next = new Set(visibleRef.current);
@@ -171,10 +248,11 @@ function CamerasList({
                 startDelayMs={Math.min(index * 80, 400)}
                 sensorIds={resolveSensorIds(cam, cameraSensors)}
                 entityMap={entityMap}
+                viewerCount={viewerCountFor(cam)}
             />
             <View style={styles.cameraNameContainer}>
                 <Text style={styles.cameraName} numberOfLines={1}>
-                    {formatCameraName(cam.name) || 'Camera'}
+                    {formatCameraName(cam.friendly_name || cam.name) || 'Camera'}
                 </Text>
             </View>
         </TouchableOpacity>
@@ -248,6 +326,24 @@ const styles = StyleSheet.create({
     cameraWrapper: {
         width: '100%',
     },
+    eyeBadge: {
+        position: 'absolute',
+        top: 8,
+        right: 8,
+        zIndex: 4,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+        backgroundColor: 'rgba(0,0,0,0.62)',
+        borderRadius: 12,
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+    },
+    eyeText: {
+        color: '#fff',
+        fontSize: 12,
+        fontWeight: '600',
+    },
     imageContainer: {
         width: '100%',
         aspectRatio: 16 / 9,
@@ -273,11 +369,6 @@ const styles = StyleSheet.create({
         color: 'rgba(255, 255, 255, 0.8)',
         fontSize: 13,
         fontWeight: '400',
-    },
-    loadingOverlay: {
-        backgroundColor: 'rgba(0,0,0,0.25)',
-        justifyContent: 'center',
-        alignItems: 'center',
     },
     errorOverlay: {
         backgroundColor: '#0d0d1a',

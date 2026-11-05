@@ -45,6 +45,7 @@ const ATTR_KEYS = [
     'current_position',
     'current_tilt_position',
     'entity_picture',
+    'access_token',
     'lock_status',
     'passage_mode',
     'occupancy',

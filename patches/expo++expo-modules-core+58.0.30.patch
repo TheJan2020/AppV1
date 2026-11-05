@@ -1,0 +1,15 @@
+diff --git a/node_modules/expo/node_modules/expo-modules-core/ios/Core/SharedObjects/SharedObjectRegistry.swift b/node_modules/expo/node_modules/expo-modules-core/ios/Core/SharedObjects/SharedObjectRegistry.swift
+index c81d83d..d9286ea 100644
+--- a/node_modules/expo/node_modules/expo-modules-core/ios/Core/SharedObjects/SharedObjectRegistry.swift
++++ b/node_modules/expo/node_modules/expo-modules-core/ios/Core/SharedObjects/SharedObjectRegistry.swift
+@@ -19,7 +19,9 @@ public final class SharedObjectRegistry: Sendable {
+   /**
+    Weak reference to the app context for the registry.
+    */
+-  private weak let appContext: AppContext?
++  // `weak` cannot be `let`: the runtime clears it when the context is released. `nonisolated(unsafe)`
++  // keeps this Sendable class legal; the reference is only read while the registry is alive.
++  private nonisolated(unsafe) weak var appContext: AppContext?
+ 
+   // `@unchecked` because `SharedObjectNativeState` isn't `Sendable` (its JSI base class isn't), yet a
+   // value escapes `withLock` whenever `get`/the lookups return it. Access is always serialized through

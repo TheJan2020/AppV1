@@ -68,6 +68,8 @@ function IntercomCallModal({
     const [sipLive, setSipLive] = useState(false);
     const [sipVideo, setSipVideo] = useState(false);
     const [sipReady, setSipReady] = useState(false);
+    const [holdSip, setHoldSip] = useState(false);
+    const [officeAudioId, setOfficeAudioId] = useState('');
     const [intercomOn, setIntercomOn] = useState(false);
     const wsRef = useRef(null);
     const webRef = useRef(null);
@@ -85,6 +87,7 @@ function IntercomCallModal({
     const nativeAnsweredRef = useRef('');
     const sipRegisteredRef = useRef(false);
     const sipAnsweringRef = useRef(false);
+    const pendingAudioRef = useRef('');
     userIdRef.current = userId;
 
     const runSip = (code) => {
@@ -454,12 +457,24 @@ function IntercomCallModal({
             routeCallAudioToSpeaker().catch(() => {}),
             new Promise((resolve) => setTimeout(resolve, 400)),
         ]);
-        runSip('if (window.PW_ANSWER) window.PW_ANSWER();');
+        if (!holdSip) runSip('if (window.PW_ANSWER) window.PW_ANSWER();');
         try {
             const result = await answerIntercomCall(adminUrl, { userId, username: userName });
             if (result.ok) {
                 ingest({ event: 'answered', call: { ...result.call, sip: listenSip || result.call?.sip || null } });
-                if (result.call?.pickupMode === 'callback') {
+                if (result.call?.audioId) {
+                    pendingAudioRef.current = result.call.audioId;
+                    setOfficeAudioId(result.call.audioId);
+                    setHoldSip(false);
+                    setSipStatus('Connecting to the door…');
+                    const id = JSON.stringify(result.call.audioId);
+                    const kick = () => runSip(
+                        `window.PW_AUDIO_ID=${id}; if (window.startOfficeTalk) window.startOfficeTalk(null, window.PW_AUDIO_ID)`,
+                    );
+                    kick();
+                    setTimeout(kick, 700);
+                    setTimeout(kick, 1800);
+                } else if (result.call?.pickupMode === 'callback') {
                     setSipStatus('Calling the door…');
                     const kick = () => {
                         if (sipLiveRef.current || sipIncomingRef.current) return;
@@ -484,6 +499,7 @@ function IntercomCallModal({
                 if (result.call) ingest({ event: result.call.status, call: result.call });
             }
         } finally {
+            setHoldSip(false);
             setBusy(false);
         }
     };
@@ -491,11 +507,14 @@ function IntercomCallModal({
 
     const handleDecline = async () => {
         dismissedRef.current = callRef.current?.callId || '';
+        pendingAudioRef.current = '';
+        setOfficeAudioId('');
+        setHoldSip(false);
         sipIncomingRef.current = false;
         sipCallbackTriedRef.current = false;
         sipAnsweringRef.current = false;
         stopAllRinging();
-        runSip('window.PW_SIP_HANGUP && window.PW_SIP_HANGUP()');
+        runSip('window.PW_AUDIO_ID=""; window.PW_HOLD_SIP=false; window.PW_SIP_HANGUP && window.PW_SIP_HANGUP(); if (!window.PW_UA_OK && window.PW_SIP_READY) window.PW_SIP_READY()');
         IntercomCall.endCall();
         setCall(null);
         setSip(null);
@@ -506,11 +525,14 @@ function IntercomCallModal({
 
     const handleHangup = async () => {
         setBusy(true);
+        pendingAudioRef.current = '';
+        setOfficeAudioId('');
+        setHoldSip(false);
         sipIncomingRef.current = false;
         sipCallbackTriedRef.current = false;
         sipAnsweringRef.current = false;
         stopAllRinging();
-        runSip('window.PW_SIP_HANGUP && window.PW_SIP_HANGUP()');
+        runSip('window.PW_AUDIO_ID=""; window.PW_HOLD_SIP=false; window.PW_SIP_HANGUP && window.PW_SIP_HANGUP(); if (!window.PW_UA_OK && window.PW_SIP_READY) window.PW_SIP_READY()');
         IntercomCall.endCall();
         try {
             await hangupIntercomCall(adminUrl, 'hangup');
@@ -531,6 +553,7 @@ function IntercomCallModal({
             const callId = String(payload?.callId || '');
             if (callId && nativeAnsweredRef.current === callId) return;
             if (callId) nativeAnsweredRef.current = callId;
+            setHoldSip(true);
             let active = callRef.current;
             if (!active || (callId && active.callId !== callId)) {
                 try {
@@ -623,8 +646,10 @@ function IntercomCallModal({
 
     const inject = useMemo(() => {
         if (!listenSip) return 'true;';
-        return `window.PW_SIP = ${JSON.stringify({ ...listenSip, autoDial: false })}; if (window.PW_SIP_READY) window.PW_SIP_READY(); true;`;
-    }, [listenSip]);
+        const hold = holdSip ? 'window.PW_HOLD_SIP=true;' : 'window.PW_HOLD_SIP=false;';
+        const audio = officeAudioId ? `window.PW_AUDIO_ID=${JSON.stringify(officeAudioId)};` : '';
+        return `${hold}${audio}window.PW_SIP = ${JSON.stringify({ ...listenSip, adminUrl, autoDial: false })}; if (window.PW_SIP_READY && !window.PW_HOLD_SIP) window.PW_SIP_READY(); true;`;
+    }, [listenSip, adminUrl, holdSip, officeAudioId]);
 
     const originWhitelist = useMemo(() => ['*', 'http://*', 'https://*', 'ws://*', 'wss://*'], []);
 
@@ -701,6 +726,8 @@ function IntercomCallModal({
                 else if (t.startsWith('sdp-local')) setSipStatus('Audio SDP sent — waiting for the door…');
                 else if (t.startsWith('pc-wait')) setSipStatus(`Audio path ${t.replace(/^pc-wait\s+/i, '')}`);
                 else if (t.startsWith('no-session')) setSipStatus('No SIP call yet — waiting for the door…');
+                else if (t === 'bridge-answer' || t === 'bridge-open') setSipStatus('Connecting through the office…');
+                else if (t === 'bridge-socket') setSipStatus('Office audio connection failed');
                 else if (
                     t.startsWith('progress') || t.startsWith('cand')
                     || t.startsWith('gather') || t.startsWith('register') || t.startsWith('media ')
@@ -733,6 +760,10 @@ function IntercomCallModal({
             }
             else if (msg.status === 'ended') {
                 const cause = String(msg.cause || '');
+                pendingAudioRef.current = '';
+                setOfficeAudioId('');
+                setHoldSip(false);
+                runSip('window.PW_AUDIO_ID=""; window.PW_HOLD_SIP=false; if (!window.PW_UA_OK && window.PW_SIP_READY) window.PW_SIP_READY()');
                 sipIncomingRef.current = false;
                 sipCallbackTriedRef.current = false;
                 sipAnsweringRef.current = false;
@@ -768,8 +799,11 @@ function IntercomCallModal({
             originWhitelist={originWhitelist}
             onMessage={onSipMessage}
             onLoadEnd={() => {
+                const audioId = pendingAudioRef.current;
+                const audioLine = audioId ? `window.PW_AUDIO_ID=${JSON.stringify(audioId)};` : '';
                 runSip(`(function(){
                   ${inject}
+                  ${audioLine}
                   var md = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
                   if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({
                     type: 'sip', status: 'calling', target: 'media ' + md

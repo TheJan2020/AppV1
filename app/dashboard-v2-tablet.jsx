@@ -9,7 +9,7 @@ import { fetchEnrichedLightMappings } from '../utils/lightMappingsClient';
 import { CF } from '../utils/typography';
 
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, Alert, InteractionManager } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, AppState, Alert } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StatusBar } from 'expo-status-bar';
 import HeaderV2 from '../components/DashboardV2/HeaderV2';
@@ -57,6 +57,7 @@ import {
     cachedRoomsForHome,
 } from '../utils/roomAreas';
 import { filterHomeLocks, readHomeAccessFromConfig } from '../utils/homeAccess';
+import { doorContactSensors, doorOpenScripts } from '../utils/haHouseDevices';
 import {
     loadDashboardSnapshot,
     saveDashboardSnapshot,
@@ -72,7 +73,7 @@ import {
 import { connectionConfigFromProfile, connectionConfigFromBoot, withFailoverUrls } from '../services/connectionEndpoints';
 import { probeDashboard, applyBootstrapHaToConfig } from '../services/homeBootstrap';
 import { loadHaProfiles, saveHaProfiles, mergeActiveProfileUrls } from '../utils/storage';
-import { fetchAppRole, fetchRoleCameras, canShowScreen, roleCanSeeCameras, filterHomeCameraIds, filterCamerasForRole, filterRoomsForRole, areaAllowedForRole, areaVisibleForRole, selectedCameraIdsForRole, camerasForRoleDisplay, hasAppUserIdentity } from '../services/appRole';
+import { fetchAppRole, fetchRoleCameras, canShowScreen, roleCanSeeCameras, filterHomeCameraIds, filterCamerasForRole, filterRoomsForRole, areaAllowedForRole, areaVisibleForRole, selectedCameraIdsForRole, camerasForRoleDisplay, frigateCamerasOnly, hasAppUserIdentity } from '../services/appRole';
 import { fetchBackendHaSnapshot, applyBackendHaSnapshot, fetchLockStates, mergeEntitySlice, mergeRegistryAreaStamps } from '../services/haBackendCache';
 import { setRoomPageBootstrap, clearRoomPageBootstrap } from '../utils/roomPageBootstrap';
 import { persistRoomOrder, loadLocalRoomOrder, saveLocalRoomOrder, parentIdsFromConfig, mergeRoomOrder, sameRoomOrder } from '../services/roomOrder';
@@ -618,24 +619,22 @@ export default function DashboardV2Tablet() {
         const haToken = connectionConfig.token;
         const base = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
         let cancelled = false;
-        const task = InteractionManager.runAfterInteractions(() => {
-            setTimeout(() => {
-                if (cancelled) return;
-                fetch(`${base}api/sensors`, {
-                    headers: { Authorization: `Bearer ${haToken}`, Accept: 'application/json' },
+        const timer = setTimeout(() => {
+            if (cancelled) return;
+            fetch(`${base}api/sensors`, {
+                headers: { Authorization: `Bearer ${haToken}`, Accept: 'application/json' },
+            })
+                .then((res) => res.json())
+                .then((data) => {
+                    if (!cancelled && data.success && Array.isArray(data.sensors)) {
+                        setSensorMappings(data.sensors);
+                    }
                 })
-                    .then((res) => res.json())
-                    .then((data) => {
-                        if (!cancelled && data.success && Array.isArray(data.sensors)) {
-                            setSensorMappings(data.sensors);
-                        }
-                    })
-                    .catch(() => {});
-            }, 4000);
-        });
+                .catch(() => {});
+        }, 4000);
         return () => {
             cancelled = true;
-            task?.cancel?.();
+            clearTimeout(timer);
         };
     }, [connectionConfig.loaded, connectionConfig.adminUrl, connectionConfig.token]);
 
@@ -860,7 +859,10 @@ export default function DashboardV2Tablet() {
         }
 
         // 3. Connect to Frigate (proxied through admin backend)
-        frigateService.current = new FrigateService('', null, null, connectionConfig.adminUrl, haToken);
+        frigateService.current = new FrigateService('', null, null, connectionConfig.adminUrl, haToken, haUrl);
+        if (connectionConfig.url) {
+            frigateService.current.haUrl = String(connectionConfig.url).replace(/\/$/, '');
+        }
 
         frigateService.current.getConfig().catch(() => {});
 
@@ -934,7 +936,7 @@ export default function DashboardV2Tablet() {
         }
 
         // Check Settings
-        const shouldRun = isResume ? autoRoomResume : autoRoomVisit;
+        const shouldRun = autoRoomVisit && autoRoomResume;
         // console.log('[Auto-Room] Setting check:', isResume ? 'autoRoomResume' : 'autoRoomVisit', '=', shouldRun);
         if (!shouldRun) {
             return;
@@ -1093,7 +1095,7 @@ export default function DashboardV2Tablet() {
                 appState.current === 'background' &&
                 nextAppState === 'active'
             ) {
-                if (autoRoomResume) {
+                if (autoRoomVisit && autoRoomResume) {
                     lastActiveRoomRef.current = null;
                     checkPresence(true);
                 }
@@ -1108,7 +1110,7 @@ export default function DashboardV2Tablet() {
         return () => {
             subscription.remove();
         };
-    }, [entities, roomsWithCounts, userName, autoRoomResume]);
+    }, [entities, roomsWithCounts, userName, autoRoomVisit, autoRoomResume]);
 
     // Heartbeat for user session tracking
     useEffect(() => {
@@ -1379,6 +1381,9 @@ export default function DashboardV2Tablet() {
     })();
     if (snapshotRef.current) snapshotRef.current.rooms = roomsWithCounts;
 
+    const doorSensors = useMemo(() => doorContactSensors(entities), [entities]);
+    const doorOpeners = useMemo(() => doorOpenScripts(entities), [entities]);
+
     const homeLocks = useMemo(() => {
         const access = readHomeAccessFromConfig(badgeConfig);
         return filterHomeLocks(entities, {
@@ -1392,13 +1397,15 @@ export default function DashboardV2Tablet() {
     const displayCameras = useMemo(() => {
         if (!appRole || appRole.roleId === 'pending') return [];
         if (!roleCanSeeCameras(appRole, allowedScreens)) return [];
-        if (Array.isArray(backendCameras) && backendCameras.length > 0) return backendCameras;
-        return camerasForRoleDisplay(
-            frigateCameras,
-            haCameras,
-            appRole,
-            badgeConfig?.selected_cameras,
-        );
+        const base = Array.isArray(backendCameras) && backendCameras.length > 0
+            ? backendCameras
+            : camerasForRoleDisplay(
+                frigateCameras,
+                haCameras,
+                appRole,
+                badgeConfig?.selected_cameras,
+            );
+        return frigateCamerasOnly(base);
     }, [backendCameras, frigateCameras, haCameras, appRole, allowedScreens, badgeConfig?.selected_cameras]);
 
     const homeCameraIds = useMemo(() => {
@@ -1526,6 +1533,11 @@ export default function DashboardV2Tablet() {
                         lightsOn={lightsOn}
                         acOn={acOn}
                         onPress={handleBadgePress}
+                        locks={entities.filter((e) => e.entity_id?.startsWith('lock.'))}
+                        lockPassageConfigs={readHomeAccessFromConfig(badgeConfig).passage || {}}
+                        entities={entities}
+                        doorSensors={doorSensors}
+                        doorOpeners={doorOpeners}
                     />
 
                     {/* Person Status */}
@@ -1665,6 +1677,26 @@ export default function DashboardV2Tablet() {
 
 
                     {/* Dynamic Lock Sliders */}
+                    {doorOpeners.length > 0 && (
+                        <View style={{ marginBottom: 16, gap: 8 }}>
+                            {doorOpeners.map((script) => (
+                                    <TouchableOpacity
+                                        key={script.entity_id}
+                                        style={[styles.statusCard, { backgroundColor: '#8947ca', alignSelf: 'flex-start' }]}
+                                        onPress={() => {
+                                            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                                            callService('script', 'turn_on', { entity_id: script.entity_id });
+                                        }}
+                                    >
+                                        <LockOpen size={24} color="#fff" />
+                                        <Text style={styles.statusText}>
+                                            {script.attributes?.friendly_name || 'Open door'}
+                                        </Text>
+                                    </TouchableOpacity>
+                            ))}
+                        </View>
+                    )}
+
                     {homeLocks.length > 0 && (
                             <View style={styles.sliderRow}>
                                 {homeLocks.map(lock => {
@@ -1920,15 +1952,6 @@ export default function DashboardV2Tablet() {
                 />
             )}
 
-            {showFrigateModal && (
-                <FrigateCameraModal
-                    visible={showFrigateModal}
-                    camera={selectedFrigateCamera}
-                    service={frigateService.current}
-                    initialView={frigateInitialView}
-                    onClose={() => setShowFrigateModal(false)}
-                />
-            )}
 
             {showNetworkModal && (
                 <NetworkModal
@@ -1997,6 +2020,19 @@ export default function DashboardV2Tablet() {
                     }
                     badgeConfig={badgeConfig}
                     appRole={appRole}
+                    onCameraPress={handleFrigateCameraPress}
+                />
+            )}
+
+            {showFrigateModal && (
+                <FrigateCameraModal
+                    visible={showFrigateModal}
+                    camera={selectedFrigateCamera}
+                    service={frigateService.current}
+                    initialView={frigateInitialView}
+                    onClose={() => setShowFrigateModal(false)}
+                    userId={userId}
+                    userName={userName}
                 />
             )}
 

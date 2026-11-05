@@ -1,0 +1,37 @@
+diff --git a/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptObject.swift b/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptObject.swift
+index de76b97..6fae174 100644
+--- a/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptObject.swift
++++ b/node_modules/expo-modules-jsi/apple/Sources/ExpoModulesJSI/Runtime/Values/JavaScriptObject.swift
+@@ -921,6 +921,12 @@ private func definePropertyFunction(in runtime: JavaScriptRuntime) -> DefineProp
+   }
+ }
+ 
++/// Xcode 26 still treats a `nonisolated(unsafe)` JSI pointer as non-Sendable when it is passed into
++/// `@JavaScriptActor`. The encode below runs synchronously on this thread, so the pointer never hops threads.
++private struct EncodedValueSlot: @unchecked Sendable {
++  let pointer: UnsafeMutablePointer<facebook.jsi.Value>
++}
++
+ /// Calls `encode` with a slot in a temporary engine value and the runtime, then `body` with the value it
+ /// wrote. A value that `encode` doesn't write stays `undefined`. The value is destroyed when `body`
+ /// returns, which calls into the engine only for a value with an engine handle.
+@@ -934,16 +940,17 @@ private func withEncodedValue(
+ ) rethrows {
+   try withUnsafeTemporaryAllocation(of: facebook.jsi.Value.self, capacity: 1) { buffer in
+     // The isolated closure below runs synchronously on this thread.
+-    nonisolated(unsafe) let slot = buffer.baseAddress!
++    let slot = buffer.baseAddress!
+     expo.emplaceUndefined(slot)
+     defer {
+       expo.destroyValues(slot, 1)
+     }
++    let encodedSlot = EncodedValueSlot(pointer: slot)
+     // The runtime can't be deallocated during a call on its JavaScript thread, so it's borrowed without
+     // a retain.
+     try runtime._withUnsafeGuaranteedRef { runtime in
+       try JavaScriptActor.assumeIsolated {
+-        try encode(JavaScriptValue.Slot(slot), runtime)
++        try encode(JavaScriptValue.Slot(encodedSlot.pointer), runtime)
+       }
+     }
+     body(slot.pointee)

@@ -1,9 +1,10 @@
 export class FrigateService {
-    constructor(baseUrl, username, password, adminUrl, haToken) {
+    constructor(baseUrl, username, password, adminUrl, haToken, haUrl) {
         this.baseUrl = (baseUrl || '').replace(/\/$/, '');
         this.username = username;
         this.password = password;
         this.adminUrl = adminUrl ? adminUrl.replace(/\/$/, '') : '';
+        this.haUrl = haUrl ? String(haUrl).replace(/\/$/, '') : '';
         this.token = null;
         this.headers = {
             'Content-Type': 'application/json',
@@ -126,9 +127,21 @@ export class FrigateService {
         return `${this.adminUrl}/api/frigate/snapshot/${cam}${qs}`;
     }
 
+    haCameraEntity(entityIdOrName) {
+        const raw = String(entityIdOrName || '');
+        return raw.startsWith('camera.') ? raw : `camera.${raw}`;
+    }
+
     getHASnapshotUrl(entityIdOrName) {
-        const entity = entityIdOrName.startsWith('camera.') ? entityIdOrName : `camera.${entityIdOrName}`;
+        const entity = this.haCameraEntity(entityIdOrName);
+        if (this.haUrl) return `${this.haUrl}/api/camera_proxy/${entity}`;
         return `${this.adminUrl}/api/ha-camera/${encodeURIComponent(entity)}`;
+    }
+
+    getHAStreamUrl(entityIdOrName) {
+        const entity = this.haCameraEntity(entityIdOrName);
+        if (!this.haUrl) return '';
+        return `${this.haUrl}/api/camera_proxy_stream/${entity}`;
     }
 
     getAudioUrl(cameraName) {

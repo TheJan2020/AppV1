@@ -359,9 +359,14 @@ export function accessibleCamerasForRole(frigateCameras, role, haCameras = [], d
 
     if (!wanted.length) return [];
 
-    const fromFrigate = filterCamerasByIds(frigate, wanted);
-    const extras = haCamerasForIds(haCameras, wanted);
-    return mergeCameraLists(fromFrigate, extras);
+    return filterCamerasByIds(frigate, wanted);
+}
+
+/** Camera grids and rooms show Frigate cameras. Home Assistant camera entities stay off those screens. */
+export function frigateCamerasOnly(cameras) {
+    return (Array.isArray(cameras) ? cameras : []).filter(
+        (cam) => cam && cam.feed !== 'ha' && cam.source !== 'ha',
+    );
 }
 
 export function camerasForRoleDisplay(frigateCameras, haCameras, role, dashboardSelected) {

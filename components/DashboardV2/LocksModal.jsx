@@ -12,8 +12,9 @@ import ModalBackdrop from '../ModalBackdrop';
 import Animated, {
     useSharedValue, useAnimatedStyle, withTiming, withSpring, runOnJS,
 } from 'react-native-reanimated';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { CF } from '../../utils/typography';
+import { doorSensorIsOpen, partitionDoorAccess } from '../../utils/haHouseDevices';
 
 const C_CYAN   = '#26C6DA';
 const C_PURPLE = '#8947ca';
@@ -28,19 +29,28 @@ export default function LocksModal({
     onClose,
     isArmed = false,
     onArmToggle,
+    doorSensors = [],
+    doorOpeners = [],
+    onOpenDoor,
 }) {
-    // Build a fast entity state lookup
-    const entityStateMap = {};
-    entities.forEach(e => { entityStateMap[e.entity_id] = e; });
-
     const unlocked = locks.filter(l => l.state === 'unlocked' || l.state === 'open').length;
     const [saving, setSaving] = useState(false);
+    const [tab, setTab] = useState('locks');
+    const openSensors = doorSensors.filter((sensor) => doorSensorIsOpen(sensor)).length;
+    const doorAccess = useMemo(() => partitionDoorAccess({
+        locks,
+        sensors: doorSensors,
+        openers: doorOpeners,
+        lockPassageConfigs,
+        entities,
+    }), [locks, doorSensors, doorOpeners, lockPassageConfigs, entities]);
 
     // ── Slide-in / drag-to-dismiss ────────────────────────────────────────────
     const sheetY = useSharedValue(700);
 
     useEffect(() => {
         if (visible) {
+            setTab('locks');
             sheetY.value = 700;
             sheetY.value = withTiming(0, { duration: 300 });
         }
@@ -83,11 +93,9 @@ export default function LocksModal({
         const name       = item.attributes?.friendly_name || item.entity_id.replace(/_/g, ' ');
         const statusBadgeLabel = isUnlocked ? 'Unlocked' : 'Locked';
 
-        // Sensor linked to this lock (if configured)
-        const sensorEntityId = lockPassageConfigs[item.entity_id]?.sensor_entity_id;
-        const sensorEntity   = sensorEntityId ? entityStateMap[sensorEntityId] : null;
-        const sensorTriggered = sensorEntity?.state === 'on';
-        const sensorLabel    = sensorEntity
+        const sensorEntity = doorAccess.lockSensors[item.entity_id] || null;
+        const sensorTriggered = doorSensorIsOpen(sensorEntity);
+        const sensorLabel = sensorEntity
             ? (sensorTriggered ? 'Open' : 'Closed')
             : null;
 
@@ -183,9 +191,17 @@ export default function LocksModal({
                         <View>
                             <Text style={styles.title}>Locks</Text>
                             <Text style={styles.subtitle}>
-                                {unlocked > 0
-                                    ? `${unlocked} unlocked · ${locks.length - unlocked} locked`
-                                    : `All ${locks.length} locked`}
+                                {tab === 'sensors'
+                                    ? (doorSensors.length === 0
+                                        ? 'No door sensors'
+                                        : openSensors > 0
+                                            ? `${openSensors} open · ${doorSensors.length - openSensors} closed`
+                                            : `All ${doorSensors.length} closed`)
+                                    : (locks.length === 0
+                                        ? 'No locks'
+                                        : unlocked > 0
+                                            ? `${unlocked} unlocked · ${locks.length - unlocked} locked`
+                                            : `All ${locks.length} locked`)}
                             </Text>
                         </View>
                         <TouchableOpacity onPress={onClose} style={styles.closeBtn} activeOpacity={0.7}>
@@ -226,20 +242,79 @@ export default function LocksModal({
                         </View>
                     </TouchableOpacity>
 
-                    {/* ── Section label ── */}
-                    <Text style={styles.sectionLabel}>LOCKS</Text>
-
-                    {/* ── Lock list ── */}
-                    {locks.length === 0 ? (
-                        <Text style={styles.emptyText}>No locks found</Text>
-                    ) : (
-                        <ScrollView
-                            style={styles.scroll}
-                            showsVerticalScrollIndicator={false}
-                            contentContainerStyle={styles.scrollContent}
+                    <View style={styles.tabs}>
+                        <TouchableOpacity
+                            style={[styles.tab, tab === 'locks' && styles.tabOn]}
+                            onPress={() => setTab('locks')}
+                            activeOpacity={0.8}
                         >
-                            {locks.map(renderLockRow)}
-                        </ScrollView>
+                            <Text style={[styles.tabText, tab === 'locks' && styles.tabTextOn]}>Locks</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.tab, tab === 'sensors' && styles.tabOn]}
+                            onPress={() => setTab('sensors')}
+                            activeOpacity={0.8}
+                        >
+                            <Text style={[styles.tabText, tab === 'sensors' && styles.tabTextOn]}>Sensors</Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    {tab === 'locks' ? (
+                        locks.length === 0 && doorOpeners.length === 0 ? (
+                            <Text style={styles.emptyText}>No locks found</Text>
+                        ) : (
+                            <ScrollView
+                                style={styles.scroll}
+                                showsVerticalScrollIndicator={false}
+                                contentContainerStyle={styles.scrollContent}
+                            >
+                                {locks.map(renderLockRow)}
+                                {doorOpeners.map((script) => (
+                                    <View key={script.entity_id} style={styles.row}>
+                                        <View style={[styles.iconWrap, { borderColor: 'rgba(137,71,202,0.5)' }]}>
+                                            <LockOpen size={18} color={C_PURPLE} />
+                                        </View>
+                                        <View style={{ flex: 1 }}>
+                                            <Text style={styles.rowName} numberOfLines={1}>
+                                                {script.attributes?.friendly_name || 'Open door'}
+                                            </Text>
+                                        </View>
+                                        <TouchableOpacity
+                                            onPress={() => onOpenDoor && onOpenDoor(script.entity_id)}
+                                            activeOpacity={0.8}
+                                            style={styles.openBtn}
+                                        >
+                                            <Text style={styles.openBtnText}>Open</Text>
+                                        </TouchableOpacity>
+                                    </View>
+                                ))}
+                            </ScrollView>
+                        )
+                    ) : (
+                        doorSensors.length === 0 ? (
+                            <Text style={styles.emptyText}>No door sensors</Text>
+                        ) : (
+                            <ScrollView
+                                style={styles.scroll}
+                                showsVerticalScrollIndicator={false}
+                                contentContainerStyle={styles.scrollContent}
+                            >
+                                {doorSensors.map((sensor) => {
+                                    const open = doorSensorIsOpen(sensor);
+                                    return (
+                                        <View key={sensor.entity_id} style={styles.row}>
+                                            <View style={[styles.dot, { width: 8, height: 8, borderRadius: 4, backgroundColor: open ? C_AMBER : 'rgba(237,237,245,0.22)' }]} />
+                                            <Text style={styles.rowName} numberOfLines={1}>
+                                                {sensor.attributes?.friendly_name || sensor.entity_id}
+                                            </Text>
+                                            <Text style={[styles.badgeText, { color: open ? C_AMBER : 'rgba(237,237,245,0.45)' }]}>
+                                                {open ? 'Open' : 'Closed'}
+                                            </Text>
+                                        </View>
+                                    );
+                                })}
+                            </ScrollView>
+                        )
                     )}
 
                 </Animated.View>
@@ -360,6 +435,34 @@ const styles = StyleSheet.create({
     toggleKnobOn: {
         alignSelf: 'flex-end',
     },
+    tabs: {
+        flexDirection: 'row',
+        marginHorizontal: 16,
+        marginBottom: 14,
+        padding: 4,
+        borderRadius: 14,
+        backgroundColor: 'rgba(255,255,255,0.04)',
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.06)',
+    },
+    tab: {
+        flex: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        paddingVertical: 8,
+        borderRadius: 10,
+    },
+    tabOn: {
+        backgroundColor: 'rgba(137,71,202,0.85)',
+    },
+    tabText: {
+        color: 'rgba(237,237,245,0.45)',
+        fontSize: 13,
+        fontFamily: CF.semibold,
+    },
+    tabTextOn: {
+        color: '#fff',
+    },
     sectionLabel: {
         color: 'rgba(255,255,255,0.3)',
         fontSize: 11,
@@ -421,6 +524,15 @@ const styles = StyleSheet.create({
         fontSize: 12,
         fontFamily: CF.medium,
     },
+    openBtn: {
+        backgroundColor: C_PURPLE,
+        borderRadius: 10,
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+    },
+    openBtnText: { color: '#fff', fontSize: 13, fontWeight: '600' },
+    sensorRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+    sensorName: { flex: 1, color: '#C9CEDE', fontSize: 13 },
     emptyText: {
         color: 'rgba(255,255,255,0.3)',
         fontSize: 13,

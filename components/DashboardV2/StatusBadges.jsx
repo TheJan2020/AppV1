@@ -1,6 +1,7 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { ChevronRight, Lightbulb, Snowflake, Lock, LockOpen } from 'lucide-react-native';
+import { accessStatusDots, partitionDoorAccess } from '../../utils/haHouseDevices';
 
 /**
  * StatusBadges
@@ -17,27 +18,21 @@ function StatusBadges({
     locks = [],
     lockPassageConfigs = {},
     entities = [],
+    doorSensors = [],
+    doorOpeners = [],
 }) {
-    const entityStateMap = {};
-    entities.forEach(e => { entityStateMap[e.entity_id] = e; });
+    const lockDots = useMemo(() => {
+        const doorAccess = partitionDoorAccess({
+            locks,
+            sensors: doorSensors,
+            openers: doorOpeners,
+            lockPassageConfigs,
+            entities,
+        });
+        return accessStatusDots({ locks, openers: doorOpeners, doorAccess });
+    }, [locks, doorSensors, doorOpeners, lockPassageConfigs, entities]);
 
-    const lockDots = locks.length > 0
-        ? locks.slice(0, 6).map(l => {
-            const sensorEntityId = lockPassageConfigs[l.entity_id]?.sensor_entity_id;
-            const sensorEntity   = sensorEntityId ? entityStateMap[sensorEntityId] : null;
-            const lockUnlocked   = l.state === 'unlocked' || l.state === 'open';
-            const sensorOn       = sensorEntity?.state === 'on';
-            const lit = lockUnlocked || sensorOn;
-            return { name: l.attributes?.friendly_name || l.entity_id, unlocked: lit };
-          })
-        : [
-            { name: 'Lock 1', unlocked: false },
-            { name: 'Lock 2', unlocked: false },
-            { name: 'Lock 3', unlocked: false },
-            { name: 'Lock 4', unlocked: false },
-          ];
-
-    const hasUnlocked = lockDots.some(l => l.unlocked);
+    const hasUnlocked = lockDots.some((dot) => dot.tone !== 'closed');
     const LockIcon = hasUnlocked ? LockOpen : Lock;
 
     return (
@@ -54,12 +49,14 @@ function StatusBadges({
                     strokeWidth={2.2}
                 />
                 <View style={styles.dotsRow}>
-                    {lockDots.map((lock, i) => (
+                    {lockDots.map((dot) => (
                         <View
-                            key={i}
+                            key={dot.key}
                             style={[
                                 styles.dot,
-                                lock.unlocked ? styles.dotUnlocked : styles.dotLocked,
+                                dot.tone === 'open' && styles.dotOpen,
+                                dot.tone === 'unlocked' && styles.dotUnlocked,
+                                dot.tone === 'closed' && styles.dotLocked,
                             ]}
                         />
                     ))}
@@ -127,12 +124,16 @@ const styles = StyleSheet.create({
         flex: 1,
         flexDirection: 'row',
         alignItems: 'center',
+        flexWrap: 'wrap',
         gap: 5,
     },
     dot: {
         width: 8,
         height: 8,
         borderRadius: 4,
+    },
+    dotOpen: {
+        backgroundColor: '#FFA000',
     },
     dotUnlocked: {
         backgroundColor: '#26C6DA',

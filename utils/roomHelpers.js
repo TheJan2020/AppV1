@@ -312,7 +312,7 @@ export const getRoomEntities = (
 
             return [...nonShutters, ...shutters];
         })(),
-        cameras: potentialEntities.filter(re => re.entity_id.startsWith('camera.')).map(mapEntity),
+        cameras: [],
         sensors: mappedSensors,
         doors: doorEntities,
         switches: leftoverSwitches,

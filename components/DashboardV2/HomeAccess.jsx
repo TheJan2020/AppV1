@@ -37,6 +37,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import Svg, { Path } from 'react-native-svg';
 import { CF } from '../../utils/typography';
 import ModalBackdrop from '../ModalBackdrop';
+import { doorSensorIsOpen, sensorForDoorScript } from '../../utils/haHouseDevices';
 
 // ── Color tokens ──────────────────────────────────────────────────────────────
 const C_PURPLE = '#8947ca';   // locked / closed
@@ -1064,6 +1065,9 @@ export default function HomeAccess({
     lockPassageConfigs = {},
     onConfigSaved,
     columns = 2,
+    doorOpeners = [],
+    doorSensors = [],
+    onOpenDoor,
 }) {
     const [gridWidth, setGridWidth] = useState(0);
     const GRID_GAP = 12;
@@ -1075,7 +1079,8 @@ export default function HomeAccess({
     const garages  = covers.filter(c => c.coverType === 'garage');
 
     const halfItems = [
-        ...locks.map(l => ({ kind: 'lock',   data: l })),
+        ...locks.map(l => ({ kind: 'lock', data: l })),
+        ...doorOpeners.map(script => ({ kind: 'opener', data: script })),
         ...garages.map(g => ({ kind: 'garage', data: g })),
     ];
 
@@ -1154,17 +1159,22 @@ export default function HomeAccess({
                                 columns >= 4 && styles.tabletCell,
                             ]}
                         >
-                            {item.kind === 'lock' ? (
+                            {item.kind === 'lock' || item.kind === 'opener' ? (
                                 <LockPill
                                     key={`lock-${item.data.entity_id}-${visibleKey}`}
                                     focusKey={visibleKey}
                                     name={item.data.attributes?.friendly_name || 'Door'}
                                     isUnlocked={
-                                        item.data.state === 'unlocked' ||
-                                        item.data.state === 'open'
+                                        item.kind === 'opener'
+                                            ? doorSensorIsOpen(sensorForDoorScript(item.data, doorSensors))
+                                            : item.data.state === 'unlocked' || item.data.state === 'open'
                                     }
-                                    isLocking={item.data.state === 'locking'}
-                                    isUnlocking={item.data.state === 'unlocking'}
+                                    isLocking={item.kind === 'lock' && item.data.state === 'locking'}
+                                    isUnlocking={
+                                        item.kind === 'opener'
+                                            ? item.data.state === 'on'
+                                            : item.data.state === 'unlocking'
+                                    }
                                     isPassage={(() => {
                                         const pc = lockPassageConfigs[item.data.entity_id];
                                         if (pc?.enabled) {
@@ -1188,10 +1198,13 @@ export default function HomeAccess({
                                         );
                                     })()}
                                     entityState={item.data.state}
-                                    onToggle={(currentState) =>
-                                        onToggleLock &&
-                                        onToggleLock(item.data.entity_id, currentState)
-                                    }
+                                    onToggle={(currentState) => {
+                                        if (item.kind === 'opener') {
+                                            onOpenDoor && onOpenDoor(item.data.entity_id);
+                                            return;
+                                        }
+                                        onToggleLock && onToggleLock(item.data.entity_id, currentState);
+                                    }}
                                 />
                             ) : (
                                 <GaragePill

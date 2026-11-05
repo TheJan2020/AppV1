@@ -1,7 +1,7 @@
 import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import { AppState, Platform } from 'react-native';
-import { getAdminUrl } from '../utils/storage';
+import { getAdminUrl, getHaToken } from '../utils/storage';
 import * as SecureStore from 'expo-secure-store';
 import IntercomCall from '../modules/expo-intercom-call';
 
@@ -51,10 +51,14 @@ async function registerTokenWithBackend(token, voipToken) {
     const rowToken = expo || (voip ? `voip:${voip}` : '');
     if (!adminUrl || !rowToken) return;
     const userId = await getCurrentUserId();
+    const haToken = await getHaToken().catch(() => '');
     const base = adminUrl.endsWith('/') ? adminUrl : `${adminUrl}/`;
-    await fetch(`${base}api/notifications/register`, {
+    const response = await fetch(`${base}api/notifications/register`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+            'Content-Type': 'application/json',
+            ...(haToken ? { Authorization: `Bearer ${haToken}` } : {}),
+        },
         body: JSON.stringify({
             token: rowToken,
             voipToken: voip || undefined,
@@ -63,6 +67,7 @@ async function registerTokenWithBackend(token, voipToken) {
             userId,
         }),
     });
+    console.log(`[Push] register status=${response.status} voip=${voip ? 'yes' : 'no'}`);
 }
 
 function maybeReportAndroidIncoming(data) {

@@ -5,12 +5,13 @@ import {
 } from 'react-native';
 import { WebView } from 'react-native-webview';
 import AuthedCameraImage from './AuthedCameraImage';
+import HaCameraView from './HaCameraView';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Edit2, Check, X, Search } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
 import { formatCameraName } from '../../utils/formatDisplayName';
 import { authFetch } from '../../utils/authFetch';
-import { cameraKey, cameraUsesHaFeed, cameraKeysMatch, camerasFromBackendPayload } from '../../services/appRole';
+import { cameraKey, cameraUsesHaFeed, cameraKeysMatch, camerasFromBackendPayload, frigateCamerasOnly } from '../../services/appRole';
 import * as SecureStore from 'expo-secure-store';
 import ModalBackdrop from '../ModalBackdrop';
 import CameraSensorOverlay, { buildEntityMap, resolveSensorIds } from './CameraSensorOverlay';
@@ -20,7 +21,8 @@ const H_PAD = 40;
 const SCREEN_W = Dimensions.get('window').width;
 const DEFAULT_CARD_W = (SCREEN_W - H_PAD - COL_GAP) / 2;
 
-// Injected BEFORE content loads — guarantees CSS is in place before the img/video renders
+const SNAPSHOT_MS = 600;
+
 const STRIP_PRE_JS = `
   (function() {
     var style = document.createElement('style');
@@ -35,7 +37,6 @@ const STRIP_PRE_JS = `
   true;
 `;
 
-// Post-load pass — re-applies inline styles in case the page overrides our CSS
 const STRIP_PAGE_JS = `
   (function() {
     function apply() {
@@ -60,15 +61,14 @@ const STRIP_PAGE_JS = `
   true;
 `;
 
-const SNAPSHOT_MS = 600;
-
-// Camera card — Frigate live WebView, HA snapshot images (JPEG cannot load in WebView)
 const CameraCard = ({ cam, frigateService, onPress, sensorIds = [], entityMap = {}, cardWidth, live = true }) => {
     const [streamError, setStreamError] = useState(false);
     const [useFrigateFallback, setUseFrigateFallback] = useState(false);
+    const haOnly = cam?.feed === 'ha' || cam?.source === 'ha';
     const isHACamera = cameraUsesHaFeed(cam) && !useFrigateFallback;
-    // Android WebView does not play Frigate MJPEG; RN Image also drops auth headers.
-    const useSnapshot = Platform.OS === 'android' || isHACamera;
+    // Android WebView does not play MJPEG; RN Image also drops auth headers.
+    const haLive = isHACamera && !!frigateService?.haUrl && !!cam?.access_token;
+    const useSnapshot = !haLive && (Platform.OS === 'android' || isHACamera);
     const frigateName = String(cam?.name || cam?.id || '').replace(/^camera\./, '');
     const streamUrl = isHACamera
         ? frigateService?.getHASnapshotUrl(cam.entity_id || cam.id)
@@ -88,7 +88,15 @@ const CameraCard = ({ cam, frigateService, onPress, sensorIds = [], entityMap = 
             onPress={() => onPress && onPress(cam)}
             activeOpacity={0.85}
         >
-            {streamUrl && !streamError ? (
+            {haLive && !streamError ? (
+                <HaCameraView
+                    haUrl={frigateService.haUrl}
+                    entityId={cam.entity_id || cam.id}
+                    accessToken={cam.access_token}
+                    style={StyleSheet.absoluteFill}
+                    onFail={() => setStreamError(true)}
+                />
+            ) : streamUrl && !streamError ? (
                 useSnapshot ? (
                     <AuthedCameraImage
                         uri={streamUrl}
@@ -97,7 +105,7 @@ const CameraCard = ({ cam, frigateService, onPress, sensorIds = [], entityMap = 
                         refreshMs={live ? SNAPSHOT_MS : 0}
                         onLoad={() => setStreamError(false)}
                         onError={() => {
-                            if (isHACamera) {
+                            if (isHACamera && !haOnly) {
                                 setUseFrigateFallback(true);
                                 return;
                             }
@@ -110,11 +118,11 @@ const CameraCard = ({ cam, frigateService, onPress, sensorIds = [], entityMap = 
                         style={StyleSheet.absoluteFill}
                         backgroundColor="black"
                         scrollEnabled={false}
-                        allowsInlineMediaPlayback={true}
+                        allowsInlineMediaPlayback
                         mediaPlaybackRequiresUserAction={false}
                         originWhitelist={['*']}
                         scalesPageToFit={false}
-                        javaScriptEnabled={true}
+                        javaScriptEnabled
                         injectedJavaScriptBeforeContentLoaded={STRIP_PRE_JS}
                         injectedJavaScript={STRIP_PAGE_JS}
                         onError={() => setStreamError(true)}
@@ -265,7 +273,7 @@ function EditCamerasModal({
             .then(async (res) => {
                 if (!res.ok) throw new Error(`cameras ${res.status}`);
                 const data = await res.json();
-                const cams = camerasFromBackendPayload(data).map((c) => ({
+                const cams = frigateCamerasOnly(camerasFromBackendPayload(data)).map((c) => ({
                     entity_id:     c.entity_id || c.name || c.id,
                     name:          c.name,
                     friendly_name: c.friendly_name || c.name || c.entity_id,
@@ -501,9 +509,11 @@ function HomeCameraStrip({
 
     const cameras = useMemo(() => {
         const selected = Array.isArray(effectiveSelected) ? effectiveSelected : [];
-        const pool = Array.isArray(pickerCameras) && pickerCameras.length
-            ? pickerCameras
-            : (frigateCameras || []);
+        const pool = frigateCamerasOnly(
+            Array.isArray(pickerCameras) && pickerCameras.length
+                ? pickerCameras
+                : (frigateCameras || []),
+        );
         if (!selected.length) return [];
         return pool.filter((c) => {
             const keys = [c.name, c.id, c.entity_id, c.friendly_name].filter(Boolean);

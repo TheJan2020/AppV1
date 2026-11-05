@@ -29,6 +29,7 @@ export default function RoomSheet({
     canControlHa = true,
     badgeConfig = null,
     appRole = null,
+    onCameraPress,
 }) {
     if (!room) return null;
 
@@ -103,6 +104,7 @@ export default function RoomSheet({
                         systemHealthBanner={systemHealthBanner}
                         canControlHa={canControlHa}
                         appRole={appRole}
+                        onCameraPress={onCameraPress}
                     />
         </BottomSheetModal>
     );
