@@ -33,6 +33,7 @@ const COMMAND_MAPS = {
         pause: 'pause',
         volume_up: 'volume_up',
         volume_down: 'volume_down',
+        mic: 'siri',
         channel_up: null,
         channel_down: null,
     },

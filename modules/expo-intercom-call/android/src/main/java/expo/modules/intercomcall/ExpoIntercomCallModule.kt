@@ -23,7 +23,7 @@ class ExpoIntercomCallModule : Module() {
     }
 
     Function("configure") { adminUrl: String, userId: String, userName: String ->
-      val context = appContext.reactContext ?: appContext.currentActivity ?: return@Function
+      val context = appContext.reactContext ?: appContext.currentActivity ?: return@Function null
       IntercomCallStore.configure(context, adminUrl, userId, userName)
     }
 
@@ -42,7 +42,7 @@ class ExpoIntercomCallModule : Module() {
     }
 
     Function("reportIncoming") { callId: String, label: String ->
-      val context = currentContext() ?: return@Function
+      val context = currentContext() ?: return@Function null
       IntercomCallStore.setPending(context, "incoming", callId, label)
       IntercomCallNotifier.show(context, callId, label)
       try {
@@ -53,7 +53,7 @@ class ExpoIntercomCallModule : Module() {
     }
 
     Function("endCall") {
-      val context = currentContext() ?: return@Function
+      val context = currentContext() ?: return@Function null
       IntercomCallNotifier.cancel(context)
       IntercomCallStore.consumePending(context)
     }

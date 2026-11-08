@@ -32,6 +32,7 @@ import {
     routeCallAudioToSpeaker,
     startIntercomRingtone,
 } from '../../services/expoAudio';
+import { setIntercomLineStatus } from '../../services/intercomLineStatus';
 
 const KEEP_AWAKE = 'intercom-call';
 
@@ -68,6 +69,7 @@ function IntercomCallModal({
     const [sipLive, setSipLive] = useState(false);
     const [sipVideo, setSipVideo] = useState(false);
     const [sipReady, setSipReady] = useState(false);
+    const [lineError, setLineError] = useState('');
     const [holdSip, setHoldSip] = useState(false);
     const [officeAudioId, setOfficeAudioId] = useState('');
     const [intercomOn, setIntercomOn] = useState(false);
@@ -88,10 +90,35 @@ function IntercomCallModal({
     const sipRegisteredRef = useRef(false);
     const sipAnsweringRef = useRef(false);
     const pendingAudioRef = useRef('');
+    const holdSipRef = useRef(false);
+    const officeKickRef = useRef(0);
     userIdRef.current = userId;
 
     const runSip = (code) => {
         try { webRef.current?.injectJavaScript(`${code}; true;`); } catch { /* ignore */ }
+    };
+
+    const kickOfficeTalk = (audioId) => {
+        const id = String(audioId || '');
+        if (!id) return;
+        pendingAudioRef.current = id;
+        holdSipRef.current = true;
+        const token = officeKickRef.current + 1;
+        officeKickRef.current = token;
+        const started = Date.now();
+        const kick = () => {
+            if (officeKickRef.current !== token) return;
+            if (pendingAudioRef.current !== id) return;
+            if (sipLiveRef.current) return;
+            const literal = JSON.stringify(id);
+            runSip(
+                `window.PW_HOLD_SIP=true;window.PW_AUDIO_ID=${literal};`
+                + 'var ws=window.PW_AUDIO_WS;'
+                + 'if(window.startOfficeTalk&&(!ws||ws.readyState>1))window.startOfficeTalk(null,window.PW_AUDIO_ID)',
+            );
+            if (Date.now() - started < 15000) setTimeout(kick, 400);
+        };
+        kick();
     };
 
     const stopAllRinging = useCallback(() => {
@@ -224,6 +251,7 @@ function IntercomCallModal({
         if (!adminUrl) {
             setIntercomOn(false);
             setListenSip(null);
+            setIntercomLineStatus({ level: 'off' });
             return undefined;
         }
         let cancelled = false;
@@ -233,12 +261,18 @@ function IntercomCallModal({
                 setIntercomOn(false);
                 setListenSip(null);
                 setSipReady(false);
+                setIntercomLineStatus({ level: 'off' });
                 return;
             }
             setIntercomOn(true);
             if (!data.sip) {
                 setListenSip(null);
                 setSipReady(false);
+                setIntercomLineStatus({
+                    level: 'error',
+                    title: 'Door line is not configured',
+                    detail: 'This home has no SIP extension for the app.',
+                });
                 return;
             }
             const urls = [];
@@ -262,11 +296,16 @@ function IntercomCallModal({
                 unlockEntityId: data.public?.unlock_entity_id,
                 label: data.public?.label || data.sip.displayName,
             });
-        }).catch(() => {
+        }).catch((err) => {
             if (!cancelled) {
                 setIntercomOn(false);
                 setListenSip(null);
                 setSipReady(false);
+                setIntercomLineStatus({
+                    level: 'error',
+                    title: 'Door line is not connected',
+                    detail: err?.message || 'The home server did not answer.',
+                });
             }
         });
         return () => { cancelled = true; };
@@ -457,23 +496,28 @@ function IntercomCallModal({
             routeCallAudioToSpeaker().catch(() => {}),
             new Promise((resolve) => setTimeout(resolve, 400)),
         ]);
-        if (!holdSip) runSip('if (window.PW_ANSWER) window.PW_ANSWER();');
+        const bridging = holdSipRef.current || holdSip;
+        if (!bridging) runSip('if (window.PW_ANSWER) window.PW_ANSWER();');
+        let joinedBridge = false;
         try {
-            const result = await answerIntercomCall(adminUrl, { userId, username: userName });
+            let result = await answerIntercomCall(adminUrl, { userId, username: userName });
+            if (!result?.call?.audioId && (bridging || result?.already)) {
+                try {
+                    const latest = await fetchIntercomCall(adminUrl, userId);
+                    if (latest?.call?.audioId) {
+                        result = { ...result, ok: true, call: { ...latest.call, ...result.call, audioId: latest.call.audioId } };
+                    }
+                } catch { /* the answer response is enough when it includes audio */ }
+            }
             if (result.ok) {
                 ingest({ event: 'answered', call: { ...result.call, sip: listenSip || result.call?.sip || null } });
                 if (result.call?.audioId) {
-                    pendingAudioRef.current = result.call.audioId;
+                    joinedBridge = true;
+                    holdSipRef.current = true;
+                    setHoldSip(true);
                     setOfficeAudioId(result.call.audioId);
-                    setHoldSip(false);
                     setSipStatus('Connecting to the door…');
-                    const id = JSON.stringify(result.call.audioId);
-                    const kick = () => runSip(
-                        `window.PW_AUDIO_ID=${id}; if (window.startOfficeTalk) window.startOfficeTalk(null, window.PW_AUDIO_ID)`,
-                    );
-                    kick();
-                    setTimeout(kick, 700);
-                    setTimeout(kick, 1800);
+                    kickOfficeTalk(result.call.audioId);
                 } else if (result.call?.pickupMode === 'callback') {
                     setSipStatus('Calling the door…');
                     const kick = () => {
@@ -499,7 +543,10 @@ function IntercomCallModal({
                 if (result.call) ingest({ event: result.call.status, call: result.call });
             }
         } finally {
-            setHoldSip(false);
+            if (!joinedBridge) {
+                holdSipRef.current = false;
+                setHoldSip(false);
+            }
             setBusy(false);
         }
     };
@@ -553,6 +600,7 @@ function IntercomCallModal({
             const callId = String(payload?.callId || '');
             if (callId && nativeAnsweredRef.current === callId) return;
             if (callId) nativeAnsweredRef.current = callId;
+            holdSipRef.current = true;
             setHoldSip(true);
             let active = callRef.current;
             if (!active || (callId && active.callId !== callId)) {
@@ -653,6 +701,36 @@ function IntercomCallModal({
 
     const originWhitelist = useMemo(() => ['*', 'http://*', 'https://*', 'ws://*', 'wss://*'], []);
 
+    useEffect(() => {
+        if (!intercomOn) return undefined;
+        if (lineError) {
+            setIntercomLineStatus({ level: 'error', title: 'Door line error', detail: lineError });
+            return undefined;
+        }
+        if (sipReady) {
+            setIntercomLineStatus({
+                level: 'connected',
+                title: 'Door line connected',
+                detail: 'This phone is registered and can receive the intercom.',
+            });
+            return undefined;
+        }
+        if (!listenSip) {
+            setIntercomLineStatus({
+                level: 'connecting',
+                title: 'Connecting to the door line',
+                detail: 'Waiting for this home’s door settings.',
+            });
+            return undefined;
+        }
+        setIntercomLineStatus({
+            level: 'connecting',
+            title: 'Connecting to the door line',
+            detail: sipStatus || 'The phone is registering with the door system.',
+        });
+        return undefined;
+    }, [intercomOn, lineError, sipReady, listenSip, sipStatus]);
+
     const onSipMessage = (ev) => {
         const raw = ev?.nativeEvent?.data;
         setTimeout(() => {
@@ -662,6 +740,7 @@ function IntercomCallModal({
             if (msg.status === 'registered') {
                 sipRegisteredRef.current = true;
                 setSipReady(true);
+                setLineError('');
                 setSipStatus('');
                 console.log('[Intercom] SIP registered', msg.extension || listenSip?.sipUser || '');
                 return;
@@ -727,7 +806,10 @@ function IntercomCallModal({
                 else if (t.startsWith('pc-wait')) setSipStatus(`Audio path ${t.replace(/^pc-wait\s+/i, '')}`);
                 else if (t.startsWith('no-session')) setSipStatus('No SIP call yet — waiting for the door…');
                 else if (t === 'bridge-answer' || t === 'bridge-open') setSipStatus('Connecting through the office…');
-                else if (t === 'bridge-socket') setSipStatus('Office audio connection failed');
+                else if (t === 'bridge-socket') {
+                    setLineError('The office audio connection failed.');
+                    setSipStatus('Office audio connection failed');
+                }
                 else if (
                     t.startsWith('progress') || t.startsWith('cand')
                     || t.startsWith('gather') || t.startsWith('register') || t.startsWith('media ')
@@ -745,7 +827,8 @@ function IntercomCallModal({
             else if (msg.status === 'register_failed') {
                 sipRegisteredRef.current = false;
                 setSipReady(false);
-                setNotice(`Intercom could not register (${msg.cause || 'FreePBX'})`);
+                const cause = msg.cause || 'the phone system rejected the registration';
+                setLineError(`The door line could not register. ${cause}`);
                 console.warn('[Intercom] SIP register failed', msg.cause);
             }
             else if (msg.status === 'failed') {
@@ -800,14 +883,30 @@ function IntercomCallModal({
             onMessage={onSipMessage}
             onLoadEnd={() => {
                 const audioId = pendingAudioRef.current;
-                const audioLine = audioId ? `window.PW_AUDIO_ID=${JSON.stringify(audioId)};` : '';
+                const bridging = !!(audioId || holdSipRef.current);
+                const audioLine = audioId
+                    ? `window.PW_HOLD_SIP=true;window.PW_AUDIO_ID=${JSON.stringify(audioId)};`
+                    : (bridging ? 'window.PW_HOLD_SIP=true;' : '');
+                const pageInject = bridging
+                    ? inject.replace(
+                        'if (window.PW_SIP_READY && !window.PW_HOLD_SIP) window.PW_SIP_READY();',
+                        'window.PW_HOLD_SIP=true;',
+                    )
+                    : inject;
                 runSip(`(function(){
-                  ${inject}
+                  window.PW_HOLD_SIP=${bridging ? 'true' : 'false'};
+                  ${pageInject}
                   ${audioLine}
                   var md = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
                   if (window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({
                     type: 'sip', status: 'calling', target: 'media ' + md
                   }));
+                  if (window.PW_AUDIO_ID && window.startOfficeTalk) {
+                    var ws = window.PW_AUDIO_WS;
+                    if (!ws || ws.readyState > 1) window.startOfficeTalk(null, window.PW_AUDIO_ID);
+                    return;
+                  }
+                  if (window.PW_HOLD_SIP) return;
                   if (window.PW_UA_OK) return;
                   if (window.PW_RESTART) window.PW_RESTART();
                   else if (window.PW_SIP_READY) window.PW_SIP_READY();
@@ -863,17 +962,7 @@ function IntercomCallModal({
                         <Text style={styles.sub}>{ringing ? 'Someone is at the door' : (sipLive ? 'Talk to the visitor' : 'Connecting to the door…')}</Text>
                     )}
                 </>
-            ) : (intercomOn ? (
-                <View pointerEvents="none" style={[styles.sipChip, { top: insets.top + 8 }]}>
-                    <View style={[
-                        styles.sipDot,
-                        sipReady ? styles.sipDotLive : styles.sipDotWait,
-                    ]} />
-                    <Text style={styles.sipChipText}>
-                        {sipReady ? 'Door line ready' : 'Door line connecting…'}
-                    </Text>
-                </View>
-            ) : null)}
+            ) : null}
 
             {visible ? (
                 <View style={[styles.preview, { width: previewW, height: previewH, alignSelf: 'center', zIndex: 2 }]}>
@@ -933,11 +1022,6 @@ function IntercomCallModal({
                 </>
             ) : null}
 
-            {notice && !visible ? (
-                <View pointerEvents="none" style={styles.pickupToast}>
-                    <Text style={styles.pickupToastText}>{notice}</Text>
-                </View>
-            ) : null}
         </View>
     );
 
@@ -963,11 +1047,11 @@ const styles = StyleSheet.create({
         backgroundColor: '#09091A',
     },
     sipHoldIdle: {
-        width: 24,
-        height: 24,
-        right: 0,
-        bottom: 0,
-        opacity: 1,
+        width: 320,
+        height: 180,
+        left: 0,
+        top: 0,
+        opacity: 0.02,
         zIndex: 0,
     },
     sipHoldActive: {

@@ -2,10 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Modal, FlatList, KeyboardAvoidingView, Platform, ScrollView, Keyboard, TouchableWithoutFeedback, Linking, Dimensions } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as LocalAuthentication from 'expo-local-authentication';
 import * as SecureStore from 'expo-secure-store';
 import { Colors } from '../constants/Colors';
-import { Scan, Lock, User, ChevronDown, Check, Settings, Fingerprint, X, Plus, Trash2, Edit2, Shield, Link2, Wifi, Home, Eye, EyeOff } from 'lucide-react-native';
+import { Scan, Lock, User, ChevronDown, Check, Settings, X, Plus, Trash2, Edit2, Shield, Link2, Wifi, Home, Eye, EyeOff } from 'lucide-react-native';
 import { scanNetwork } from '../utils/discovery';
 import { HAService } from '../services/ha';
 import { validateCredentialsWithFallback, fetchHaLoginUsernames, usernameForPerson, mergePersonsWithAuthUsers } from '../services/auth';
@@ -208,10 +207,6 @@ export default function Login() {
     // UI/Auth State
     const [isScanning, setIsScanning] = useState(false);
     const [isLoggingIn, setIsLoggingIn] = useState(false);
-    const [isBiometricSupported, setIsBiometricSupported] = useState(false);
-    const [faceIdEnabled, setFaceIdEnabled] = useState(false);
-    const [faceIdReady, setFaceIdReady] = useState(false); // don't persist until loaded
-    const [hasSavedBiometricCreds, setHasSavedBiometricCreds] = useState(false);
     const [isReturningUser, setIsReturningUser] = useState(false);
 
     // Profile Management State
@@ -236,7 +231,6 @@ export default function Login() {
     const [savingProfile, setSavingProfile] = useState(false);
 
     useEffect(() => {
-        checkBiometrics();
         loadSettings();
         listAccounts()
             .then((list) => {
@@ -307,26 +301,9 @@ export default function Login() {
         });
     }, [isEditHome, profilesReady, profiles, activeProfileId]);
 
-    const checkBiometrics = async () => {
-        const compatible = await LocalAuthentication.hasHardwareAsync();
-        const enrolled = await LocalAuthentication.isEnrolledAsync();
-        setIsBiometricSupported(compatible && enrolled);
-    };
-
     const loadSettings = async () => {
         try {
-            // Load FaceID setting BEFORE any write — mount must not overwrite with false
-            const savedFaceId = await SecureStore.getItemAsync('face_id_enabled');
-            const enabled = savedFaceId === 'true';
-            setFaceIdEnabled(enabled);
-            setFaceIdReady(true);
-
-            const savedPass = await SecureStore.getItemAsync('saved_password');
-            const savedUser = await SecureStore.getItemAsync('saved_username');
-            setHasSavedBiometricCreds(!!(savedPass && savedUser));
-
-            // Prefill username for returning Face ID users (button no longer requires typing)
-            if (savedUser && !isAddAccount) setUsername(savedUser);
+            await SecureStore.deleteItemAsync('face_id_enabled').catch(() => {});
 
             // Check if returning user
             const hasLoggedInBefore = await SecureStore.getItemAsync('has_logged_in_before');
@@ -661,25 +638,6 @@ export default function Login() {
         }
     };
 
-    const handleSaveFaceId = async (enabled) => {
-        try {
-            await SecureStore.setItemAsync('face_id_enabled', enabled ? 'true' : 'false');
-            if (!enabled) {
-                // Turning off Face ID clears stored credentials
-                await SecureStore.deleteItemAsync('saved_password');
-                await SecureStore.deleteItemAsync('saved_username');
-                setHasSavedBiometricCreds(false);
-            }
-        } catch (e) {
-            console.log('Error saving FaceID setting:', e);
-        }
-    };
-
-    const onToggleFaceId = (next) => {
-        setFaceIdEnabled(next);
-        if (faceIdReady) handleSaveFaceId(next);
-    };
-
     const applyFetchedUsers = async (mappedUsers, errorMessage = '', { skipHaAuthList } = {}) => {
         let list = Array.isArray(mappedUsers) ? mappedUsers : [];
         const url = haUrlRef.current || haUrl;
@@ -966,10 +924,6 @@ export default function Login() {
                     );
                 }
 
-                if (faceIdEnabled) {
-                    setHasSavedBiometricCreds(true);
-                }
-
                 // Re-register push token now that adminUrl is in SecureStore.
                 // On a fresh install _layout runs before login so getAdminUrl() returned
                 // null and the token was never sent to the backend.
@@ -1024,120 +978,6 @@ export default function Login() {
             console.error('Login error:', error);
             Alert.alert('Error', 'Could not connect to Home Assistant to verify credentials.');
         } finally {
-            setIsLoggingIn(false);
-        }
-    };
-
-    const handleBiometricLogin = async () => {
-        try {
-            const faceOn = (await SecureStore.getItemAsync('face_id_enabled')) === 'true';
-            if (!faceOn) {
-                Alert.alert('Face ID', 'Enable Face ID in Settings or Login settings first.');
-                return;
-            }
-
-            const savedUser = await SecureStore.getItemAsync('saved_username');
-            const savedPass = await SecureStore.getItemAsync('saved_password');
-            if (!savedUser || !savedPass) {
-                Alert.alert(
-                    'Face ID',
-                    'Please log in once with your password while Face ID is enabled. After that you can use Face ID.',
-                );
-                return;
-            }
-
-            if (!haUrl && !adminUrl) {
-                Alert.alert('Error', 'No dashboard URL configured. Save a profile with the HTTPS Dashboard URL first. A local Home Assistant IP is not required.');
-                return;
-            }
-
-            const result = await LocalAuthentication.authenticateAsync({
-                promptMessage: 'Login with Face ID',
-                fallbackLabel: 'Use Password',
-                disableDeviceFallback: false,
-            });
-
-            if (!result.success) {
-                if (result.error && result.error !== 'user_cancel' && result.error !== 'system_cancel') {
-                    Alert.alert('Face ID', result.error === 'not_enrolled'
-                        ? 'No Face ID / biometrics enrolled on this device.'
-                        : 'Face ID authentication failed.');
-                }
-                return;
-            }
-
-            setIsLoggingIn(true);
-            setUsername(savedUser);
-
-            const bioProfile = profiles.find((p) => p.id === activeProfileId);
-            const dashboardForAuth = toHaHttpBase(
-                bioProfile?.adminUrlLive || bioProfile?.adminUrl || adminUrl,
-            );
-            const authResult = await validateCredentialsWithFallback({
-                haUrls: uniqueHttpUrls(
-                    bioProfile?.haUrlLive,
-                    haUrl,
-                    bioProfile?.haUrl,
-                    bioProfile?.haUrlLocal,
-                ),
-                adminUrl: dashboardForAuth,
-                haToken: bioProfile?.haToken || haToken,
-                username: savedUser,
-                password: savedPass,
-            });
-            if (!authResult?.ok) {
-                Alert.alert('Error', 'Saved credentials are no longer valid. Please log in with your password again.');
-                setIsLoggingIn(false);
-                return;
-            }
-
-            const normalizedUrl = toHaHttpBase(authResult?.usedUrl || bioProfile?.haUrlLive || haUrl);
-
-            console.log('Biometric login success');
-
-            const userObj = users.find(u => {
-                const guess = u.id.replace('person.', '');
-                return guess === savedUser || u.name?.toLowerCase().replace(/\s+/g, '_') === savedUser;
-            }) || { name: savedUser, user_id: '' };
-
-            const profileName = bioProfile?.name || '';
-
-            await upsertAccountAndActivate({
-                username: savedUser,
-                password: savedPass,
-                name: userObj.name || savedUser,
-                userId: userObj.user_id || '',
-                profileId: activeProfileId || '',
-                profileName,
-                haUrl: normalizedUrl,
-            });
-
-            registerForPushNotificationsAsync().catch(() => {});
-
-            HAService.disconnectAll();
-            await beginHomeSession({
-                profileId: activeProfileId,
-                haUrl: normalizedUrl,
-                token: bioProfile?.haToken,
-                adminUrl: bioProfile?.adminUrl,
-                haUrlLive: bioProfile?.haUrlLive,
-                haUrlLocal: bioProfile?.haUrlLocal,
-                adminUrlLive: bioProfile?.adminUrlLive || bioProfile?.dashboardUrl,
-                adminUrlLocal: bioProfile?.adminUrlLocal || bioProfile?.dashboardUrlLocal,
-                clearCache: true,
-            });
-
-            router.replace({
-                pathname: '/dashboard-v2',
-                params: {
-                    userName: userObj.name || savedUser,
-                    userId: userObj.user_id || '',
-                    switchKey: String(Date.now()),
-                },
-            });
-        } catch (e) {
-            console.log('Biometric error:', e);
-            Alert.alert('Error', e?.message || 'Biometric authentication failed');
             setIsLoggingIn(false);
         }
     };
@@ -1208,19 +1048,6 @@ export default function Login() {
                     </View>
                 }
             />
-
-            <View style={styles.globalSettings}>
-                <Text style={styles.sectionTitle}>Global Settings</Text>
-                <View style={styles.switchRow}>
-                    <Text style={[styles.switchLabel, { color: Colors.text }]}>Enable FaceID Login</Text>
-                    <TouchableOpacity
-                        style={[styles.switch, faceIdEnabled && styles.switchActive]}
-                        onPress={() => onToggleFaceId(!faceIdEnabled)}
-                    >
-                        <View style={[styles.switchThumb, faceIdEnabled && styles.switchThumbActive]} />
-                    </TouchableOpacity>
-                </View>
-            </View>
         </View>
     );
 
@@ -1609,19 +1436,6 @@ export default function Login() {
                                     >
                                         <Text style={styles.forgotPasswordText}>Forgot password?</Text>
                                     </TouchableOpacity>
-
-                                    {faceIdEnabled && isBiometricSupported && !isAddAccount && (
-                                        <TouchableOpacity
-                                            style={[styles.bioButton, { opacity: (isLoggingIn || !hasSavedBiometricCreds) ? 0.55 : 1 }]}
-                                            onPress={handleBiometricLogin}
-                                            disabled={isLoggingIn}
-                                        >
-                                            <Fingerprint size={28} color={Colors.primary} />
-                                            <Text style={styles.bioText}>
-                                                {hasSavedBiometricCreds ? 'Use Face ID' : 'Log in once to activate Face ID'}
-                                            </Text>
-                                        </TouchableOpacity>
-                                    )}
 
                                     <Text style={styles.supportText}>
                                         Having trouble signing in? We're here to help —{' '}

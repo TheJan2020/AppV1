@@ -288,11 +288,8 @@ export async function logoutActiveAccount() {
 
     await SecureStore.deleteItemAsync('is_logged_in');
     await SecureStore.deleteItemAsync('logged_in_user');
-    const faceOn = (await SecureStore.getItemAsync('face_id_enabled')) === 'true';
-    if (!faceOn) {
-        await SecureStore.deleteItemAsync('saved_username');
-        await SecureStore.deleteItemAsync('saved_password');
-    }
+    await SecureStore.deleteItemAsync('saved_username');
+    await SecureStore.deleteItemAsync('saved_password');
     await clearAllDashboardSnapshots();
     return { nextAccount: null };
 }

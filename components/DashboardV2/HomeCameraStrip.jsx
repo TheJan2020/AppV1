@@ -520,10 +520,6 @@ function HomeCameraStrip({
             return selected.some((item) => keys.some((k) => cameraKeysMatch(k, item)));
         });
     }, [frigateCameras, pickerCameras, effectiveSelected]);
-    const hasAnyCameras = (frigateCameras.length > 0 || pickerCameras?.length > 0) || showEdit;
-
-    if (!hasAnyCameras && cameras.length === 0 && !editVisible) return null;
-
     return (
         <View style={styles.container}>
             <View style={styles.headerRow}>

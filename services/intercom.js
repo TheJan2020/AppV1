@@ -74,12 +74,19 @@ export async function fetchIntercomCall(adminUrl, userId) {
 
 export async function answerIntercomCall(adminUrl, { userId, username }) {
     const base = baseUrl(adminUrl);
-    if (!base) return { ok: false };
-    return (await optionalIntercomFetch(`${base}api/intercom/answer`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId, username }),
-    })) || { ok: false };
+    if (!base) return { ok: false, error: 'This home has no office address.' };
+    try {
+        const res = await authFetch(`${base}api/intercom/answer`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId, username }),
+        });
+        const parsed = asOptionalJson(await res.text().catch(() => ''));
+        if (parsed && typeof parsed === 'object') return parsed;
+        return { ok: false, error: res.ok ? 'Could not answer' : `Could not answer (${res.status})` };
+    } catch {
+        return { ok: false, error: 'Could not answer' };
+    }
 }
 
 export async function declineIntercomCall(adminUrl, { userId }) {

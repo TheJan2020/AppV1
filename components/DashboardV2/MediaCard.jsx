@@ -2,7 +2,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Modal, ScrollView, Alert } fr
 import {
     Monitor, Volume2, VolumeX,
     ChevronDown, ChevronUp,
-    Home, ChevronLeft, Plus, Minus, Check, X,
+    Home, ChevronLeft, Plus, Minus, Check, X, Mic,
 } from 'lucide-react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -900,6 +900,14 @@ export default function MediaCard({
                                         <Volume2 size={22} color="#fff" strokeWidth={ICON_STROKE} />
                                     )}
                                 </RemoteCircleBtn>
+                                {isAppleTv ? (
+                                    <RemoteCircleBtn
+                                        onPress={() => handleAction(targetEntity, 'remote_mic')}
+                                        accessibilityLabel="Microphone"
+                                    >
+                                        <Mic size={22} color="#fff" strokeWidth={ICON_STROKE} />
+                                    </RemoteCircleBtn>
+                                ) : null}
                             </View>
                         </View>
                         <View style={styles.expandedControlCol}>

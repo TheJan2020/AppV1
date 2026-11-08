@@ -13,6 +13,8 @@ expo-env.d.ts
 .kotlin/
 *.orig.*
 *.jks
+*.keystore
+credentials/
 *.p8
 *.p12
 *.key
@@ -40,6 +42,16 @@ yarn-error.*
 /ios
 /android
 .env
+
+# Installable builds. GitHub rejects files over 100 MB.
+*.apk
+*.aab
+*.ipa
+
+# Generated Android build output inside local modules
+**/android/build/
+**/android/.gradle/
+**/.cxx/
 
 # EAS
 eas.json

@@ -2,13 +2,13 @@
   "expo": {
     "name": "Primewave",
     "slug": "ha-app",
-    "version": "1.1.12",
+    "version": "1.1.13",
     "orientation": "default",
     "icon": "./assets/app-icon.png",
     "userInterfaceStyle": "light",
     "ios": {
       "bundleIdentifier": "ai.primewave.app",
-      "buildNumber": "90",
+      "buildNumber": "98",
       "supportsTablet": true,
       "entitlements": {
         "aps-environment": "production"
@@ -35,7 +35,7 @@
         "backgroundColor": "#4B2FA8"
       },
       "softwareKeyboardLayoutMode": "pan",
-      "versionCode": 15,
+      "versionCode": 16,
       "permissions": [
         "android.permission.USE_BIOMETRIC",
         "android.permission.USE_FINGERPRINT",
@@ -48,7 +48,8 @@
         "android.permission.TURN_SCREEN_ON",
         "android.permission.DISABLE_KEYGUARD"
       ],
-      "package": "ai.primewave.app"
+      "package": "ai.primewave.android",
+      "blockedPermissions": ["com.google.android.gms.permission.AD_ID"]
     },
     "web": {
       "favicon": "./assets/app-icon.png"
@@ -98,6 +99,7 @@
       ],
       "expo-secure-store",
       "expo-asset",
+      "./plugins/withAndroidAppName.js",
       "./plugins/withIntercomVoip.js"
     ],
     "extra": {

@@ -265,6 +265,15 @@ final class IntercomCallManager: NSObject, PKPushRegistryDelegate, CXProviderDel
       "callId": currentCallId,
       "label": currentLabel,
     ])
+    let userId = defaults.string(forKey: Keys.userId) ?? ""
+    let userName = defaults.string(forKey: Keys.userName) ?? ""
+    if !userId.isEmpty || !userName.isEmpty {
+      postNative("answer", body: [
+        "userId": userId,
+        "username": userName,
+        "userName": userName,
+      ])
+    }
     action.fulfill()
   }
 

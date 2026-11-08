@@ -84,11 +84,12 @@ export function roleHasCameraAccess(role) {
     return (role.cameras || []).length > 0;
 }
 
-/** Home strip + CCTV. Camera allow-list counts even if the Cameras screen toggle is off. */
+/** Home strip + CCTV. Unknown roles stay hidden. A camera list counts even if the Cameras screen is off. */
 export function roleCanSeeCameras(role, screens = null) {
+    if (!role || role.roleId === 'pending') return false;
     if (roleHasCameraAccess(role)) return true;
     const list = Array.isArray(screens) ? screens : role?.screens;
-    return Array.isArray(list) && list.includes('cctv') && role?.allCameras !== false;
+    return Array.isArray(list) && list.includes('cctv') && role.allCameras !== false;
 }
 
 /** Open Cameras tab when the screen is on, or when this role was given cameras. */

@@ -122,7 +122,6 @@ export default function DashboardV2() {
 
     const bootProf = peekBootProfile();
     const [bootReady, setBootReady] = useState(() => !!(peekDashboardSnapshot() || bootProf));
-    const [showCameras, setShowCameras] = useState(false);
 
     // Config State
     const [connectionConfig, setConnectionConfig] = useState(() => connectionConfigFromBoot(bootProf));
@@ -175,6 +174,7 @@ export default function DashboardV2() {
     const [frigateConfigResolved, setFrigateConfigResolved] = useState(false);
     /** Owner-controlled global switch — when false, cameras are hidden from every account/device. */
     const [camerasGloballyEnabled, setCamerasGloballyEnabled] = useState(true);
+    const [roleCameraAccess, setRoleCameraAccess] = useState(null);
     const [isHaOwner, setIsHaOwner] = useState(false);
     const [cameraTogglingOff, setCameraTogglingOff] = useState(false);
     const [showEnableCamerasModal, setShowEnableCamerasModal] = useState(false);
@@ -245,13 +245,6 @@ export default function DashboardV2() {
         })();
     }, []);
 
-    useEffect(() => {
-        const id = requestAnimationFrame(() => {
-            requestAnimationFrame(() => setShowCameras(true));
-        });
-        return () => cancelAnimationFrame(id);
-    }, []);
-
     const loadConnectionConfig = async () => {
         // De-dupe overlapping calls (see loadConnectionInFlightRef comment above).
         if (loadConnectionInFlightRef.current) {
@@ -316,6 +309,7 @@ export default function DashboardV2() {
                         setHaCameras([]);
                         setBackendCameras(null);
                         setUserHomeCameras(null);
+                        setRoleCameraAccess(null);
                         clearRoomPageBootstrap();
                         const nextOrder = await loadLocalRoomOrder(activeProfileId);
                         setSavedRoomOrder(Array.isArray(nextOrder) ? nextOrder : []);
@@ -403,6 +397,7 @@ export default function DashboardV2() {
         setSelectedRoom(null);
         setBackendCameras(null);
         setUserHomeCameras(null);
+        setRoleCameraAccess(null);
         if (homeChanging) {
             haLiveRef.current = false;
             setConnectionConfig({ url: '', token: '', adminUrl: '', loaded: false });
@@ -1621,6 +1616,7 @@ export default function DashboardV2() {
         if (!hasAppUserIdentity(userId, userName)) {
             setBackendCameras(null);
             setUserHomeCameras(null);
+            setRoleCameraAccess(null);
             return undefined;
         }
         let cancelled = false;
@@ -1637,6 +1633,9 @@ export default function DashboardV2() {
                 setHaCameras([]);
                 setUserHomeCameras(Array.isArray(result.homeCameras) ? result.homeCameras : []);
                 setCamerasGloballyEnabled(result.camerasGloballyEnabled !== false);
+                setRoleCameraAccess(
+                    result.allCameras !== false || (Array.isArray(result.cameras) && result.cameras.length > 0),
+                );
             })
             .catch((e) => logOperationalIssue('Cameras', e))
             .finally(() => {
@@ -2112,10 +2111,11 @@ export default function DashboardV2() {
     })();
     if (snapshotRef.current) snapshotRef.current.rooms = roomsWithCounts;
 
+    const canSeeHomeCameras = roleCanSeeCameras(appRole, allowedScreens) || roleCameraAccess === true;
+
     const displayCameras = useMemo(() => {
         if (!camerasGloballyEnabled) return [];
-        if (!appRole || appRole.roleId === 'pending') return [];
-        if (!roleCanSeeCameras(appRole, allowedScreens)) return [];
+        if (!canSeeHomeCameras) return [];
         const base = Array.isArray(backendCameras) && backendCameras.length > 0
             ? backendCameras
             : camerasForRoleDisplay(
@@ -2125,14 +2125,13 @@ export default function DashboardV2() {
                 badgeConfig?.selected_cameras,
             );
         return frigateCamerasOnly(base);
-    }, [camerasGloballyEnabled, backendCameras, frigateCameras, haCameras, appRole, allowedScreens, badgeConfig?.selected_cameras]);
+    }, [camerasGloballyEnabled, canSeeHomeCameras, backendCameras, frigateCameras, haCameras, appRole, badgeConfig?.selected_cameras]);
 
     const homeCameraIds = useMemo(() => {
-        if (!appRole || appRole.roleId === 'pending') return [];
-        if (!roleCanSeeCameras(appRole, allowedScreens)) return [];
+        if (!canSeeHomeCameras) return [];
         if (!Array.isArray(userHomeCameras) || userHomeCameras.length === 0) return [];
         return filterHomeCameraIds(userHomeCameras, displayCameras);
-    }, [displayCameras, userHomeCameras, appRole, allowedScreens]);
+    }, [displayCameras, userHomeCameras, canSeeHomeCameras]);
 
     /**
      * Lights for the modal — exact same entities each room card uses for badges.
@@ -2472,7 +2471,7 @@ export default function DashboardV2() {
                         sensorMappings={sensorMappings}
                     />
 
-                    {showCameras && roleCanSeeCameras(appRole, allowedScreens) ? (
+                    {canSeeHomeCameras ? (
                     <HomeCameraStrip
                         frigateCameras={displayCameras}
                         selectedCameraNames={homeCameraIds}

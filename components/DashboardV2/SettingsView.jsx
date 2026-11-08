@@ -53,7 +53,6 @@ function SettingsView({
     const { isTablet } = useDeviceType();
     const [activeTab, setActiveTab] = useState('general');
     const [selectedArea, setSelectedArea] = useState(null);
-    const [faceIdEnabled, setFaceIdEnabled] = useState(false);
     const [storedUserName, setStoredUserName] = useState('');
     const [loggingOut, setLoggingOut] = useState(false);
     const [isHaOwner, setIsHaOwner] = useState(false);
@@ -86,10 +85,6 @@ function SettingsView({
 
         (async () => {
             try {
-                const faceIdPromise = SecureStore.getItemAsync('face_id_enabled')
-                    .then((val) => { if (!cancelled) setFaceIdEnabled(val === 'true'); })
-                    .catch(() => {});
-
                 const userPromise = (async () => {
                     if (userName) return userName;
                     try {
@@ -120,7 +115,7 @@ function SettingsView({
                     setIsHaOwner(false);
                 }
 
-                await Promise.all([faceIdPromise, accountsPromise]);
+                await Promise.all([accountsPromise]);
             } finally {
                 if (!cancelled) setSettingsReady(true);
             }

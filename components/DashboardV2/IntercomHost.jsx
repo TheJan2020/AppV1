@@ -6,6 +6,7 @@ import { getAdminUrl, getHaToken } from '../../utils/storage';
 import { getIntercomUnlockService } from '../../services/intercomHaBridge';
 import IntercomCall from '../../modules/expo-intercom-call';
 import { registerForPushNotificationsAsync } from '../../services/notifications';
+import { setIntercomLineStatus } from '../../services/intercomLineStatus';
 
 function readUser(raw) {
     try {
@@ -48,6 +49,9 @@ export default function IntercomHost() {
                         ? prev
                         : next
                 ));
+                if (!next.adminUrl) {
+                    setIntercomLineStatus({ level: 'off' });
+                }
                 if (next.adminUrl && IntercomCall.isAvailable()) {
                     IntercomCall.configure(next.adminUrl, next.userId, next.userName);
                 }

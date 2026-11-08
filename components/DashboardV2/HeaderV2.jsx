@@ -1,11 +1,19 @@
-import React, { memo } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import React, { memo, useEffect, useState } from 'react';
+import { View, Text, StyleSheet, TouchableOpacity, Modal, Pressable } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Cloud, CloudRain, Sun, CloudSnow, CloudLightning, Bell, Users } from 'lucide-react-native';
+import { Cloud, CloudRain, Sun, CloudSnow, CloudLightning, Bell, Users, Phone } from 'lucide-react-native';
 import { CF } from '../../utils/typography';
+import { getIntercomLineStatus, subscribeIntercomLineStatus } from '../../services/intercomLineStatus';
 
 function HeaderV2({ weather, cityName, userName, humidity, indoorTemp, onBellPress, unreadCount = 0, onUserPress, activeUsersCount = 0, onActiveUsersPress, loadHint = '' }) {
     const insets = useSafeAreaInsets();
+    const [line, setLine] = useState(getIntercomLineStatus);
+    const [lineOpen, setLineOpen] = useState(false);
+
+    useEffect(() => subscribeIntercomLineStatus(setLine), []);
+
+    const showLine = line.level !== 'off';
+    const lineColor = line.level === 'connected' ? '#22c55e' : line.level === 'error' ? '#ef4444' : '#eab308';
 
     const capitalizeWords = (str) => {
         if (!str) return str;
@@ -77,6 +85,16 @@ function HeaderV2({ weather, cityName, userName, humidity, indoorTemp, onBellPre
                     )}
                 </TouchableOpacity>
                 <View style={styles.headerActions}>
+                    {showLine && (
+                        <TouchableOpacity
+                            style={styles.headerIconBtn}
+                            onPress={() => setLineOpen(true)}
+                            activeOpacity={0.75}
+                            accessibilityLabel={line.title}
+                        >
+                            <Phone size={18} color={lineColor} />
+                        </TouchableOpacity>
+                    )}
                     <TouchableOpacity
                         style={styles.headerIconBtn}
                         onPress={onBellPress}
@@ -125,12 +143,27 @@ function HeaderV2({ weather, cityName, userName, humidity, indoorTemp, onBellPre
                     </TouchableOpacity>
                 )}
             </View>
+            <Modal
+                visible={showLine && lineOpen}
+                transparent
+                animationType="fade"
+                onRequestClose={() => setLineOpen(false)}
+            >
+                <Pressable style={styles.lineBackdrop} onPress={() => setLineOpen(false)}>
+                    <Pressable style={styles.lineCard} onPress={() => {}}>
+                        <View style={[styles.lineMark, { backgroundColor: lineColor }]} />
+                        <Text style={styles.lineTitle}>{line.title}</Text>
+                        <Text style={styles.lineDetail}>{line.detail}</Text>
+                    </Pressable>
+                </Pressable>
+            </Modal>
         </View>
     );
 }
 
 const styles = StyleSheet.create({
     header: {
+        width: '100%',
         paddingBottom: 12,
         gap: 6,
     },
@@ -190,14 +223,15 @@ const styles = StyleSheet.create({
     weatherRow: {
         flexDirection: 'row',
         alignItems: 'center',
-        justifyContent: 'space-between',
         marginTop: 2,
+        gap: 8,
     },
     weatherLeft: {
+        flex: 1,
+        minWidth: 0,
         flexDirection: 'row',
         alignItems: 'center',
         flexWrap: 'wrap',
-        flexShrink: 1,
         gap: 5,
     },
     weatherText: {
@@ -210,6 +244,7 @@ const styles = StyleSheet.create({
         fontSize: 12,
     },
     activeUsersPill: {
+        flexShrink: 0,
         flexDirection: 'row',
         alignItems: 'center',
         gap: 4,
@@ -219,7 +254,6 @@ const styles = StyleSheet.create({
         backgroundColor: 'rgba(255,255,255,0.05)',
         borderWidth: 1,
         borderColor: 'rgba(255,255,255,0.08)',
-        marginLeft: 8,
     },
     activeUsersText: {
         fontSize: 12,
@@ -228,6 +262,37 @@ const styles = StyleSheet.create({
     },
     activeUsersTextOn: {
         color: '#26D07C',
+    },
+    lineBackdrop: {
+        flex: 1,
+        backgroundColor: 'rgba(0,0,0,0.45)',
+        justifyContent: 'center',
+        paddingHorizontal: 28,
+    },
+    lineCard: {
+        backgroundColor: '#14141F',
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: 'rgba(255,255,255,0.1)',
+        paddingHorizontal: 18,
+        paddingVertical: 18,
+        gap: 8,
+    },
+    lineMark: {
+        width: 10,
+        height: 10,
+        borderRadius: 5,
+    },
+    lineTitle: {
+        color: '#ededf5',
+        fontSize: 17,
+        fontFamily: CF.semibold,
+    },
+    lineDetail: {
+        color: 'rgba(237,237,245,0.72)',
+        fontSize: 14,
+        lineHeight: 20,
+        fontFamily: CF.regular,
     },
 });
 

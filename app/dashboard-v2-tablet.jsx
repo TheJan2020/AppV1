@@ -126,6 +126,7 @@ export default function DashboardV2Tablet() {
     const [frigateCameras, setFrigateCameras] = useState(() => bootValue('frigateCameras', []));
     const [haCameras, setHaCameras] = useState([]);
     const [backendCameras, setBackendCameras] = useState(null);
+    const [roleCameraAccess, setRoleCameraAccess] = useState(null);
     const [userHomeCameras, setUserHomeCameras] = useState(null);
     const [selectedFrigateCamera, setSelectedFrigateCamera] = useState(null);
     const [showFrigateModal, setShowFrigateModal] = useState(false);
@@ -232,6 +233,7 @@ export default function DashboardV2Tablet() {
                         setHaCameras([]);
                         setBackendCameras(null);
                         setUserHomeCameras(null);
+                        setRoleCameraAccess(null);
                         clearRoomPageBootstrap();
                         const nextOrder = await loadLocalRoomOrder(activeProfileId);
                         setSavedRoomOrder(Array.isArray(nextOrder) ? nextOrder : []);
@@ -316,6 +318,7 @@ export default function DashboardV2Tablet() {
         setSelectedRoom(null);
         setBackendCameras(null);
         setUserHomeCameras(null);
+        setRoleCameraAccess(null);
         if (homeChanging) {
             haLiveRef.current = false;
             setConnectionConfig({ url: '', token: '', adminUrl: '', loaded: false });
@@ -453,6 +456,7 @@ export default function DashboardV2Tablet() {
         if (!hasAppUserIdentity(userId, userName)) {
             setBackendCameras(null);
             setUserHomeCameras(null);
+            setRoleCameraAccess(null);
             return undefined;
         }
         let cancelled = false;
@@ -468,6 +472,9 @@ export default function DashboardV2Tablet() {
                 setFrigateCameras(result.cameras);
                 setHaCameras([]);
                 setUserHomeCameras(Array.isArray(result.homeCameras) ? result.homeCameras : []);
+                setRoleCameraAccess(
+                    result.allCameras !== false || (Array.isArray(result.cameras) && result.cameras.length > 0),
+                );
             })
             .catch(() => {});
         return () => { cancelled = true; };
@@ -1394,9 +1401,10 @@ export default function DashboardV2Tablet() {
         });
     }, [entities, badgeConfig, registryEntities, registryDevices]);
 
+    const canSeeHomeCameras = roleCanSeeCameras(appRole, allowedScreens) || roleCameraAccess === true;
+
     const displayCameras = useMemo(() => {
-        if (!appRole || appRole.roleId === 'pending') return [];
-        if (!roleCanSeeCameras(appRole, allowedScreens)) return [];
+        if (!canSeeHomeCameras) return [];
         const base = Array.isArray(backendCameras) && backendCameras.length > 0
             ? backendCameras
             : camerasForRoleDisplay(
@@ -1406,14 +1414,13 @@ export default function DashboardV2Tablet() {
                 badgeConfig?.selected_cameras,
             );
         return frigateCamerasOnly(base);
-    }, [backendCameras, frigateCameras, haCameras, appRole, allowedScreens, badgeConfig?.selected_cameras]);
+    }, [canSeeHomeCameras, backendCameras, frigateCameras, haCameras, appRole, badgeConfig?.selected_cameras]);
 
     const homeCameraIds = useMemo(() => {
-        if (!appRole || appRole.roleId === 'pending') return [];
-        if (!roleCanSeeCameras(appRole, allowedScreens)) return [];
+        if (!canSeeHomeCameras) return [];
         if (!Array.isArray(userHomeCameras) || userHomeCameras.length === 0) return [];
         return filterHomeCameraIds(userHomeCameras, displayCameras);
-    }, [displayCameras, userHomeCameras, appRole, allowedScreens]);
+    }, [displayCameras, userHomeCameras, canSeeHomeCameras]);
 
     const roomLightsForModal = useMemo(() => {
         const byId = new Map();
@@ -1744,7 +1751,7 @@ export default function DashboardV2Tablet() {
                         sensorMappings={sensorMappings}
                     />
 
-                    {roleCanSeeCameras(appRole, allowedScreens) ? (
+                    {canSeeHomeCameras ? (
                     <HomeCameraStrip
                         frigateCameras={displayCameras}
                         selectedCameraNames={homeCameraIds}
