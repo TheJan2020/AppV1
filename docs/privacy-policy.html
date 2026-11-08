@@ -34,7 +34,7 @@
 <h2>2. Information the app handles</h2>
 <div class="wrap">
 <table>
-  <tr><th>Home Assistant details</th><td>The server address and access token you enter. They are stored on your device in Android’s encrypted storage (Android Keystore) and are sent only to the Home Assistant server you configured.</td></tr>
+  <tr><th>Server link and sign-in details</th><td>The server link you enter, the user you select and the password you type. They are sent only to your own Home Assistant server so you can sign in. The server link and the access token you receive after signing in are stored on your device in Android’s encrypted storage (Android Keystore).</td></tr>
   <tr><th>Push notification token</th><td>A device token used to deliver smart home alerts. It is sent to your own backend server and routed through Expo’s push notification service and Google Firebase Cloud Messaging (FCM) to reach your device.</td></tr>
   <tr><th>Voice audio</th><td>Captured only while you actively use the Butler voice assistant. The audio is sent to the AI backend you configure (and to the AI provider that backend uses, such as Google Gemini or OpenAI) to be turned into text and to answer your request. We do not store it permanently.</td></tr>
   <tr><th>Chat messages</th><td>Text you type to the Butler assistant is sent to the same AI backend and AI provider to process your request.</td></tr>
@@ -42,6 +42,7 @@
   <tr><th>Preferences</th><td>Settings such as your preferred AI model and room layout, stored locally on your device.</td></tr>
 </table>
 </div>
+<p>Primewave AI does not create or store user accounts. You sign in with a user account that already exists on your own Home Assistant server, and that server is managed by you or by the person who set it up for you.</p>
 <p>PRIMEWAVE AI SOLUTIONS does not operate a cloud database or analytics service for this app, and we do not receive your credentials, audio, messages or smart home data on servers that we run. The app does not contain advertising and does not use the Android advertising ID.</p>
 
 <h2>3. How the information is used</h2>
@@ -74,12 +75,12 @@
 <p>Primewave AI is an independent app and is not affiliated with or endorsed by Home Assistant.</p>
 
 <h2>6. Security</h2>
-<p>Credentials are stored using Android’s encrypted storage. We recommend that your Home Assistant server and backend are reached over HTTPS so that data is encrypted in transit. How data is protected on your own servers depends on how you set them up.</p>
+<p>Credentials are stored using Android’s encrypted storage. We recommend that your Home Assistant server and backend are reached over HTTPS so that data is encrypted in transit. If you connect using a plain http:// address, data sent to that server is not encrypted in transit. How data is protected on your own servers depends on how you set them up.</p>
 
 <h2>7. Data retention and deletion</h2>
 <ul>
   <li>Uninstalling the app removes all locally stored credentials and preferences from your device. You can also go to Android Settings → Apps → Primewave AI → Storage → Clear data.</li>
-  <li>Logging out of the app sends a request to your backend to delete your push token.</li>
+  <li>Logging out of the app sends a request to your backend to delete your push token. User accounts themselves are managed on your Home Assistant server, so removing a user account is done there.</li>
   <li>Data held on your own Home Assistant server or backend, or by an AI provider you use, is managed by you or by that provider under its own policy.</li>
 </ul>
 
