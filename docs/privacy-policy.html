@@ -1,413 +1,104 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Privacy Policy — Primewave by PRIMEWAVE AI SOLUTIONS</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background: #0d0d1a;
-      color: #e0e0f0;
-      line-height: 1.75;
-      padding: 40px 20px 80px;
-    }
-
-    .wrapper {
-      max-width: 780px;
-      margin: 0 auto;
-    }
-
-    /* ── Header ── */
-    .header {
-      text-align: center;
-      margin-bottom: 48px;
-    }
-
-    .logo-circle {
-      width: 72px;
-      height: 72px;
-      border-radius: 50%;
-      background: linear-gradient(135deg, #602FBE, #832ea9);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      margin: 0 auto 18px;
-      font-size: 32px;
-    }
-
-    h1 {
-      font-size: 2rem;
-      font-weight: 700;
-      color: #ffffff;
-      letter-spacing: -0.5px;
-    }
-
-    .subtitle {
-      margin-top: 8px;
-      color: rgba(255,255,255,0.45);
-      font-size: 0.95rem;
-    }
-
-    /* ── Effective badge ── */
-    .effective {
-      display: inline-block;
-      margin-top: 16px;
-      padding: 6px 16px;
-      border-radius: 20px;
-      background: rgba(98, 47, 190, 0.25);
-      border: 1px solid rgba(98, 47, 190, 0.5);
-      color: #b89df5;
-      font-size: 0.82rem;
-      font-weight: 600;
-      letter-spacing: 0.5px;
-    }
-
-    /* ── Sections ── */
-    section {
-      margin-bottom: 36px;
-      background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 16px;
-      padding: 28px 32px;
-    }
-
-    h2 {
-      font-size: 1.1rem;
-      font-weight: 700;
-      color: #c4a0f5;
-      margin-bottom: 14px;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-
-    h2 .icon {
-      font-size: 1.2rem;
-    }
-
-    p {
-      color: rgba(255,255,255,0.75);
-      margin-bottom: 12px;
-      font-size: 0.95rem;
-    }
-
-    p:last-child { margin-bottom: 0; }
-
-    ul {
-      list-style: none;
-      padding: 0;
-    }
-
-    ul li {
-      color: rgba(255,255,255,0.75);
-      font-size: 0.95rem;
-      padding: 6px 0 6px 22px;
-      position: relative;
-      border-bottom: 1px solid rgba(255,255,255,0.05);
-    }
-
-    ul li:last-child { border-bottom: none; }
-
-    ul li::before {
-      content: "›";
-      position: absolute;
-      left: 4px;
-      color: #832ea9;
-      font-weight: 700;
-    }
-
-    /* ── Permission table ── */
-    .perm-table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-top: 6px;
-    }
-
-    .perm-table th {
-      text-align: left;
-      font-size: 0.78rem;
-      text-transform: uppercase;
-      letter-spacing: 0.8px;
-      color: rgba(255,255,255,0.35);
-      padding: 8px 12px;
-      border-bottom: 1px solid rgba(255,255,255,0.1);
-    }
-
-    .perm-table td {
-      font-size: 0.9rem;
-      color: rgba(255,255,255,0.75);
-      padding: 12px 12px;
-      vertical-align: top;
-      border-bottom: 1px solid rgba(255,255,255,0.06);
-    }
-
-    .perm-table tr:last-child td { border-bottom: none; }
-
-    .perm-table td:first-child {
-      color: #c4a0f5;
-      font-weight: 600;
-      white-space: nowrap;
-      width: 200px;
-    }
-
-    /* ── Highlight box ── */
-    .highlight {
-      background: rgba(98, 47, 190, 0.12);
-      border-left: 3px solid #832ea9;
-      border-radius: 8px;
-      padding: 14px 18px;
-      margin-top: 14px;
-      color: rgba(255,255,255,0.8);
-      font-size: 0.92rem;
-    }
-
-    /* ── Contact ── */
-    .contact-link {
-      color: #b89df5;
-      text-decoration: none;
-      font-weight: 600;
-    }
-
-    .contact-link:hover { text-decoration: underline; }
-
-    /* ── Footer ── */
-    .footer {
-      text-align: center;
-      margin-top: 52px;
-      color: rgba(255,255,255,0.25);
-      font-size: 0.82rem;
-    }
-
-    .footer strong { color: rgba(255,255,255,0.45); }
-  </style>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy – Primewave AI by PRIMEWAVE AI SOLUTIONS</title>
+<style>
+  :root { --bg:#ffffff; --fg:#1a1d29; --muted:#555b70; --line:#e3e6ef; --accent:#5a4fcf; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12141f; --fg:#eceef6; --muted:#a3a9bf; --line:#2a2e42; --accent:#8f86ff; }
+  }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.65 -apple-system, "Segoe UI", Roboto, Arial, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { font-size: 2rem; margin: 0 0 4px; }
+  h2 { font-size: 1.25rem; margin-top: 2.2rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+  .sub { color: var(--muted); margin: 0 0 4px; }
+  a { color: var(--accent); }
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; }
+  th, td { text-align: left; vertical-align: top; padding: 10px 8px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; width: 32%; }
+  .wrap { overflow-x: auto; }
+</style>
 </head>
 <body>
-<div class="wrapper">
+<main>
+<h1>Privacy Policy</h1>
+<p class="sub">Primewave AI – Smart Home Control (Android)</p>
+<p class="sub">by PRIMEWAVE AI SOLUTIONS</p>
+<p class="sub">Effective date: November 8, 2026</p>
 
-  <!-- ── Header ── -->
-  <div class="header">
-    <div class="logo-circle">🏠</div>
-    <h1>Privacy Policy</h1>
-    <p class="subtitle">Primewave — Smart Home Control</p>
-    <p class="subtitle" style="margin-top:4px; font-size:0.8rem; letter-spacing:1px; text-transform:uppercase; color:rgba(255,255,255,0.3);">by PRIMEWAVE AI SOLUTIONS</p>
-    <span class="effective">Effective Date: November 8, 2026</span>
-  </div>
+<h2>1. Introduction</h2>
+<p>Primewave AI (“the app”) is a smart home control application published by PRIMEWAVE AI SOLUTIONS (“we”, “our”, “us”). The app connects to your own Home Assistant server and, optionally, to AI voice and chat services so you can control your home by touch, voice or text. This policy explains what information the app handles, how it is used, and the choices you have.</p>
 
-  <section>
-    <h2><span class="icon">👋</span> Introduction</h2>
-    <p>
-      Primewave is a smart home control app by <strong>PRIMEWAVE AI SOLUTIONS</strong>.
-      Connect it to your own Home Assistant server and manage your home from one clean dashboard.
-    </p>
-    <p>
-      This Privacy Policy explains what the app can do, what it accesses, and where that
-      information stays. Primewave is an independent app and is not affiliated with or endorsed
-      by Home Assistant.
-    </p>
-  </section>
-
-  <section>
-    <h2><span class="icon">🏠</span> What you can do</h2>
-    <ul>
-      <li>Control lights, switches and other smart devices.</li>
-      <li>See your rooms and devices in a layout you can customize.</li>
-      <li>Watch live streams from your connected cameras.</li>
-      <li>Receive push notifications for smart home alerts, such as a door opening or motion detected.</li>
-      <li>Ask Butler, the built-in AI assistant, to run commands by voice or text, for example “turn off all lights”.</li>
-    </ul>
-  </section>
-
-  <section>
-    <h2><span class="icon">⚙️</span> How it works</h2>
-    <p>
-      Primewave connects to your own Home Assistant server. Your server address and access
-      details are stored on your device. Butler voice and chat requests are sent to the AI
-      backend you configure, and the AI features are optional.
-    </p>
-  </section>
-
-  <section>
-    <h2><span class="icon">✅</span> Requirements</h2>
-    <ul>
-      <li>A Home Assistant server that you own or have access to.</li>
-      <li>Microphone permission, only if you want to use voice commands.</li>
-      <li>Notification permission, only if you want smart home alerts.</li>
-    </ul>
-  </section>
-
-  <!-- 2. Information We Collect -->
-  <section>
-    <h2><span class="icon">📋</span> Information We Collect</h2>
-    <p>Primewave accesses the following information solely to provide its features:</p>
-    <ul>
-      <li><strong>Home Assistant credentials</strong> — your Home Assistant server URL and long-lived access token, stored securely on your device using iOS Secure Enclave (SecureStore).</li>
-      <li><strong>Device push token</strong> — an Expo push notification token registered with your own backend server so your server can send you smart home alerts.</li>
-      <li><strong>Voice audio</strong> — microphone audio captured only while you are actively using the voice assistant (Butler). Audio is sent to your own backend for transcription/AI processing and is not stored permanently.</li>
-      <li><strong>User preferences</strong> — app settings (e.g., preferred AI model, room layout preferences) stored locally on your device.</li>
-      <li><strong>Device name</strong> — your iOS device model name, sent once to your own backend when registering for push notifications, solely for your own device management.</li>
-    </ul>
-
-    <div class="highlight">
-      <strong>Important:</strong> Primewave does <em>not</em> collect, transmit, or store your
-      personal data on any Primewave-operated servers. All data goes directly between your
-      device and your own self-hosted Home Assistant instance and/or backend.
-    </div>
-  </section>
-
-  <!-- 3. How We Use Information -->
-  <section>
-    <h2><span class="icon">⚙️</span> How We Use Information</h2>
-    <ul>
-      <li>Connecting to your Home Assistant instance to display and control smart home devices.</li>
-      <li>Sending voice/text messages to your own AI backend (Butler) to process commands and answer questions about your home.</li>
-      <li>Delivering push notifications from your own backend about smart home events (door opened, motion detected, etc.).</li>
-      <li>Remembering your preferences locally so the app works the way you configured it.</li>
-      <li>Authenticating you via Face ID / Touch ID (biometrics are handled entirely by iOS — Primewave never sees or stores biometric data).</li>
-    </ul>
-  </section>
-
-  <!-- 4. Device Permissions -->
-  <section>
-    <h2><span class="icon">🔐</span> Device Permissions</h2>
-    <p>Primewave requests these permissions only for the feature you choose to use:</p>
-    <table class="perm-table">
-      <thead>
-        <tr>
-          <th>Permission</th>
-          <th>Purpose</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>Microphone</td>
-          <td>Required for the Butler voice assistant. Audio is only recorded when you actively hold the microphone button. It is sent to your own backend for processing and is never stored permanently.</td>
-        </tr>
-        <tr>
-          <td>Local Network</td>
-          <td>Required on iPhone to connect to your Home Assistant server and Butler backend running on your local network.</td>
-        </tr>
-        <tr>
-          <td>Push Notifications</td>
-          <td>Used to receive smart home alerts (e.g., door opened, security triggered) sent from your own backend server.</td>
-        </tr>
-        <tr>
-          <td>Face ID / Biometrics</td>
-          <td>Optional — used to protect access to the app. All biometric authentication is handled by iOS; Primewave never receives or stores biometric data.</td>
-        </tr>
-        <tr>
-          <td>Camera (CCTV view)</td>
-          <td>Primewave displays live camera streams from your Frigate/Home Assistant cameras. No camera data is stored or transmitted outside your own network.</td>
-        </tr>
-      </tbody>
-    </table>
-  </section>
-
-  <!-- 5. Data Storage & Security -->
-  <section>
-    <h2><span class="icon">🔒</span> Data Storage &amp; Security</h2>
-    <p>
-      All sensitive credentials (Home Assistant URL, access token, API keys) are stored
-      exclusively on your device using the phone’s secure storage.
-      They are never transmitted to any third-party server operated by us.
-    </p>
-    <p>
-      Your push notification token is registered with your own backend server. We have no
-      access to your backend, your token, or the notifications it sends.
-    </p>
-    <p>
-      Primewave does not operate any cloud database or analytics service. There is no
-      Primewave server that stores your data.
-    </p>
-  </section>
-
-  <!-- 6. Third-Party Services -->
-  <section>
-    <h2><span class="icon">🔗</span> Third-Party Services</h2>
-    <p>
-      Primewave may interact with the following third-party services <strong>at your direction</strong>
-      and using credentials you provide:
-    </p>
-    <ul>
-      <li><strong>Home Assistant</strong> — your self-hosted smart home platform. Data is exchanged over your own network.</li>
-      <li><strong>OpenAI (optional)</strong> — if you choose to enter an OpenAI API key in Settings, voice transcription (Whisper) is sent directly to OpenAI's API. This is governed by <a class="contact-link" href="https://openai.com/privacy" target="_blank">OpenAI's Privacy Policy</a>.</li>
-      <li><strong>Google Gemini (optional)</strong> — if your Butler backend is configured to use Gemini, queries are processed by Google's API under <a class="contact-link" href="https://policies.google.com/privacy" target="_blank">Google's Privacy Policy</a>.</li>
-      <li><strong>Expo Push Notifications</strong> — push tokens are routed through Expo's notification gateway to reach APNs (Apple Push Notification service). No message content is stored by Expo beyond delivery. See <a class="contact-link" href="https://expo.dev/privacy" target="_blank">Expo's Privacy Policy</a>.</li>
-      <li><strong>Frigate (optional)</strong> — a self-hosted NVR. Camera data stays entirely within your local network.</li>
-    </ul>
-  </section>
-
-  <!-- 7. Children -->
-  <section>
-    <h2><span class="icon">👶</span> Children's Privacy</h2>
-    <p>
-      Primewave is not directed to children under the age of 13. We do not knowingly collect
-      personal information from children. Primewave is a professional tool intended for home
-      owners and smart home enthusiasts.
-    </p>
-  </section>
-
-  <!-- 8. Data Retention -->
-  <section>
-    <h2><span class="icon">🗓️</span> Data Retention</h2>
-    <p>
-      Since Primewave stores all data locally on your device or on your own servers, you have
-      full control over retention:
-    </p>
-    <ul>
-      <li>Deleting the app from your phone removes all locally stored credentials and preferences immediately.</li>
-      <li>To remove your push token from your backend, log out of the app — this automatically sends a delete request to your backend's notification endpoint.</li>
-    </ul>
-  </section>
-
-  <!-- 9. Your Rights -->
-  <section>
-    <h2><span class="icon">⚖️</span> Your Rights</h2>
-    <p>
-      Because Primewave does not collect or store your data on any Primewave-operated servers,
-      most privacy rights (access, correction, deletion) are exercised directly on your own device
-      and infrastructure. Specifically:
-    </p>
-    <ul>
-      <li><strong>Access &amp; Deletion</strong> — delete the app to remove all local data, or clear data from your own backend.</li>
-      <li><strong>Revoke permissions</strong> — you can revoke microphone, notification, or biometric permissions at any time in your phone’s settings for Primewave.</li>
-      <li><strong>Opt out of AI features</strong> — do not enter API keys in Settings; all AI features are strictly opt-in.</li>
-    </ul>
-  </section>
-
-  <!-- 10. Changes -->
-  <section>
-    <h2><span class="icon">📝</span> Changes to This Policy</h2>
-    <p>
-      We may update this Privacy Policy from time to time. When we do, we will update the
-      <strong>Effective Date</strong> at the top of this page. Continued use of the app after
-      changes constitutes acceptance of the updated policy.
-    </p>
-  </section>
-
-  <!-- 11. Contact -->
-  <section>
-    <h2><span class="icon">✉️</span> Contact Us</h2>
-    <p>
-      If you have any questions or concerns about this Privacy Policy or your data, please
-      contact us at:
-    </p>
-    <p>
-      📧 <a class="contact-link" href="mailto:support@primewave.ai">support@primewave.ai</a>
-    </p>
-    <p style="margin-top:8px; color: rgba(255,255,255,0.45); font-size:0.88rem;">
-      PRIMEWAVE AI SOLUTIONS &nbsp;|&nbsp; App: Primewave &nbsp;|&nbsp; Android: ai.primewave.android &nbsp;|&nbsp; iPhone: ai.primewave.app
-    </p>
-  </section>
-
-  <!-- Footer -->
-  <div class="footer">
-    <p>© 2026 <strong>PRIMEWAVE AI SOLUTIONS</strong>. All rights reserved.</p>
-    <p style="margin-top:6px;">This policy is the privacy policy for the Primewave apps on Google Play and the App Store.</p>
-  </div>
-
+<h2>2. Information the app handles</h2>
+<div class="wrap">
+<table>
+  <tr><th>Home Assistant details</th><td>The server address and access token you enter. They are stored on your device in Android’s encrypted storage (Android Keystore) and are sent only to the Home Assistant server you configured.</td></tr>
+  <tr><th>Push notification token</th><td>A device token used to deliver smart home alerts. It is sent to your own backend server and routed through Expo’s push notification service and Google Firebase Cloud Messaging (FCM) to reach your device.</td></tr>
+  <tr><th>Voice audio</th><td>Captured only while you actively use the Butler voice assistant. The audio is sent to the AI backend you configure (and to the AI provider that backend uses, such as Google Gemini or OpenAI) to be turned into text and to answer your request. We do not store it permanently.</td></tr>
+  <tr><th>Chat messages</th><td>Text you type to the Butler assistant is sent to the same AI backend and AI provider to process your request.</td></tr>
+  <tr><th>Device name</th><td>Your Android device model name, sent once to your own backend when you register for notifications, so you can manage your devices.</td></tr>
+  <tr><th>Preferences</th><td>Settings such as your preferred AI model and room layout, stored locally on your device.</td></tr>
+</table>
 </div>
+<p>PRIMEWAVE AI SOLUTIONS does not operate a cloud database or analytics service for this app, and we do not receive your credentials, audio, messages or smart home data on servers that we run. The app does not contain advertising and does not use the Android advertising ID.</p>
+
+<h2>3. How the information is used</h2>
+<ul>
+  <li>To connect to your Home Assistant server and display and control your devices.</li>
+  <li>To send your voice or text requests to the Butler assistant and carry out your commands.</li>
+  <li>To deliver push notifications about events in your home that you set up on your own backend.</li>
+  <li>To remember your preferences so the app works as you configured it.</li>
+</ul>
+<p>We do not sell your information, and we do not use it for advertising or profiling.</p>
+
+<h2>4. Permissions</h2>
+<div class="wrap">
+<table>
+  <tr><th>Microphone</th><td>Used only for the Butler voice assistant, and only while you use the voice feature. Voice features are optional.</td></tr>
+  <tr><th>Notifications</th><td>Used to show smart home alerts sent from your own backend. Notifications are optional and can be turned off at any time.</td></tr>
+  <tr><th>Internet</th><td>Required to reach your Home Assistant server, your backend and the AI services you choose to use.</td></tr>
+</table>
+</div>
+<p>You can change or revoke permissions at any time in Android Settings → Apps → Primewave AI → Permissions.</p>
+
+<h2>5. Third-party services</h2>
+<p>The app works with the following services, which you choose to use and configure. Their own privacy policies apply to data they receive.</p>
+<ul>
+  <li><strong>Home Assistant</strong> – your own smart home server. Data is exchanged between the app and that server.</li>
+  <li><strong>Google Gemini</strong> – if your Butler backend uses Gemini, your voice or text requests are processed by Google’s API (<a href="https://policies.google.com/privacy">Google Privacy Policy</a>).</li>
+  <li><strong>OpenAI</strong> (optional) – if you enter an OpenAI API key, voice transcription is sent to OpenAI (<a href="https://openai.com/privacy">OpenAI Privacy Policy</a>).</li>
+  <li><strong>Expo Push Notifications and Google Firebase Cloud Messaging</strong> – used to deliver notifications to your device (<a href="https://expo.dev/privacy">Expo Privacy Policy</a>, <a href="https://policies.google.com/privacy">Google Privacy Policy</a>).</li>
+</ul>
+<p>Primewave AI is an independent app and is not affiliated with or endorsed by Home Assistant.</p>
+
+<h2>6. Security</h2>
+<p>Credentials are stored using Android’s encrypted storage. We recommend that your Home Assistant server and backend are reached over HTTPS so that data is encrypted in transit. How data is protected on your own servers depends on how you set them up.</p>
+
+<h2>7. Data retention and deletion</h2>
+<ul>
+  <li>Uninstalling the app removes all locally stored credentials and preferences from your device. You can also go to Android Settings → Apps → Primewave AI → Storage → Clear data.</li>
+  <li>Logging out of the app sends a request to your backend to delete your push token.</li>
+  <li>Data held on your own Home Assistant server or backend, or by an AI provider you use, is managed by you or by that provider under its own policy.</li>
+</ul>
+
+<h2>8. Your choices</h2>
+<ul>
+  <li>Do not enter AI keys or configure a Butler backend if you do not want to use AI features. They are optional.</li>
+  <li>Do not grant microphone or notification permission if you do not want those features.</li>
+  <li>Contact us to ask questions about your information or to request help with deletion.</li>
+</ul>
+
+<h2>9. Children</h2>
+<p>Primewave AI is intended for adults who manage a home. It is not directed to children, and we do not knowingly collect information from children.</p>
+
+<h2>10. Changes to this policy</h2>
+<p>We may update this policy from time to time. When we do, we will change the effective date at the top of this page.</p>
+
+<h2>11. Contact us</h2>
+<p>PRIMEWAVE AI SOLUTIONS<br>Email: <a href="mailto:support@primewave.ai">support@primewave.ai</a></p>
+<p class="sub">© 2026 PRIMEWAVE AI SOLUTIONS. All rights reserved.</p>
+</main>
 </body>
 </html>
