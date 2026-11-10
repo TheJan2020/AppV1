@@ -52,7 +52,7 @@ class ExpoIntercomCallModule : Module() {
       }
     }
 
-    Function("endCall") {
+    Function("endCall") { reason: String ->
       val context = currentContext() ?: return@Function null
       IntercomCallNotifier.cancel(context)
       IntercomCallStore.consumePending(context)

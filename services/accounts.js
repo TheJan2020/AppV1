@@ -7,7 +7,7 @@
  */
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as SecureStore from 'expo-secure-store';
-import { loadHaProfiles } from '../utils/storage';
+import { clearSessionMirror, loadHaProfiles, rememberSessionMirror } from '../utils/storage';
 import {
     clearAllDashboardSnapshots,
     clearDashboardMemory,
@@ -232,6 +232,12 @@ export async function activateAccount(accountId) {
         await SecureStore.setItemAsync('saved_password', account.password);
     }
 
+    await rememberSessionMirror({
+        userId: account.userId || '',
+        name: account.name || '',
+        profileId: account.profileId || '',
+    });
+
     return account;
 }
 
@@ -264,6 +270,7 @@ export async function removeAccount(accountId) {
                 await SecureStore.deleteItemAsync(ACTIVE_ACCOUNT_KEY);
                 await SecureStore.deleteItemAsync('is_logged_in');
                 await SecureStore.deleteItemAsync('logged_in_user');
+                await clearSessionMirror();
                 return { nextAccount: null };
             }
         }
@@ -272,6 +279,7 @@ export async function removeAccount(accountId) {
         await SecureStore.deleteItemAsync('logged_in_user');
         await SecureStore.deleteItemAsync('saved_username');
         await SecureStore.deleteItemAsync('saved_password');
+        await clearSessionMirror();
         await clearAllDashboardSnapshots();
         return { nextAccount: null };
     }
@@ -290,6 +298,7 @@ export async function logoutActiveAccount() {
     await SecureStore.deleteItemAsync('logged_in_user');
     await SecureStore.deleteItemAsync('saved_username');
     await SecureStore.deleteItemAsync('saved_password');
+    await clearSessionMirror();
     await clearAllDashboardSnapshots();
     return { nextAccount: null };
 }

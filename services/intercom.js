@@ -109,12 +109,12 @@ export async function hangupIntercomCall(adminUrl, reason = 'hangup') {
     })) || { ok: false };
 }
 
-export async function fetchIntercomClient(adminUrl) {
+export async function fetchIntercomClient(adminUrl, userId) {
     const base = baseUrl(adminUrl);
     if (!base) return { enabled: false, sip: null };
-    const data = await optionalIntercomFetch(`${base}api/intercom/client`);
-    if (!data || data.enabled === false) return { enabled: false, sip: null };
-    if (data.enabled !== true && !data.sip) return { enabled: false, sip: null };
+    const qs = userId ? `?userId=${encodeURIComponent(userId)}` : '';
+    const data = await optionalIntercomFetch(`${base}api/intercom/client${qs}`);
+    if (!data || data.enabled !== true || !data.sip) return { enabled: false, sip: null };
     return { enabled: true, ...data };
 }
 

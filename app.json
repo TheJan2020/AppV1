@@ -8,7 +8,7 @@
     "userInterfaceStyle": "light",
     "ios": {
       "bundleIdentifier": "ai.primewave.app",
-      "buildNumber": "98",
+      "buildNumber": "106",
       "supportsTablet": true,
       "entitlements": {
         "aps-environment": "production"

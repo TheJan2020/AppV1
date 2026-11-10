@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { AppState } from 'react-native';
 import * as SecureStore from 'expo-secure-store';
 import IntercomCallModal from './IntercomCallModal';
-import { getAdminUrl, getHaToken } from '../../utils/storage';
+import { getAdminUrl, getHaToken, loadHaProfiles, readSessionMirror } from '../../utils/storage';
 import { getIntercomUnlockService } from '../../services/intercomHaBridge';
 import IntercomCall from '../../modules/expo-intercom-call';
 import { registerForPushNotificationsAsync } from '../../services/notifications';
@@ -26,13 +26,27 @@ export default function IntercomHost() {
     useEffect(() => {
         let cancelled = false;
         const load = async () => {
-            if (AppState.currentState !== 'active') return;
+            const pending = IntercomCall.hasPending();
+            if (AppState.currentState !== 'active' && !pending) return;
             try {
-                const [adminUrl, raw, token] = await Promise.all([
-                    getAdminUrl(),
-                    SecureStore.getItemAsync('logged_in_user'),
-                    getHaToken(),
+                let [adminUrl, raw, token] = await Promise.all([
+                    getAdminUrl().catch(() => ''),
+                    SecureStore.getItemAsync('logged_in_user').catch(() => ''),
+                    getHaToken().catch(() => ''),
                 ]);
+                if (!adminUrl || !raw) {
+                    const [mirror, profiles] = await Promise.all([
+                        readSessionMirror(),
+                        loadHaProfiles(),
+                    ]);
+                    const profile = profiles.find((p) => p.id === mirror?.profileId) || profiles[0];
+                    if (!adminUrl && profile) {
+                        adminUrl = profile.adminUrl || profile.adminUrlLive || profile.dashboardUrl || '';
+                    }
+                    if (!raw && mirror) {
+                        raw = JSON.stringify({ name: mirror.name || '', userId: mirror.userId || '' });
+                    }
+                }
                 const user = readUser(raw);
                 if (cancelled) return;
                 const next = {

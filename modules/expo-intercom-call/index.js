@@ -72,9 +72,9 @@ export default {
             // Expo Go
         }
     },
-    endCall: () => {
+    endCall: (reason) => {
         try {
-            getNative().endCall();
+            getNative().endCall(String(reason || 'remote'));
         } catch {
             // Expo Go
         }

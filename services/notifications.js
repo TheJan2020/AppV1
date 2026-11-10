@@ -16,13 +16,15 @@ try {
             const type = notification?.request?.content?.data?.type;
             const isIntercom = type === 'intercom';
             const event = notification?.request?.content?.data?.event;
+            const inApp = AppState.currentState === 'active';
             const nativeCall = !isExpoGo && IntercomCall.isAvailable() && isIntercom && event === 'ringing';
+            const showSystem = isIntercom && event === 'ringing' && !inApp && !nativeCall;
             return {
-                shouldShowAlert: !nativeCall,
-                shouldPlaySound: isIntercom && !nativeCall,
-                shouldSetBadge: isIntercom,
-                shouldShowBanner: !nativeCall,
-                shouldShowList: true,
+                shouldShowAlert: showSystem,
+                shouldPlaySound: showSystem,
+                shouldSetBadge: isIntercom && event === 'ringing',
+                shouldShowBanner: showSystem,
+                shouldShowList: showSystem,
             };
         },
     });
@@ -87,7 +89,11 @@ export function startNativeIncomingCalls() {
     });
     if (!Notifications) return;
     Notifications.addNotificationReceivedListener((notification) => {
-        maybeReportAndroidIncoming(notification?.request?.content?.data);
+        const data = notification?.request?.content?.data;
+        maybeReportAndroidIncoming(data);
+        if (data?.type === 'intercom' && (data.event === 'answered' || data.event === 'ended')) {
+            IntercomCall.endCall(data.event === 'ended' ? 'remote' : 'answered');
+        }
     });
 }
 

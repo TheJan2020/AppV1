@@ -67,7 +67,7 @@ function IntercomCallModal({
     const [sipStatus, setSipStatus] = useState('');
     const [listenSip, setListenSip] = useState(null);
     const [sipLive, setSipLive] = useState(false);
-    const [sipVideo, setSipVideo] = useState(false);
+    const [, setSipVideo] = useState(false);
     const [sipReady, setSipReady] = useState(false);
     const [lineError, setLineError] = useState('');
     const [holdSip, setHoldSip] = useState(false);
@@ -82,6 +82,7 @@ function IntercomCallModal({
     const callStatusRef = useRef('');
     const callRef = useRef(null);
     const userIdRef = useRef(userId);
+    const intercomOnRef = useRef(false);
     const handleAnswerRef = useRef(async () => {});
     const handleDeclineRef = useRef(async () => {});
     const handleHangupRef = useRef(async () => {});
@@ -93,9 +94,22 @@ function IntercomCallModal({
     const holdSipRef = useRef(false);
     const officeKickRef = useRef(0);
     userIdRef.current = userId;
+    intercomOnRef.current = intercomOn;
 
     const runSip = (code) => {
         try { webRef.current?.injectJavaScript(`${code}; true;`); } catch { /* ignore */ }
+    };
+
+    const dismissIntercomNotifications = () => {
+        try {
+            const Notifications = require('expo-notifications');
+            Notifications.getPresentedNotificationsAsync?.().then((list) => {
+                (list || []).forEach((item) => {
+                    if (item?.request?.content?.data?.type !== 'intercom') return;
+                    Notifications.dismissNotificationAsync(item.request.identifier).catch(() => {});
+                });
+            }).catch(() => {});
+        } catch { /* notifications module is optional in Expo Go */ }
     };
 
     const kickOfficeTalk = (audioId) => {
@@ -114,9 +128,10 @@ function IntercomCallModal({
             runSip(
                 `window.PW_HOLD_SIP=true;window.PW_AUDIO_ID=${literal};`
                 + 'var ws=window.PW_AUDIO_WS;'
-                + 'if(window.startOfficeTalk&&(!ws||ws.readyState>1))window.startOfficeTalk(null,window.PW_AUDIO_ID)',
+                + 'if(ws&&ws.readyState<2){if(ws.readyState===1&&window.PW_AUDIO_CTX&&window.PW_AUDIO_CTX.resume)window.PW_AUDIO_CTX.resume();}'
+                + 'else if(window.startOfficeTalk)window.startOfficeTalk(null,window.PW_AUDIO_ID)',
             );
-            if (Date.now() - started < 15000) setTimeout(kick, 400);
+            if (Date.now() - started < 20000) setTimeout(kick, 400);
         };
         kick();
     };
@@ -211,6 +226,7 @@ function IntercomCallModal({
 
     const ingest = useCallback((payload) => {
         if (!payload) return;
+        if (!intercomOnRef.current && (payload.event === 'ringing' || payload.call?.status === 'ringing')) return;
         const run = () => {
             const next = payload.call;
             if (next?.status === 'ringing' && dismissedRef.current && dismissedRef.current === next.callId) {
@@ -228,7 +244,7 @@ function IntercomCallModal({
                 const who = next.answeredByName || 'Someone';
                 setNotice(`${who} picked up the call`);
                 runSip('window.PW_SIP_HANGUP && window.PW_SIP_HANGUP()');
-                IntercomCall.endCall();
+                IntercomCall.endCall('answered');
                 setTimeout(() => setNotice(''), 4000);
             }
             setCall((prev) => {
@@ -237,6 +253,9 @@ function IntercomCallModal({
             });
             if (next?.sip) setSip(next.sip);
             if (payload.event === 'ended') {
+                pendingAudioRef.current = '';
+                officeKickRef.current += 1;
+                sipLiveRef.current = false;
                 IntercomCall.endCall();
                 setSip(null);
                 setSipLive(false);
@@ -255,61 +274,64 @@ function IntercomCallModal({
             return undefined;
         }
         let cancelled = false;
-        fetchIntercomClient(adminUrl).then((data) => {
-            if (cancelled) return;
-            if (!data?.enabled) {
-                setIntercomOn(false);
-                setListenSip(null);
-                setSipReady(false);
-                setIntercomLineStatus({ level: 'off' });
-                return;
-            }
-            setIntercomOn(true);
-            if (!data.sip) {
-                setListenSip(null);
-                setSipReady(false);
-                setIntercomLineStatus({
-                    level: 'error',
-                    title: 'Door line is not configured',
-                    detail: 'This home has no SIP extension for the app.',
+        intercomOnRef.current = false;
+        setIntercomOn(false);
+        setListenSip(null);
+        setSipReady(false);
+        setIntercomLineStatus({ level: 'off' });
+        const pull = () => {
+            fetchIntercomClient(adminUrl, userIdRef.current).then((data) => {
+                if (cancelled) return;
+                if (!data?.enabled || !data.sip) {
+                    intercomOnRef.current = false;
+                    setIntercomOn(false);
+                    setListenSip(null);
+                    setSipReady(false);
+                    setLineError('');
+                    setIntercomLineStatus({ level: 'off' });
+                    setCall((prev) => (prev?.status === 'ringing' ? null : prev));
+                    return;
+                }
+                const urls = [];
+                const addUrl = (u) => {
+                    const v = String(u || '').trim();
+                    if (v && !urls.includes(v)) urls.push(v);
+                };
+                addUrl(adminToSipWsUrl(adminUrl));
+                (data.sip.wssUrls || []).forEach(addUrl);
+                sipWsCandidates(data.sip.wssUrl).forEach(addUrl);
+                const joinTarget = data.sip.joinTarget || data.sip.target || '';
+                intercomOnRef.current = true;
+                setIntercomOn(true);
+                setListenSip({
+                    ...data.sip,
+                    wssUrl: urls[0] || data.sip.wssUrl,
+                    wssUrls: urls,
+                    joinTarget,
+                    autoDial: false,
+                    cameraId: data.public?.camera_id,
+                    cameraReady: !!data.public?.camera_ready,
+                    doorCamera: !!data.public?.door_camera,
+                    unlockEntityId: data.public?.unlock_entity_id,
+                    label: data.public?.label || data.sip.displayName,
                 });
-                return;
-            }
-            const urls = [];
-            const addUrl = (u) => {
-                const v = String(u || '').trim();
-                if (v && !urls.includes(v)) urls.push(v);
-            };
-            addUrl(adminToSipWsUrl(adminUrl));
-            (data.sip.wssUrls || []).forEach(addUrl);
-            sipWsCandidates(data.sip.wssUrl).forEach(addUrl);
-            const joinTarget = data.sip.joinTarget || data.sip.target || '';
-            setListenSip({
-                ...data.sip,
-                wssUrl: urls[0] || data.sip.wssUrl,
-                wssUrls: urls,
-                joinTarget,
-                autoDial: false,
-                cameraId: data.public?.camera_id,
-                cameraReady: !!data.public?.camera_ready,
-                doorCamera: !!data.public?.door_camera,
-                unlockEntityId: data.public?.unlock_entity_id,
-                label: data.public?.label || data.sip.displayName,
+            }).catch(() => {
+                if (!cancelled) {
+                    intercomOnRef.current = false;
+                    setIntercomOn(false);
+                    setListenSip(null);
+                    setSipReady(false);
+                    setIntercomLineStatus({ level: 'off' });
+                }
             });
-        }).catch((err) => {
-            if (!cancelled) {
-                setIntercomOn(false);
-                setListenSip(null);
-                setSipReady(false);
-                setIntercomLineStatus({
-                    level: 'error',
-                    title: 'Door line is not connected',
-                    detail: err?.message || 'The home server did not answer.',
-                });
-            }
-        });
-        return () => { cancelled = true; };
-    }, [adminUrl]);
+        };
+        pull();
+        const retry = setInterval(pull, 20000);
+        return () => {
+            cancelled = true;
+            clearInterval(retry);
+        };
+    }, [adminUrl, userId]);
 
     const ingestRef = useRef(ingest);
     ingestRef.current = ingest;
@@ -321,7 +343,10 @@ function IntercomCallModal({
         let heartbeat;
 
         const connect = () => {
-            const url = adminToWsUrl(adminUrl);
+            const base = adminToWsUrl(adminUrl);
+            const url = userIdRef.current
+                ? `${base}?userId=${encodeURIComponent(userIdRef.current)}`
+                : base;
             if (!url) return;
             try {
                 const ws = new WebSocket(url);
@@ -360,6 +385,9 @@ function IntercomCallModal({
                 if (cancelled) return;
                 if (data?.call) {
                     ingestRef.current({ event: data.call.status, call: data.call });
+                } else if (data?.ok && callStatusRef.current === 'ringing') {
+                    setCall(null);
+                    IntercomCall.endCall();
                 }
             }).catch(() => {});
         }, 1500);
@@ -371,7 +399,7 @@ function IntercomCallModal({
             if (heartbeat) clearInterval(heartbeat);
             try { wsRef.current?.close(); } catch { /* ignore */ }
         };
-    }, [adminUrl]);
+    }, [adminUrl, userId]);
 
     useEffect(() => {
         if (!adminUrl) return undefined;
@@ -484,6 +512,19 @@ function IntercomCallModal({
         };
     }, [ringing, call?.callId, call?.label]);
 
+    const dismissSystemCallAfterOpen = () => {
+        const close = () => IntercomCall.endCall('answered');
+        if (AppState.currentState === 'active') {
+            setTimeout(close, 1200);
+            return;
+        }
+        const sub = AppState.addEventListener('change', (state) => {
+            if (state !== 'active') return;
+            sub.remove();
+            setTimeout(close, 1200);
+        });
+    };
+
     const handleAnswer = async (fromCall) => {
         const active = fromCall || callRef.current;
         if (!active || busy) return;
@@ -492,6 +533,8 @@ function IntercomCallModal({
         sipAnsweringRef.current = true;
         setSipStatus('Joining the door line…');
         stopAllRinging();
+        dismissSystemCallAfterOpen();
+        dismissIntercomNotifications();
         await Promise.race([
             routeCallAudioToSpeaker().catch(() => {}),
             new Promise((resolve) => setTimeout(resolve, 400)),
@@ -562,7 +605,8 @@ function IntercomCallModal({
         sipAnsweringRef.current = false;
         stopAllRinging();
         runSip('window.PW_AUDIO_ID=""; window.PW_HOLD_SIP=false; window.PW_SIP_HANGUP && window.PW_SIP_HANGUP(); if (!window.PW_UA_OK && window.PW_SIP_READY) window.PW_SIP_READY()');
-        IntercomCall.endCall();
+        IntercomCall.endCall('declined');
+        dismissIntercomNotifications();
         setCall(null);
         setSip(null);
         setSipStatus('');
@@ -581,11 +625,12 @@ function IntercomCallModal({
         stopAllRinging();
         runSip('window.PW_AUDIO_ID=""; window.PW_HOLD_SIP=false; window.PW_SIP_HANGUP && window.PW_SIP_HANGUP(); if (!window.PW_UA_OK && window.PW_SIP_READY) window.PW_SIP_READY()');
         IntercomCall.endCall();
+        dismissIntercomNotifications();
+        setCall(null);
+        setSip(null);
+        setSipStatus('');
         try {
             await hangupIntercomCall(adminUrl, 'hangup');
-            setCall(null);
-            setSip(null);
-            setSipStatus('');
         } finally {
             setBusy(false);
         }
@@ -702,7 +747,10 @@ function IntercomCallModal({
     const originWhitelist = useMemo(() => ['*', 'http://*', 'https://*', 'ws://*', 'wss://*'], []);
 
     useEffect(() => {
-        if (!intercomOn) return undefined;
+        if (!intercomOn || !listenSip) {
+            if (!intercomOn) setIntercomLineStatus({ level: 'off' });
+            return undefined;
+        }
         if (lineError) {
             setIntercomLineStatus({ level: 'error', title: 'Door line error', detail: lineError });
             return undefined;
@@ -712,14 +760,6 @@ function IntercomCallModal({
                 level: 'connected',
                 title: 'Door line connected',
                 detail: 'This phone is registered and can receive the intercom.',
-            });
-            return undefined;
-        }
-        if (!listenSip) {
-            setIntercomLineStatus({
-                level: 'connecting',
-                title: 'Connecting to the door line',
-                detail: 'Waiting for this home’s door settings.',
             });
             return undefined;
         }
@@ -805,8 +845,17 @@ function IntercomCallModal({
                 else if (t.startsWith('sdp-local')) setSipStatus('Audio SDP sent — waiting for the door…');
                 else if (t.startsWith('pc-wait')) setSipStatus(`Audio path ${t.replace(/^pc-wait\s+/i, '')}`);
                 else if (t.startsWith('no-session')) setSipStatus('No SIP call yet — waiting for the door…');
-                else if (t === 'bridge-answer' || t === 'bridge-open') setSipStatus('Connecting through the office…');
-                else if (t === 'bridge-socket') {
+                else if (t === 'bridge-answer') setSipStatus('Connecting through the office…');
+                else if (t === 'bridge-open') {
+                    sipLiveRef.current = true;
+                    setSipLive(true);
+                    setSipStatus('Talk to the visitor');
+                }
+                else if (t === 'bridge-socket' || t === 'bridge-closed') {
+                    if (t === 'bridge-closed' && pendingAudioRef.current) {
+                        setSipStatus('Reconnecting audio…');
+                        return;
+                    }
                     setLineError('The office audio connection failed.');
                     setSipStatus('Office audio connection failed');
                 }
@@ -843,6 +892,7 @@ function IntercomCallModal({
             }
             else if (msg.status === 'ended') {
                 const cause = String(msg.cause || '');
+                if (cause === 'bye' && pendingAudioRef.current) return;
                 pendingAudioRef.current = '';
                 setOfficeAudioId('');
                 setHoldSip(false);
@@ -925,8 +975,6 @@ function IntercomCallModal({
     ) : null;
 
     const win = Dimensions.get('window');
-    const previewW = Math.max(280, win.width - 48);
-    const previewH = Math.min(Math.round(previewW * 10 / 16), Math.round(win.height * 0.36));
     const layer = {
         position: 'absolute',
         top: 0,
@@ -947,30 +995,30 @@ function IntercomCallModal({
             <View
                 pointerEvents="none"
                 collapsable={false}
-                style={[styles.sipHold, visible ? styles.sipHoldActive : styles.sipHoldIdle]}
+                style={[styles.sipHold, styles.sipHoldIdle]}
             >
                 {phone}
             </View>
 
             {visible ? (
-                <>
-                    <Text style={styles.kicker}>{ringing ? 'Incoming' : (sipLive ? 'Connected' : 'Joining audio')}</Text>
-                    <Text style={styles.title}>{call?.label || 'Front door'}</Text>
-                    {call?.answeredByName && !mine ? (
-                        <Text style={styles.sub}>{call.answeredByName} answered</Text>
-                    ) : (
-                        <Text style={styles.sub}>{ringing ? 'Someone is at the door' : (sipLive ? 'Talk to the visitor' : 'Connecting to the door…')}</Text>
-                    )}
-                </>
+                <View style={styles.header}>
+                    <Text style={styles.kicker}>{ringing ? 'Incoming' : (sipLive ? 'Live' : 'Connecting')}</Text>
+                    <Text style={styles.title} numberOfLines={1}>{call?.label || 'Front door'}</Text>
+                    <Text style={styles.sub} numberOfLines={2}>
+                        {call?.answeredByName && !mine
+                            ? `${call.answeredByName} answered`
+                            : (sipStatus || (ringing ? 'Someone is at the door' : (sipLive ? 'Talk to the visitor' : 'Connecting to the door…')))}
+                    </Text>
+                </View>
             ) : null}
 
             {visible ? (
-                <View style={[styles.preview, { width: previewW, height: previewH, alignSelf: 'center', zIndex: 2 }]}>
+                <View style={styles.videoStage}>
                     {snapshotUrl ? (
                         <AuthedCameraImage
                             uri={snapshotUrl}
                             headers={token ? { Authorization: `Bearer ${token}` } : undefined}
-                            refreshMs={400}
+                            refreshMs={250}
                             style={StyleSheet.absoluteFill}
                         />
                     ) : (
@@ -978,48 +1026,45 @@ function IntercomCallModal({
                             <Phone size={40} color="rgba(255,255,255,0.35)" />
                         </View>
                     )}
-                    {sipLive ? (
-                        <View pointerEvents="none" style={styles.livePill}>
-                            <Text style={styles.livePillText}>{sipVideo ? 'LIVE' : 'AUDIO'}</Text>
-                        </View>
-                    ) : null}
                 </View>
             ) : null}
 
             {visible ? (
-                <>
-                    {sipStatus ? <Text style={styles.hint}>{sipStatus}</Text> : null}
-                    {mine && !sipStatus ? (
-                        <Text style={styles.hint}>Talk to the visitor</Text>
-                    ) : null}
-                    <View style={styles.actions}>
-                        {ringing ? (
-                            <>
+                <View style={styles.actions}>
+                    {ringing ? (
+                        <>
+                            <View style={styles.action}>
                                 <TouchableOpacity style={[styles.round, styles.decline]} onPress={handleDecline} disabled={busy}>
                                     <PhoneOff size={28} color="#fff" />
-                                    <Text style={styles.roundLabel}>Decline</Text>
                                 </TouchableOpacity>
+                                <Text style={styles.roundLabel}>Decline</Text>
+                            </View>
+                            <View style={styles.action}>
                                 <TouchableOpacity style={[styles.round, styles.answer]} onPress={handleAnswer} disabled={busy}>
                                     {busy ? <ActivityIndicator color="#fff" /> : <Phone size={28} color="#fff" />}
-                                    <Text style={styles.roundLabel}>Answer</Text>
                                 </TouchableOpacity>
-                            </>
-                        ) : (
-                            <>
-                                {unlockEntity ? (
+                                <Text style={styles.roundLabel}>Answer</Text>
+                            </View>
+                        </>
+                    ) : (
+                        <>
+                            {unlockEntity ? (
+                                <View style={styles.action}>
                                     <TouchableOpacity style={[styles.round, styles.unlock]} onPress={handleUnlock}>
                                         <LockOpen size={26} color="#fff" />
-                                        <Text style={styles.roundLabel}>Unlock</Text>
                                     </TouchableOpacity>
-                                ) : null}
+                                    <Text style={styles.roundLabel}>Unlock</Text>
+                                </View>
+                            ) : null}
+                            <View style={styles.action}>
                                 <TouchableOpacity style={[styles.round, styles.decline]} onPress={handleHangup} disabled={busy}>
                                     <PhoneOff size={28} color="#fff" />
-                                    <Text style={styles.roundLabel}>Hang up</Text>
                                 </TouchableOpacity>
-                            </>
-                        )}
-                    </View>
-                </>
+                                <Text style={styles.roundLabel}>Hang up</Text>
+                            </View>
+                        </>
+                    )}
+                </View>
             ) : null}
 
         </View>
@@ -1039,7 +1084,19 @@ const styles = StyleSheet.create({
     },
     callRoot: {
         backgroundColor: '#09091A',
-        justifyContent: 'space-between',
+    },
+    header: {
+        paddingHorizontal: 24,
+        paddingBottom: 12,
+        zIndex: 2,
+    },
+    videoStage: {
+        flex: 1,
+        marginHorizontal: 16,
+        borderRadius: 24,
+        overflow: 'hidden',
+        backgroundColor: '#000',
+        zIndex: 2,
     },
     sipHold: {
         position: 'absolute',
@@ -1055,13 +1112,12 @@ const styles = StyleSheet.create({
         zIndex: 0,
     },
     sipHoldActive: {
-        width: 320,
-        height: 180,
-        right: 8,
-        bottom: 8,
-        opacity: 1,
+        width: 2,
+        height: 2,
+        left: 0,
+        top: 0,
+        opacity: 0.02,
         zIndex: 0,
-        borderRadius: 12,
     },
     sipWeb: {
         width: 320,
@@ -1108,9 +1164,10 @@ const styles = StyleSheet.create({
     title: {
         textAlign: 'center',
         color: '#fff',
-        fontSize: 32,
+        fontSize: 28,
+        lineHeight: 34,
         fontFamily: CF.bold,
-        marginTop: 8,
+        marginTop: 4,
     },
     sub: {
         textAlign: 'center',
@@ -1120,10 +1177,10 @@ const styles = StyleSheet.create({
         fontFamily: CF.regular,
     },
     preview: {
-        marginTop: 20,
-        borderRadius: 20,
+        flex: 1,
+        borderRadius: 24,
         overflow: 'hidden',
-        backgroundColor: 'rgba(255,255,255,0.06)',
+        backgroundColor: '#000',
     },
     previewEmpty: { flex: 1, alignItems: 'center', justifyContent: 'center' },
     livePill: {
@@ -1150,25 +1207,35 @@ const styles = StyleSheet.create({
         fontFamily: CF.regular,
     },
     actions: {
-        marginTop: 12,
+        marginTop: 16,
         flexDirection: 'row',
         justifyContent: 'space-evenly',
-        alignItems: 'center',
+        alignItems: 'flex-start',
         paddingHorizontal: 24,
-        paddingBottom: 8,
+        zIndex: 2,
+    },
+    action: {
+        width: 96,
+        alignItems: 'center',
     },
     round: {
-        width: 92,
-        height: 92,
-        borderRadius: 46,
+        width: 72,
+        height: 72,
+        borderRadius: 36,
         alignItems: 'center',
         justifyContent: 'center',
-        gap: 6,
     },
     answer: { backgroundColor: '#22c55e' },
     decline: { backgroundColor: '#ef4444' },
     unlock: { backgroundColor: '#8947ca' },
-    roundLabel: { color: '#fff', fontSize: 12, fontFamily: CF.semibold },
+    roundLabel: {
+        color: '#fff',
+        fontSize: 13,
+        lineHeight: 16,
+        marginTop: 8,
+        textAlign: 'center',
+        fontFamily: CF.semibold,
+    },
     toast: {
         position: 'absolute',
         alignSelf: 'center',

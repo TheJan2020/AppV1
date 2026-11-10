@@ -15,6 +15,8 @@ final class IntercomCallManager: NSObject, PKPushRegistryDelegate, CXProviderDel
   private var currentUUID: UUID?
   private var currentCallId = ""
   private var currentLabel = "Front door"
+  // Dismissing CallKit from our side must not hang up the door.
+  private var ignoreEnd = false
 
   var emit: ((String, [String: Any]) -> Void)?
 
@@ -76,22 +78,23 @@ final class IntercomCallManager: NSObject, PKPushRegistryDelegate, CXProviderDel
     let display = name.isEmpty ? "Front door" : name
 
     if event != "ringing" {
-      let uuid = UUID(uuidString: trimmed) ?? currentUUID
-      if let uuid {
-        if currentUUID != uuid {
-          let update = CXCallUpdate()
-          update.remoteHandle = CXHandle(type: .generic, value: display)
-          update.localizedCallerName = display
-          update.hasVideo = false
-          provider?.reportNewIncomingCall(with: uuid, update: update) { [weak self] _ in
-            self?.provider?.reportCall(with: uuid, endedAt: Date(), reason: .remoteEnded)
-            completion?()
-          }
-          return
-        }
-        endCall(reason: .remoteEnded)
+      // iOS stops waking the app if a VoIP push does not report a call.
+      // Close the one already on screen, or report and end immediately so
+      // it does not sit there as a missed call.
+      let incoming = UUID(uuidString: trimmed)
+      if let live = currentUUID, incoming == nil || incoming == live || trimmed == currentCallId {
+        endCall(reason: .answeredElsewhere)
+        completion?()
+        return
       }
-      completion?()
+      let update = CXCallUpdate()
+      update.remoteHandle = CXHandle(type: .generic, value: display)
+      update.localizedCallerName = display
+      update.hasVideo = false
+      provider?.reportNewIncomingCall(with: uuid, update: update) { [weak self] _ in
+        self?.provider?.reportCall(with: uuid, endedAt: Date(), reason: .answeredElsewhere)
+        completion?()
+      }
       return
     }
 
@@ -110,27 +113,56 @@ final class IntercomCallManager: NSObject, PKPushRegistryDelegate, CXProviderDel
     update.supportsUngrouping = false
 
     provider?.reportNewIncomingCall(with: uuid, update: update) { [weak self] error in
+      guard let self else {
+        completion?()
+        return
+      }
       if let error {
         NSLog("[IntercomCall] CallKit report failed: %@", error.localizedDescription)
       } else {
-        self?.emit?("onIncoming", [
-          "callId": self?.currentCallId ?? "",
+        self.emit?("onIncoming", [
+          "callId": self.currentCallId,
           "label": display,
           "event": "ringing",
         ])
+        // The in-app screen owns the audio. A second phone-call screen stays
+        // silent, so leave CallKit only when the app is already open.
+        if UIApplication.shared.applicationState == .active {
+          self.handOffToApp()
+        }
       }
       completion?()
     }
   }
 
-  func endCall(reason: CXCallEndedReason = .remoteEnded) {
-    guard let uuid = currentUUID else {
-      defaults.removeObject(forKey: Keys.pending)
-      return
+  /// Close the system phone screen without ending the door call.
+  private func handOffToApp() {
+    guard let uuid = currentUUID else { return }
+    ignoreEnd = true
+    provider?.reportCall(with: uuid, endedAt: Date(), reason: .answeredElsewhere)
+    currentUUID = nil
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+      self?.ignoreEnd = false
     }
+  }
+
+  func endCall(named reason: String) {
+    switch reason {
+    case "declined": endCall(reason: .declinedElsewhere)
+    case "answered": endCall(reason: .answeredElsewhere)
+    default: endCall(reason: .remoteEnded)
+    }
+  }
+
+  func endCall(reason: CXCallEndedReason = .remoteEnded) {
+    guard let uuid = currentUUID else { return }
+    ignoreEnd = true
     provider?.reportCall(with: uuid, endedAt: Date(), reason: reason)
     currentUUID = nil
     currentCallId = ""
+    DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+      self?.ignoreEnd = false
+    }
   }
 
   func requestEndFromJs() {
@@ -214,11 +246,13 @@ final class IntercomCallManager: NSObject, PKPushRegistryDelegate, CXProviderDel
   }
 
   private func prepareAudio() {
+    // voiceChat grabs the microphone for the system phone screen and the
+    // in-app door audio then goes out silent. Leave the mic to the app.
     let session = AVAudioSession.sharedInstance()
     try? session.setCategory(
       .playAndRecord,
-      mode: .voiceChat,
-      options: [.allowBluetooth, .allowBluetoothA2DP, .defaultToSpeaker]
+      mode: .default,
+      options: [.allowBluetooth, .defaultToSpeaker, .mixWithOthers]
     )
     try? session.setActive(true)
   }
@@ -275,9 +309,16 @@ final class IntercomCallManager: NSObject, PKPushRegistryDelegate, CXProviderDel
       ])
     }
     action.fulfill()
+    // fulfill() is what opens the app. Ending the system call here
+    // cancels that and leaves the user on the lock screen.
   }
 
   func provider(_ provider: CXProvider, perform action: CXEndCallAction) {
+    if ignoreEnd {
+      ignoreEnd = false
+      action.fulfill()
+      return
+    }
     let endingId = currentCallId
     let pendingAction = defaults.dictionary(forKey: Keys.pending)?["action"] as? String
     let wasAnswered = pendingAction == "answer"
@@ -296,6 +337,5 @@ final class IntercomCallManager: NSObject, PKPushRegistryDelegate, CXProviderDel
   }
 
   func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
-    prepareAudio()
   }
 }

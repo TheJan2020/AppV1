@@ -23,6 +23,7 @@ internal object IntercomCallStore {
 
   fun adminUrl(context: Context) = prefs(context).getString(ADMIN, "") ?: ""
   fun userId(context: Context) = prefs(context).getString(USER, "") ?: ""
+  fun userName(context: Context) = prefs(context).getString(NAME, "") ?: ""
 
   fun setPending(context: Context, action: String, callId: String, label: String) {
     val json = JSONObject()

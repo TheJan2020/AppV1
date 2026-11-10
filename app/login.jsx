@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Modal, FlatList, KeyboardAvoidingView, Platform, ScrollView, Keyboard, TouchableWithoutFeedback, Linking, Dimensions } from 'react-native';
+import { AppState, View, Text, TextInput, TouchableOpacity, StyleSheet, ActivityIndicator, Alert, Modal, FlatList, KeyboardAvoidingView, Platform, ScrollView, Keyboard, TouchableWithoutFeedback, Linking, Dimensions } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as SecureStore from 'expo-secure-store';
@@ -409,6 +409,47 @@ export default function Login() {
             setProfilesReady(true);
         }
     };
+
+    // A lock-screen door call can open this screen before the keychain unlocks.
+    // Once the phone is open, go back to the home screen if the session is there.
+    useEffect(() => {
+        if (!profilesReady || profiles.length > 0 || isAddAccount) return undefined;
+        let cancelled = false;
+        const recover = async () => {
+            if (cancelled || AppState.currentState !== 'active') return;
+            await loadSettings();
+            if (cancelled) return;
+            try {
+                const [isLoggedIn, userJson, profileId] = await Promise.all([
+                    SecureStore.getItemAsync('is_logged_in'),
+                    SecureStore.getItemAsync('logged_in_user'),
+                    SecureStore.getItemAsync('ha_active_profile_id'),
+                ]);
+                if (cancelled || isLoggedIn !== 'true' || !userJson || !profileId) return;
+                const user = JSON.parse(userJson);
+                router.replace({
+                    pathname: '/dashboard-v2',
+                    params: { userName: user.name || '', userId: user.userId || '' },
+                });
+            } catch {
+                /* stay on login */
+            }
+        };
+        if (AppState.currentState === 'active') {
+            const timer = setTimeout(recover, 400);
+            return () => {
+                cancelled = true;
+                clearTimeout(timer);
+            };
+        }
+        const sub = AppState.addEventListener('change', (state) => {
+            if (state === 'active') recover();
+        });
+        return () => {
+            cancelled = true;
+            sub.remove();
+        };
+    }, [profilesReady, profiles.length, isAddAccount, router]);
 
     const saveProfilesToStorage = async (newProfiles) => {
         try {

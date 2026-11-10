@@ -5,6 +5,7 @@ import { endpointsFromProfile, getAdminUrlOverride } from '../services/connectio
 const SETTINGS_KEY_PROFILES = 'ha_profiles';
 const SETTINGS_KEY_ACTIVE_PROFILE = 'ha_active_profile_id';
 const PROFILES_ASYNC_KEY = 'ha_profiles_v2';
+const SESSION_MIRROR_KEY = 'pw_session_mirror';
 
 /** In-memory copy so Add Account can list homes even if SecureStore is empty/oversized. */
 let memoryProfiles = [];
@@ -43,6 +44,40 @@ export function rememberHaProfiles(list) {
 
 export function peekHaProfiles() {
     return memoryProfiles;
+}
+
+/** Copy of the signed-in user that is readable while the iPhone keychain is locked. */
+export async function rememberSessionMirror({ userId, name, profileId } = {}) {
+    if (!profileId) return;
+    try {
+        await AsyncStorage.setItem(SESSION_MIRROR_KEY, JSON.stringify({
+            userId: userId || '',
+            name: name || '',
+            profileId,
+        }));
+    } catch {
+        /* ignore */
+    }
+}
+
+export async function readSessionMirror() {
+    try {
+        const raw = await AsyncStorage.getItem(SESSION_MIRROR_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed?.profileId) return null;
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
+export async function clearSessionMirror() {
+    try {
+        await AsyncStorage.removeItem(SESSION_MIRROR_KEY);
+    } catch {
+        /* ignore */
+    }
 }
 
 export async function loadHaProfiles() {

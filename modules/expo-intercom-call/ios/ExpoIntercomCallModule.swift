@@ -37,8 +37,8 @@ public class ExpoIntercomCallModule: Module {
       IntercomCallManager.shared.reportIncoming(callId: callId, label: label, event: "ringing")
     }
 
-    Function("endCall") {
-      IntercomCallManager.shared.endCall()
+    Function("endCall") { (reason: String) in
+      IntercomCallManager.shared.endCall(named: reason)
     }
   }
 }

@@ -134,6 +134,11 @@ class IncomingCallActivity : Activity() {
     IntercomCallStore.setPending(this, "answer", callId, label)
     IntercomCallNotifier.cancel(this)
     ExpoIntercomCallModule.emit("onAnswer", mapOf("callId" to callId, "label" to label))
+    val body = JSONObject()
+      .put("userId", IntercomCallStore.userId(this))
+      .put("username", IntercomCallStore.userName(this))
+      .put("userName", IntercomCallStore.userName(this))
+    postNative("answer", body)
     openApp()
     finish()
   }
